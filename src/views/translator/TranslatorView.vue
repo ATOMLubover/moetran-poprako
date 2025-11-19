@@ -87,6 +87,10 @@ const SHORTCUT_HINTS: ShortcutHint[] = [
     description: '在标记之间向前轮换焦点',
   },
   {
+    combo: 'Shift + Tab',
+    description: '在标记之间向后轮换焦点',
+  },
+  {
     combo: 'Ctrl + Enter',
     description: '在校对模式中提交校对并标记完成',
   },
@@ -94,6 +98,18 @@ const SHORTCUT_HINTS: ShortcutHint[] = [
     combo: 'Esc',
     description: '关闭快捷键悬浮窗',
   },
+  {
+    combo: 'Ctrl + D',
+    description: '切换到下一页',
+  },
+  {
+    combo: 'Ctrl + U',
+    description: '切换到上一页',
+  },
+  // {
+  //   combo: 'Ctrl + Esc',
+  //   description: '返回项目详情',
+  // },
 ];
 
 const MOCK_IMAGE_URLS = [
@@ -1103,33 +1119,73 @@ function handleShortcutHelpKeydown(event: KeyboardEvent): void {
   closeShortcutHelp();
 }
 
-// Tab 快捷键聚焦源
-function handleTabFocusShortcut(event: KeyboardEvent): void {
-  if (event.key !== 'Tab') {
-    return;
-  }
-
+// 处理全局快捷键
+function handleGlobalShortcuts(event: KeyboardEvent): void {
   if (event.repeat) {
     return;
   }
 
-  event.preventDefault();
+  if (event.key === 'Tab') {
+    if (sources.value.length === 0) {
+      return;
+    }
 
-  if (sources.value.length === 0) {
+    event.preventDefault();
+
+    if (!activeSourceId.value) {
+      activeSourceId.value = event.shiftKey
+        ? sources.value[sources.value.length - 1].id
+        : sources.value[0].id;
+
+      return;
+    }
+
+    const currentIndex = sources.value.findIndex(item => item.id === activeSourceId.value);
+
+    if (currentIndex < 0) {
+      activeSourceId.value = event.shiftKey
+        ? sources.value[sources.value.length - 1].id
+        : sources.value[0].id;
+
+      return;
+    }
+
+    const direction = event.shiftKey ? -1 : 1;
+
+    const nextIndex = (currentIndex + direction + sources.value.length) % sources.value.length;
+
+    activeSourceId.value = sources.value[nextIndex].id;
+
     return;
   }
 
-  if (!activeSourceId.value) {
-    activeSourceId.value = sources.value[0].id;
+  if (event.ctrlKey && !event.metaKey && !event.altKey) {
+    const key = event.key.toLowerCase();
 
-    return;
+    if (key === 'd') {
+      event.preventDefault();
+
+      handleNextPage();
+
+      return;
+    }
+
+    if (key === 'u') {
+      event.preventDefault();
+
+      handlePreviousPage();
+
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+
+      handleBackToProject();
+
+      return;
+    }
   }
-
-  const currentIndex = sources.value.findIndex(item => item.id === activeSourceId.value);
-
-  const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % sources.value.length : 0;
-
-  activeSourceId.value = sources.value[nextIndex].id;
 }
 
 // 切换标记类别
@@ -1266,7 +1322,7 @@ onMounted(() => {
 
   window.addEventListener('pointercancel', stopDraggingEditor);
 
-  window.addEventListener('keydown', handleTabFocusShortcut, true);
+  window.addEventListener('keydown', handleGlobalShortcuts, true);
 
   window.addEventListener('resize', handleWindowResize);
 
@@ -1302,7 +1358,7 @@ onBeforeUnmount(() => {
 
   window.removeEventListener('pointercancel', stopDraggingEditor);
 
-  window.removeEventListener('keydown', handleTabFocusShortcut, true);
+  window.removeEventListener('keydown', handleGlobalShortcuts, true);
 
   window.removeEventListener('resize', handleWindowResize);
 

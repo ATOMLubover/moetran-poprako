@@ -13,7 +13,7 @@ fmt:
 
 	@echo --- format completed ---
 
-run:
+dev:
 	@echo === starting development server... ===
 
 	pnpm tauri dev
