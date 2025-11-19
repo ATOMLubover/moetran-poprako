@@ -12,3 +12,10 @@ fmt:
 	@echo --- backend formatted ---
 
 	@echo --- format completed ---
+
+run:
+	@echo === starting development server... ===
+
+	pnpm tauri dev
+
+	@echo --- development server exited ---

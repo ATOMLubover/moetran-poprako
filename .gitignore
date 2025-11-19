@@ -26,3 +26,6 @@ dist-ssr
 # Instructions for agents
 .style.md
 .problems.md
+
+# Images
+tests/images/**
