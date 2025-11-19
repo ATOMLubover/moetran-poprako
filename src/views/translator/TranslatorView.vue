@@ -34,6 +34,11 @@ interface SourceLabelInfo {
   display: string;
 }
 
+interface ShortcutHint {
+  combo: string;
+  description: string;
+}
+
 const props = defineProps<{
   projectId: string;
   pageIndex: number;
@@ -72,6 +77,25 @@ const MIN_MARKER_VIEWPORT_SCALE = 0.9;
 
 const MAX_MARKER_VIEWPORT_SCALE = 1.2;
 
+const WORKSPACE_BOTTOM_GUTTER = 32;
+
+const MARKER_TIP_OFFSET_PX = 26; // 圆心到指针尖端的偏移，需与样式保持一致
+
+const SHORTCUT_HINTS: ShortcutHint[] = [
+  {
+    combo: 'Tab',
+    description: '在标记之间向前轮换焦点',
+  },
+  {
+    combo: 'Ctrl + Enter',
+    description: '在校对模式中提交校对并标记完成',
+  },
+  {
+    combo: 'Esc',
+    description: '关闭快捷键悬浮窗',
+  },
+];
+
 const MOCK_IMAGE_URLS = [
   new URL('../../../tests/images/cover_miseyari_01_0001.jpg', import.meta.url).href,
   new URL('../../../tests/images/miseyari_01_0001.jpg', import.meta.url).href,
@@ -100,7 +124,13 @@ const editorTranslationText = ref('');
 
 const editorProofText = ref('');
 
+const activeMode = ref<'translate' | 'proof'>('translate');
+
+const isProofMode = computed(() => activeMode.value === 'proof');
+
 const translationTextareaRef = ref<HTMLTextAreaElement | null>(null);
+
+const proofTextareaRef = ref<HTMLTextAreaElement | null>(null);
 
 const editorPosition = ref({ ...DEFAULT_EDITOR_POSITION });
 
@@ -115,6 +145,10 @@ const editorPositionStart = ref({ ...DEFAULT_EDITOR_POSITION });
 const imageWrapperRef = ref<HTMLDivElement | null>(null);
 
 const panelRef = ref<HTMLElement | null>(null);
+
+const boardRef = ref<HTMLElement | null>(null);
+
+const workspaceRef = ref<HTMLElement | null>(null);
 
 const windowSize = ref({ width: window.innerWidth, height: window.innerHeight });
 
@@ -140,6 +174,10 @@ const lastCanvasPointerEvent = ref<PointerEvent | null>(null);
 
 const canvasPointerButton = ref<0 | 2 | null>(null);
 
+const panelHeightPx = ref<number | null>(null);
+
+const workspaceHeightPx = ref<number | null>(null);
+
 let sourceSerial = 0;
 
 let latestPageLoadToken = 0;
@@ -147,6 +185,12 @@ let latestPageLoadToken = 0;
 const pageSourceStore = new Map<number, TranslationSource[]>();
 
 const hasEditorBeenDragged = ref(false);
+
+let boardResizeObserver: ResizeObserver | null = null;
+
+const isShortcutHelpVisible = ref(false);
+
+const shortcutHelpRef = ref<HTMLDivElement | null>(null);
 
 function cloneSource(source: TranslationSource): TranslationSource {
   return {
@@ -174,32 +218,47 @@ const boardTransform = computed(
 const showMarkers = computed(() => !isPanelCollapsed.value);
 
 const workspaceStyle = computed(() => {
-  const availableHeight = Math.max(
+  if (typeof workspaceHeightPx.value === 'number') {
+    const clampedHeight = Math.max(MIN_WORKSPACE_HEIGHT, workspaceHeightPx.value);
+
+    return {
+      minHeight: `${clampedHeight}px`,
+      height: `${clampedHeight}px`,
+    };
+  }
+
+  const fallbackHeight = Math.max(
     MIN_WORKSPACE_HEIGHT,
     windowSize.value.height - WORKSPACE_VERTICAL_OFFSET
   );
 
-  const style: Record<string, string> = {
-    minHeight: `${availableHeight}px`,
-    height: `${availableHeight}px`,
+  return {
+    minHeight: `${fallbackHeight}px`,
+    height: `${fallbackHeight}px`,
   };
-
-  if (isPanelCollapsed.value) {
-    style.gridTemplateColumns = `minmax(0, 1fr) ${PANEL_COLLAPSED_WIDTH}px`;
-
-    return style;
-  }
-
-  const panelPercent = Math.round(PANEL_WIDTH_RATIO * 100);
-
-  const boardPercent = Math.max(0, 100 - panelPercent);
-
-  style.gridTemplateColumns = `minmax(0, ${boardPercent}%) minmax(260px, ${panelPercent}%)`;
-
-  return style;
 });
 
 const boardGridClass = computed(() => ({ 'board--full': isPanelCollapsed.value }));
+
+const panelStyle = computed(() => {
+  const style: Record<string, string> = {};
+
+  if (isPanelCollapsed.value) {
+    style.flexBasis = `${PANEL_COLLAPSED_WIDTH}px`;
+    style.maxWidth = `${PANEL_COLLAPSED_WIDTH}px`;
+    style.minWidth = '0px';
+  } else {
+    const panelPercent = Math.round(PANEL_WIDTH_RATIO * 100);
+
+    style.flexBasis = `clamp(260px, ${panelPercent}%, 520px)`;
+    style.maxWidth = '520px';
+    style.minWidth = '260px';
+  }
+
+  style.height = panelHeightPx.value ? `${panelHeightPx.value}px` : '100%';
+
+  return style;
+});
 
 const markerViewportScale = computed(() => {
   const widthFactor = windowSize.value.width / MARKER_REFERENCE_WIDTH;
@@ -209,7 +268,13 @@ const markerViewportScale = computed(() => {
 
 const markerScale = computed(() => markerViewportScale.value / zoom.value);
 
-const markerTransform = computed(() => `translate(-50%, -100%) scale(${markerScale.value})`);
+const markerTransform = computed(() => {
+  const scale = markerScale.value;
+
+  const offset = MARKER_TIP_OFFSET_PX * scale;
+
+  return `translate(-50%, calc(-50% - ${offset}px)) scale(${scale})`;
+});
 
 const selectedSource = computed(() => {
   if (!activeSourceId.value) {
@@ -221,19 +286,32 @@ const selectedSource = computed(() => {
   return target;
 });
 
+const proofOverlayStyle = computed(() => {
+  if (!isProofMode.value || !selectedSource.value) {
+    return {} as Record<string, string>;
+  }
+
+  const { x, y } = selectedSource.value.position;
+
+  return {
+    left: `${x * 100}%`,
+    top: `${y * 100}%`,
+  } satisfies Record<string, string>;
+});
+
 const sourceLabelMap = computed(() => {
   const labelMap = new Map<string, SourceLabelInfo>();
 
   let index = 1;
 
   for (const item of sources.value) {
-    const number = String(index).padStart(3, '0');
+    const number = String(index);
 
     const suffix = item.category === 'inside' ? '框内' : '框外';
 
     labelMap.set(item.id, {
       number,
-      display: `${number}-${suffix}`,
+      display: `${number} ${suffix}`,
     });
 
     index += 1;
@@ -249,6 +327,10 @@ const selectedSourceLabel = computed(() => {
 
   return sourceLabelMap.value.get(selectedSource.value.id)?.display ?? '';
 });
+
+function handleToggleMode(): void {
+  activeMode.value = isProofMode.value ? 'translate' : 'proof';
+}
 
 watch(
   () => props.pageIndex,
@@ -279,6 +361,12 @@ watch(selectedSource, (source, previousSource) => {
   }
 
   nextTick(() => {
+    if (isProofMode.value) {
+      proofTextareaRef.value?.focus();
+
+      return;
+    }
+
     translationTextareaRef.value?.focus();
   });
 });
@@ -311,6 +399,22 @@ watch(editorProofText, value => {
   selectedSource.value.proofText = value;
 });
 
+watch(activeMode, mode => {
+  if (!selectedSource.value) {
+    return;
+  }
+
+  nextTick(() => {
+    if (mode === 'proof') {
+      proofTextareaRef.value?.focus();
+
+      return;
+    }
+
+    translationTextareaRef.value?.focus();
+  });
+});
+
 watch(
   currentPageIndex,
   (value, oldValue) => {
@@ -331,6 +435,18 @@ watch(windowSize, value => {
   if (!hasPanelOverride.value) {
     isPanelCollapsed.value = value.width < PANEL_COLLAPSE_BREAKPOINT;
   }
+
+  updateWorkspaceHeight();
+
+  syncPanelHeightWithBoard();
+});
+
+watch(isPanelCollapsed, () => {
+  nextTick(() => {
+    syncPanelHeightWithBoard();
+
+    updateWorkspaceHeight();
+  });
 });
 
 // 获取 mock 页面数据
@@ -447,7 +563,11 @@ function createSourceId(): string {
 }
 
 // 通过坐标创建标记
-function addSourceAtPointer(event: MouseEvent | PointerEvent, category: SourceCategory): void {
+function addSourceAtPointer(
+  event: MouseEvent | PointerEvent,
+  category: SourceCategory,
+  activate = true
+): void {
   const wrapper = imageWrapperRef.value;
 
   if (!wrapper || !projectPage.value) {
@@ -480,7 +600,9 @@ function addSourceAtPointer(event: MouseEvent | PointerEvent, category: SourceCa
 
   sources.value = [...sources.value, newSource];
 
-  activeSourceId.value = newSource.id;
+  if (activate) {
+    activeSourceId.value = newSource.id;
+  }
 }
 
 function handleTogglePanel(): void {
@@ -498,6 +620,10 @@ function handleTogglePanel(): void {
 
   nextTick(() => {
     moveEditorNearPanel(true);
+
+    syncPanelHeightWithBoard();
+
+    updateWorkspaceHeight();
   });
 }
 
@@ -749,7 +875,9 @@ function handleCanvasPointerUp(event: PointerEvent): void {
 
   const category: SourceCategory = pointerButton === 2 ? 'outside' : 'inside';
 
-  addSourceAtPointer(referenceEvent, category);
+  const shouldActivate = pointerButton !== 2;
+
+  addSourceAtPointer(referenceEvent, category, shouldActivate);
 }
 
 function handleCanvasPointerCancel(event: PointerEvent): void {
@@ -777,6 +905,49 @@ function handleWindowResize(): void {
     width: window.innerWidth,
     height: window.innerHeight,
   };
+
+  updateWorkspaceHeight();
+
+  syncPanelHeightWithBoard();
+}
+
+// 根据画板高度同步面板高度，保持两侧一致
+function syncPanelHeightWithBoard(): void {
+  const boardElement = boardRef.value;
+
+  if (!boardElement) {
+    panelHeightPx.value = null;
+
+    return;
+  }
+
+  const rect = boardElement.getBoundingClientRect();
+
+  panelHeightPx.value = Math.round(rect.height);
+}
+
+// 同步工作区高度以减少底部留白
+function updateWorkspaceHeight(): void {
+  const workspaceElement = workspaceRef.value;
+
+  if (!workspaceElement) {
+    workspaceHeightPx.value = null;
+
+    return;
+  }
+
+  const rect = workspaceElement.getBoundingClientRect();
+
+  const availableHeight = window.innerHeight - rect.top - WORKSPACE_BOTTOM_GUTTER;
+
+  workspaceHeightPx.value = Math.max(MIN_WORKSPACE_HEIGHT, Math.floor(availableHeight));
+}
+
+// 图片加载完同步布局尺寸
+function handleBoardContentLoaded(): void {
+  syncPanelHeightWithBoard();
+
+  updateWorkspaceHeight();
 }
 
 // 选中标记
@@ -907,6 +1078,31 @@ function moveEditorNearPanel(force = false): void {
   clampEditorWithinViewport();
 }
 
+// 打开快捷键悬浮窗
+function openShortcutHelp(): void {
+  isShortcutHelpVisible.value = true;
+
+  nextTick(() => {
+    shortcutHelpRef.value?.focus();
+  });
+}
+
+// 关闭快捷键悬浮窗
+function closeShortcutHelp(): void {
+  isShortcutHelpVisible.value = false;
+}
+
+// 处理快捷键悬浮窗键盘事件
+function handleShortcutHelpKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Escape') {
+    return;
+  }
+
+  event.preventDefault();
+
+  closeShortcutHelp();
+}
+
 // Tab 快捷键聚焦源
 function handleTabFocusShortcut(event: KeyboardEvent): void {
   if (event.key !== 'Tab') {
@@ -977,6 +1173,20 @@ function toggleProofStatus(): void {
   editorProofText.value = proofCandidate;
 
   selectedSource.value.status = 'proofed';
+}
+
+function handleProofShortcut(event: KeyboardEvent): void {
+  if (!isProofMode.value) {
+    return;
+  }
+
+  if (event.key !== 'Enter' || !event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) {
+    return;
+  }
+
+  event.preventDefault();
+
+  toggleProofStatus();
 }
 
 // 关闭悬浮窗
@@ -1059,6 +1269,24 @@ onMounted(() => {
   window.addEventListener('keydown', handleTabFocusShortcut, true);
 
   window.addEventListener('resize', handleWindowResize);
+
+  nextTick(syncPanelHeightWithBoard);
+
+  nextTick(updateWorkspaceHeight);
+
+  if (typeof ResizeObserver !== 'undefined') {
+    boardResizeObserver = new ResizeObserver(() => {
+      syncPanelHeightWithBoard();
+
+      updateWorkspaceHeight();
+    });
+
+    nextTick(() => {
+      if (boardRef.value) {
+        boardResizeObserver?.observe(boardRef.value);
+      }
+    });
+  }
 });
 
 onBeforeUnmount(() => {
@@ -1077,6 +1305,12 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleTabFocusShortcut, true);
 
   window.removeEventListener('resize', handleWindowResize);
+
+  if (boardResizeObserver) {
+    boardResizeObserver.disconnect();
+
+    boardResizeObserver = null;
+  }
 });
 </script>
 
@@ -1084,9 +1318,6 @@ onBeforeUnmount(() => {
   <section class="translator">
     <header class="translator__header">
       <div class="translator__title-group">
-        <!-- <span class="translator__badge"
-          >第 {{ projectPage?.pageIndex ?? '-' }} / {{ projectPage?.pageCount ?? '-' }} 页</span
-        > -->
         <h1 class="translator__title">{{ projectPage?.title ?? '加载中' }}</h1>
       </div>
       <div class="translator__actions">
@@ -1148,7 +1379,7 @@ onBeforeUnmount(() => {
           <span class="sr-only">{{ isPanelCollapsed ? '展开源列表' : '收起源列表' }}</span>
           <svg class="toolbox__icon" viewBox="0 0 24 24" aria-hidden="true">
             <path
-              :d="isPanelCollapsed ? 'M15 5L8 12L15 19' : 'M9 5L16 12L9 19'"
+              :d="isPanelCollapsed ? 'M7 8H17M7 12H17M7 16H17' : 'M8 9H16M8 12H16M8 15H16'"
               fill="none"
               stroke="currentColor"
               stroke-width="1.8"
@@ -1157,11 +1388,59 @@ onBeforeUnmount(() => {
             />
           </svg>
         </button>
+        <button
+          type="button"
+          class="toolbox__button"
+          :class="{ 'toolbox__button--active': isProofMode }"
+          :title="isProofMode ? '切换为翻译模式' : '切换为校对模式'"
+          @click="handleToggleMode"
+          :aria-pressed="isProofMode"
+        >
+          <span class="sr-only">{{ isProofMode ? '切换为翻译模式' : '切换为校对模式' }}</span>
+          <svg class="toolbox__icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M6 12.5L10 16.5L18 8.5M11 4H7A3 3 0 0 0 4 7V17A3 3 0 0 0 7 20H17A3 3 0 0 0 20 17V13"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
+        <button type="button" class="toolbox__button" title="快捷键指南" @click="openShortcutHelp">
+          <span class="sr-only">快捷键指南</span>
+          <svg class="toolbox__icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M12 3C7.58 3 4 6.58 4 11C4 15.42 7.58 19 12 19C16.42 19 20 15.42 20 11C20 6.58 16.42 3 12 3Z"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M10.8 9.2C10.8 8.32 11.52 7.6 12.4 7.6C13.28 7.6 14 8.32 14 9.2C14 10.08 13.48 10.48 13.08 10.76C12.48 11.18 12.2 11.48 12.2 12.2V12.6"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M12 15.2H12.01"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            />
+          </svg>
+        </button>
       </aside>
-      <div class="translator__workspace" :style="workspaceStyle">
+      <div class="translator__workspace" :style="workspaceStyle" ref="workspaceRef">
         <div
           class="board"
           :class="boardGridClass"
+          ref="boardRef"
           @wheel="handleCanvasWheel"
           @pointerdown="handleCanvasPointerDown"
           @pointermove="handleCanvasPointerMove"
@@ -1176,6 +1455,7 @@ onBeforeUnmount(() => {
               alt="漫画页"
               class="board__image"
               draggable="false"
+              @load="handleBoardContentLoaded"
             />
             <template v-if="showMarkers">
               <button
@@ -1194,6 +1474,7 @@ onBeforeUnmount(() => {
                   top: `${item.position.y * 100}%`,
                   transform: markerTransform,
                 }"
+                :aria-label="sourceLabelMap.get(item.id)?.display ?? ''"
                 @pointerdown="event => handleSourcePointerDown(event, item.id)"
                 @click.stop="handleSelectSource(item.id)"
                 @contextmenu.prevent.stop="handleRemoveSource(item.id)"
@@ -1202,9 +1483,23 @@ onBeforeUnmount(() => {
                 <span class="marker__pointer" aria-hidden="true"></span>
               </button>
             </template>
+            <div
+              v-if="isProofMode && selectedSource"
+              class="marker-overlay"
+              :style="proofOverlayStyle"
+            >
+              <div class="marker-overlay__content">
+                {{ selectedSource.translationText || '—' }}
+              </div>
+            </div>
           </div>
         </div>
-        <aside class="panel" :class="{ 'panel--collapsed': isPanelCollapsed }" ref="panelRef">
+        <aside
+          class="panel"
+          :class="{ 'panel--collapsed': isPanelCollapsed }"
+          ref="panelRef"
+          :style="panelStyle"
+        >
           <ul v-if="!isPanelCollapsed" class="panel__list">
             <li
               v-for="item in sources"
@@ -1252,6 +1547,7 @@ onBeforeUnmount(() => {
       <header class="editor__header" @pointerdown="handleEditorPointerDown">
         <div class="editor__title">
           <span class="editor__label">{{ selectedSourceLabel }}</span>
+          <span class="editor__mode">{{ isProofMode ? '校对模式' : '翻译模式' }}</span>
         </div>
         <button
           type="button"
@@ -1266,18 +1562,26 @@ onBeforeUnmount(() => {
           </svg>
         </button>
       </header>
-      <div class="editor__body">
-        <textarea
-          v-model="editorTranslationText"
-          class="editor__textarea"
-          placeholder="待翻译..."
-          ref="translationTextareaRef"
-        ></textarea>
-        <textarea
-          v-model="editorProofText"
-          class="editor__textarea editor__textarea--proof"
-          placeholder="待校对..."
-        ></textarea>
+      <div class="editor__body" :class="{ 'editor__body--proof-mode': isProofMode }">
+        <div v-if="!isProofMode" class="editor__field">
+          <div class="editor__field-label">翻译稿</div>
+          <textarea
+            v-model="editorTranslationText"
+            class="editor__textarea"
+            placeholder="待翻译..."
+            ref="translationTextareaRef"
+          ></textarea>
+        </div>
+        <div v-if="isProofMode" class="editor__field editor__field--proof">
+          <div class="editor__field-label">校对稿</div>
+          <textarea
+            v-model="editorProofText"
+            class="editor__textarea editor__textarea--proof"
+            placeholder="待校对..."
+            ref="proofTextareaRef"
+            @keydown="handleProofShortcut"
+          ></textarea>
+        </div>
       </div>
       <footer class="editor__footer">
         <div class="editor__footer-actions">
@@ -1293,10 +1597,48 @@ onBeforeUnmount(() => {
             class="editor__footer-button editor__footer-button--primary"
             @click="toggleProofStatus"
           >
-            {{ selectedSource.status === 'proofed' ? '取消校对状态' : '标记为已校对' }}
+            {{
+              selectedSource.status === 'proofed'
+                ? '取消校对状态'
+                : isProofMode
+                  ? '提交校对'
+                  : '标记为已校对'
+            }}
           </button>
         </div>
       </footer>
+    </div>
+    <div
+      v-if="isShortcutHelpVisible"
+      class="shortcut-help-overlay"
+      @click="closeShortcutHelp"
+    ></div>
+    <div
+      v-if="isShortcutHelpVisible"
+      class="shortcut-help"
+      tabindex="-1"
+      role="dialog"
+      aria-modal="true"
+      aria-label="快捷键指南"
+      ref="shortcutHelpRef"
+      @keydown="handleShortcutHelpKeydown"
+      @click.stop
+    >
+      <header class="shortcut-help__header">
+        <h2 class="shortcut-help__title">快捷键指南</h2>
+        <button type="button" class="shortcut-help__close" @click="closeShortcutHelp">
+          <span class="sr-only">关闭快捷键悬浮窗</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 8L16 16M16 8L8 16" stroke-width="1.8" stroke-linecap="round" />
+          </svg>
+        </button>
+      </header>
+      <ul class="shortcut-help__list">
+        <li v-for="item in SHORTCUT_HINTS" :key="item.combo" class="shortcut-help__item">
+          <span class="shortcut-help__combo">{{ item.combo }}</span>
+          <span class="shortcut-help__description">{{ item.description }}</span>
+        </li>
+      </ul>
     </div>
   </section>
 </template>
@@ -1389,7 +1731,7 @@ onBeforeUnmount(() => {
   border: none;
   border-radius: 999px;
   padding: 4px 12px;
-  background: rgba(118, 184, 255, 0.85);
+  background: rgba(200, 215, 230, 0.85);
   color: #123357;
   font-size: 12px;
   cursor: pointer;
@@ -1457,6 +1799,12 @@ onBeforeUnmount(() => {
   box-shadow: none;
 }
 
+.toolbox__button--active {
+  border-color: rgba(118, 184, 255, 0.85);
+  box-shadow: 0 12px 22px rgba(118, 184, 255, 0.26);
+  background: rgba(228, 245, 255, 0.95);
+}
+
 .toolbox__icon {
   width: 18px;
   height: 18px;
@@ -1469,17 +1817,22 @@ onBeforeUnmount(() => {
 
 .translator__workspace {
   flex: 1;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(260px, 22vw, 360px);
+  display: flex;
   gap: 18px;
   align-items: stretch;
   min-height: 0;
   height: 100%;
 }
 
+.translator__workspace > * {
+  height: 100%;
+  min-height: 0;
+}
+
 .board {
   position: relative;
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -1513,72 +1866,120 @@ onBeforeUnmount(() => {
 .marker {
   position: absolute;
   border: none;
-  background: transparent;
-  cursor: default;
+  background: rgba(255, 255, 255, 0.95);
+  cursor: pointer;
   padding: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  transform-origin: 50% 100%;
+  justify-content: center;
+  /* increased by ~70% from 24px -> 41px */
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  transform-origin: 50% 50%;
+  box-shadow: 0 10px 22px rgba(20, 24, 32, 0.14);
+  transition:
+    transform 0.16s ease,
+    box-shadow 0.16s ease,
+    background 0.16s ease,
+    border 0.16s ease;
+  /* narrow dark stroke */
+  border: 1px solid rgba(202, 205, 212, 0.92);
   min-width: 0;
   touch-action: none;
+  overflow: visible;
 }
 
+.marker:hover,
 .marker:focus-visible {
-  outline: 2px solid rgba(118, 184, 255, 0.7);
-  outline-offset: 4px;
+  box-shadow: 0 14px 30px rgba(118, 166, 219, 0.32);
+  outline: none;
 }
 
 .marker__label {
-  padding: 6px 14px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.95);
-  color: #35506f;
-  font-size: 12px;
+  color: #173556;
+  /* scale label a bit to match larger marker */
+  font-size: 14px;
   font-weight: 600;
-  letter-spacing: 0.4px;
-  box-shadow: 0 8px 16px rgba(94, 138, 196, 0.18);
+  letter-spacing: 0.2px;
   pointer-events: none;
 }
 
 .marker__pointer {
-  width: 22px;
-  height: 18px;
-  background: rgba(120, 185, 255, 0.6);
-  clip-path: polygon(50% 100%, 0% 0%, 100% 0%);
-  filter: drop-shadow(0 6px 10px rgba(94, 138, 196, 0.22));
+  position: absolute;
+  /* moved downward to sit visually attached to larger circle */
+  bottom: -12px;
+  left: 50%;
+  transform: translateX(-50%);
+  /* scaled by ~70% from 14x8 -> 24x14 */
+  width: 16px;
+  height: 14px;
+  background: rgba(202, 208, 214, 0.8);
+  clip-path: polygon(50% 100%, 0 0, 100% 0);
+  filter: drop-shadow(0 3px 6px rgba(20, 24, 32, 0.18));
   pointer-events: none;
 }
 
+.marker--inside {
+  /* pink-ish fill for inside markers */
+  background: linear-gradient(145deg, rgba(255, 182, 193, 0.96), rgba(255, 150, 185, 0.9));
+  border-color: rgba(160, 40, 80, 0.92);
+}
+
 .marker--inside .marker__label {
-  background: rgba(118, 182, 255, 0.95);
   color: #13325c;
-  box-shadow: 0 10px 24px rgba(118, 182, 255, 0.36);
 }
 
 .marker--inside .marker__pointer {
-  background: rgba(118, 182, 255, 0.85);
+  background: rgba(255, 160, 185, 0.95);
+}
+
+.marker--outside {
+  /* pale yellow for outside markers */
+  background: linear-gradient(145deg, rgba(255, 249, 196, 0.96), rgba(255, 241, 160, 0.9));
+  border-color: rgba(180, 150, 60, 0.92);
 }
 
 .marker--outside .marker__label {
-  background: rgba(255, 185, 210, 0.95);
   color: #61203b;
-  box-shadow: 0 10px 24px rgba(255, 185, 210, 0.34);
 }
 
 .marker--outside .marker__pointer {
-  background: rgba(255, 185, 210, 0.85);
+  background: rgba(255, 235, 150, 0.95);
 }
 
-.marker--active .marker__label {
-  outline: 2px solid rgba(255, 196, 139, 0.6);
-  outline-offset: 3px;
+.marker--active {
+  box-shadow: 0 16px 34px rgba(255, 196, 139, 0.4);
+  border-color: rgba(255, 196, 139, 0.9);
+}
+
+.marker--active .marker__pointer {
+  background: rgba(255, 196, 139, 0.95);
+}
+
+.marker-overlay {
+  position: absolute;
+  transform: translate(-50%, calc(-100% - 14px));
+  pointer-events: none;
+  max-width: 240px;
+  width: max-content;
+}
+
+.marker-overlay__content {
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(28, 40, 58, 0.72);
+  color: #f5f8ff;
+  font-size: 12px;
+  line-height: 1.5;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 10px 24px rgba(30, 50, 76, 0.32);
+  white-space: pre-line;
 }
 
 .panel {
-  width: 100%;
-  flex-shrink: 0;
+  flex: 0 0 auto;
   padding: 18px 18px 16px;
   border-radius: 22px;
   background: rgba(255, 255, 255, 0.88);
@@ -1587,12 +1988,19 @@ onBeforeUnmount(() => {
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+  transition:
+    flex-basis 0.28s ease,
+    max-width 0.28s ease,
+    padding 0.28s ease;
 }
 
 .panel--collapsed {
   padding: 12px 8px;
   align-items: stretch;
   justify-content: flex-start;
+  box-sizing: border-box;
 }
 
 .panel__list {
@@ -1718,6 +2126,18 @@ onBeforeUnmount(() => {
   color: #294061;
 }
 
+.editor__mode {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: 0.3px;
+  background: rgba(133, 182, 255, 0.18);
+  color: #2a4f7a;
+}
+
 .editor__close {
   border: none;
   background: transparent;
@@ -1747,6 +2167,22 @@ onBeforeUnmount(() => {
   padding: 14px;
   flex: 1;
   overflow: auto;
+}
+
+.editor__body--proof-mode {
+  gap: 16px;
+}
+
+.editor__field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.editor__field-label {
+  font-size: 12px;
+  color: #4a5f7d;
+  font-weight: 600;
 }
 
 .editor__textarea {
@@ -1819,6 +2255,108 @@ onBeforeUnmount(() => {
 .editor__footer-button--primary:hover {
   transform: translateY(-2px);
   box-shadow: 0 10px 20px rgba(130, 205, 182, 0.26);
+}
+
+.shortcut-help-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(30, 46, 70, 0.28);
+  backdrop-filter: blur(2px);
+  z-index: 45;
+}
+
+.shortcut-help {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(440px, calc(100vw - 48px));
+  max-height: min(420px, calc(100vh - 96px));
+  padding: 22px 26px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 28px 56px rgba(104, 146, 204, 0.32);
+  border: 1px solid rgba(160, 192, 236, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  outline: none;
+  z-index: 50;
+}
+
+.shortcut-help__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.shortcut-help__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #244163;
+}
+
+.shortcut-help__close {
+  border: none;
+  background: transparent;
+  padding: 6px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.16s ease;
+  color: #3b5a80;
+}
+
+.shortcut-help__close:hover {
+  background: rgba(229, 239, 255, 0.8);
+}
+
+.shortcut-help__close svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.shortcut-help__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.shortcut-help__item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(242, 248, 255, 0.92);
+  border: 1px solid rgba(186, 210, 244, 0.6);
+}
+
+.shortcut-help__combo {
+  flex: none;
+  min-width: 120px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(134, 188, 255, 0.22);
+  color: #24507a;
+  font-weight: 600;
+  font-size: 13px;
+  text-align: center;
+}
+
+.shortcut-help__description {
+  flex: 1;
+  font-size: 13px;
+  color: #30455f;
+  line-height: 1.5;
 }
 
 .sr-only {
