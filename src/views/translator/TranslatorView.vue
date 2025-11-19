@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 interface SourcePosition {
   x: number;
@@ -29,6 +29,11 @@ interface ProjectPageData {
   sources: TranslationSource[];
 }
 
+interface SourceLabelInfo {
+  number: string;
+  display: string;
+}
+
 const props = defineProps<{
   projectId: string;
   pageIndex: number;
@@ -47,7 +52,25 @@ const ZOOM_STEP = 0.12;
 
 const PANNING_THRESHOLD = 6;
 
-const DEFAULT_EDITOR_POSITION = { x: 60, y: 24 };
+const DEFAULT_EDITOR_POSITION = { x: 72, y: 72 };
+
+const DEFAULT_EDITOR_SIZE = { width: 320, height: 280 };
+
+const MIN_WORKSPACE_HEIGHT = 420;
+
+const WORKSPACE_VERTICAL_OFFSET = 220;
+
+const PANEL_COLLAPSE_BREAKPOINT = 1180;
+
+const PANEL_COLLAPSED_WIDTH = 56;
+
+const PANEL_WIDTH_RATIO = 0.2;
+
+const MARKER_REFERENCE_WIDTH = 1280;
+
+const MIN_MARKER_VIEWPORT_SCALE = 0.9;
+
+const MAX_MARKER_VIEWPORT_SCALE = 1.2;
 
 const MOCK_IMAGE_URLS = [
   new URL('../../../tests/images/cover_miseyari_01_0001.jpg', import.meta.url).href,
@@ -63,6 +86,8 @@ const projectPage = ref<ProjectPageData | null>(null);
 
 const sources = ref<TranslationSource[]>([]);
 
+const pageInputValue = ref(currentPageIndex.value + 1);
+
 const zoom = ref(1);
 
 const pan = ref({ x: 0, y: 0 });
@@ -75,7 +100,11 @@ const editorTranslationText = ref('');
 
 const editorProofText = ref('');
 
+const translationTextareaRef = ref<HTMLTextAreaElement | null>(null);
+
 const editorPosition = ref({ ...DEFAULT_EDITOR_POSITION });
+
+const editorSize = ref({ ...DEFAULT_EDITOR_SIZE });
 
 const isDraggingEditor = ref(false);
 
@@ -84,6 +113,14 @@ const editorPointerStart = ref({ x: 0, y: 0 });
 const editorPositionStart = ref({ ...DEFAULT_EDITOR_POSITION });
 
 const imageWrapperRef = ref<HTMLDivElement | null>(null);
+
+const panelRef = ref<HTMLElement | null>(null);
+
+const windowSize = ref({ width: window.innerWidth, height: window.innerHeight });
+
+const hasPanelOverride = ref(false);
+
+const isPanelCollapsed = ref(window.innerWidth < PANEL_COLLAPSE_BREAKPOINT);
 
 const draggingSourceId = ref<string | null>(null);
 
@@ -101,15 +138,78 @@ const panStart = ref({ x: 0, y: 0 });
 
 const lastCanvasPointerEvent = ref<PointerEvent | null>(null);
 
+const canvasPointerButton = ref<0 | 2 | null>(null);
+
 let sourceSerial = 0;
 
+let latestPageLoadToken = 0;
+
+const pageSourceStore = new Map<number, TranslationSource[]>();
+
 const hasEditorBeenDragged = ref(false);
+
+function cloneSource(source: TranslationSource): TranslationSource {
+  return {
+    ...source,
+    position: { ...source.position },
+  };
+}
+
+function cloneSourceList(list: TranslationSource[]): TranslationSource[] {
+  return list.map(item => cloneSource(item));
+}
+
+function persistPageSources(pageIndex: number): void {
+  if (pageIndex < 0) {
+    return;
+  }
+
+  pageSourceStore.set(pageIndex, cloneSourceList(sources.value));
+}
 
 const boardTransform = computed(
   () => `matrix(${zoom.value}, 0, 0, ${zoom.value}, ${pan.value.x}, ${pan.value.y})`
 );
 
-const isBoardGrabbing = computed(() => isCanvasPointerDown.value && isPanningCanvas.value);
+const showMarkers = computed(() => !isPanelCollapsed.value);
+
+const workspaceStyle = computed(() => {
+  const availableHeight = Math.max(
+    MIN_WORKSPACE_HEIGHT,
+    windowSize.value.height - WORKSPACE_VERTICAL_OFFSET
+  );
+
+  const style: Record<string, string> = {
+    minHeight: `${availableHeight}px`,
+    height: `${availableHeight}px`,
+  };
+
+  if (isPanelCollapsed.value) {
+    style.gridTemplateColumns = `minmax(0, 1fr) ${PANEL_COLLAPSED_WIDTH}px`;
+
+    return style;
+  }
+
+  const panelPercent = Math.round(PANEL_WIDTH_RATIO * 100);
+
+  const boardPercent = Math.max(0, 100 - panelPercent);
+
+  style.gridTemplateColumns = `minmax(0, ${boardPercent}%) minmax(260px, ${panelPercent}%)`;
+
+  return style;
+});
+
+const boardGridClass = computed(() => ({ 'board--full': isPanelCollapsed.value }));
+
+const markerViewportScale = computed(() => {
+  const widthFactor = windowSize.value.width / MARKER_REFERENCE_WIDTH;
+
+  return Math.min(MAX_MARKER_VIEWPORT_SCALE, Math.max(MIN_MARKER_VIEWPORT_SCALE, widthFactor));
+});
+
+const markerScale = computed(() => markerViewportScale.value / zoom.value);
+
+const markerTransform = computed(() => `translate(-50%, -100%) scale(${markerScale.value})`);
 
 const selectedSource = computed(() => {
   if (!activeSourceId.value) {
@@ -122,24 +222,21 @@ const selectedSource = computed(() => {
 });
 
 const sourceLabelMap = computed(() => {
-  const labelMap = new Map<string, string>();
+  const labelMap = new Map<string, SourceLabelInfo>();
 
-  let outsideIndex = 1;
-
-  let insideIndex = 1;
+  let index = 1;
 
   for (const item of sources.value) {
-    if (item.category === 'outside') {
-      labelMap.set(item.id, `框外-${outsideIndex}`);
+    const number = String(index).padStart(3, '0');
 
-      outsideIndex += 1;
+    const suffix = item.category === 'inside' ? '框内' : '框外';
 
-      continue;
-    }
+    labelMap.set(item.id, {
+      number,
+      display: `${number}-${suffix}`,
+    });
 
-    labelMap.set(item.id, `框内-${insideIndex}`);
-
-    insideIndex += 1;
+    index += 1;
   }
 
   return labelMap;
@@ -150,7 +247,7 @@ const selectedSourceLabel = computed(() => {
     return '';
   }
 
-  return sourceLabelMap.value.get(selectedSource.value.id) ?? '';
+  return sourceLabelMap.value.get(selectedSource.value.id)?.display ?? '';
 });
 
 watch(
@@ -160,7 +257,7 @@ watch(
   }
 );
 
-watch(selectedSource, source => {
+watch(selectedSource, (source, previousSource) => {
   if (!source) {
     editorTranslationText.value = '';
 
@@ -175,9 +272,15 @@ watch(selectedSource, source => {
 
   editorProofText.value = source.proofText;
 
-  hasEditorBeenDragged.value = false;
+  if (!previousSource) {
+    hasEditorBeenDragged.value = false;
 
-  moveEditorNearSource(true);
+    moveEditorNearPanel(true);
+  }
+
+  nextTick(() => {
+    translationTextareaRef.value?.focus();
+  });
 });
 
 watch(editorTranslationText, value => {
@@ -210,11 +313,25 @@ watch(editorProofText, value => {
 
 watch(
   currentPageIndex,
-  value => {
+  (value, oldValue) => {
+    pageInputValue.value = value + 1;
+
+    if (typeof oldValue === 'number') {
+      persistPageSources(oldValue);
+    }
+
     initPage(value);
   },
   { immediate: true }
 );
+
+watch(windowSize, value => {
+  clampEditorWithinViewport();
+
+  if (!hasPanelOverride.value) {
+    isPanelCollapsed.value = value.width < PANEL_COLLAPSE_BREAKPOINT;
+  }
+});
 
 // 获取 mock 页面数据
 async function __mockFetchProjectPage(pageIndex: number): Promise<ProjectPageData> {
@@ -222,18 +339,22 @@ async function __mockFetchProjectPage(pageIndex: number): Promise<ProjectPageDat
 
   const imageIndex = pageIndex % MOCK_IMAGE_URLS.length;
 
+  const offset = (pageIndex % 4) * 0.04;
+
+  const verticalShift = (pageIndex % 3) * 0.05;
+
   const baseSources: TranslationSource[] = [
     {
       id: createSourceId(),
       category: 'inside',
-      status: 'translated',
-      translationText: '这里是翻译示例。',
+      status: pageIndex % 2 === 0 ? 'translated' : 'empty',
+      translationText: `这里是第 ${pageIndex + 1} 页的翻译示例。`,
       proofText: '',
       position: {
-        x: 0.18,
-        y: 0.18,
-        width: 0.32,
-        height: 0.12,
+        x: 0.22 + offset,
+        y: 0.26 + verticalShift,
+        width: 0,
+        height: 0,
       },
     },
     {
@@ -243,23 +364,23 @@ async function __mockFetchProjectPage(pageIndex: number): Promise<ProjectPageDat
       translationText: '',
       proofText: '',
       position: {
-        x: 0.58,
-        y: 0.12,
-        width: 0.2,
-        height: 0.1,
+        x: 0.55 + offset * 0.8,
+        y: 0.2 + verticalShift * 0.6,
+        width: 0,
+        height: 0,
       },
     },
     {
       id: createSourceId(),
       category: 'inside',
-      status: 'proofed',
-      translationText: '最终校对文本示例。',
-      proofText: '最终校对文本示例。',
+      status: pageIndex % 3 === 0 ? 'proofed' : 'translated',
+      translationText: `最终校对文本示例 - 第 ${pageIndex + 1} 页`,
+      proofText: pageIndex % 3 === 0 ? `最终校对文本示例 - 第 ${pageIndex + 1} 页` : '',
       position: {
-        x: 0.26,
-        y: 0.62,
-        width: 0.3,
-        height: 0.16,
+        x: 0.38 + offset * 0.5,
+        y: 0.62 + verticalShift,
+        width: 0,
+        height: 0,
       },
     },
   ];
@@ -279,32 +400,42 @@ async function __mockFetchProjectPage(pageIndex: number): Promise<ProjectPageDat
 
 // 初始化页面数据
 async function initPage(pageIndex: number): Promise<void> {
-  if (isLoading.value) {
-    return;
-  }
+  const requestToken = ++latestPageLoadToken;
 
   isLoading.value = true;
 
   try {
     const result = await __mockFetchProjectPage(pageIndex);
 
+    if (requestToken !== latestPageLoadToken) {
+      return;
+    }
+
     projectPage.value = result;
 
-    sources.value = [...result.sources];
+    if (!pageSourceStore.has(pageIndex)) {
+      pageSourceStore.set(pageIndex, cloneSourceList(result.sources));
+    }
 
-    activeSourceId.value = result.sources[0]?.id ?? null;
+    const hydratedSources = pageSourceStore.get(pageIndex) ?? [];
+
+    sources.value = cloneSourceList(hydratedSources);
+
+    activeSourceId.value = null;
   } catch (error) {
     console.error('加载项目页面失败', error);
   } finally {
-    editorTranslationText.value = selectedSource.value?.translationText ?? '';
+    if (requestToken === latestPageLoadToken) {
+      editorTranslationText.value = selectedSource.value?.translationText ?? '';
 
-    editorProofText.value = selectedSource.value?.proofText ?? '';
+      editorProofText.value = selectedSource.value?.proofText ?? '';
 
-    zoom.value = 1;
+      zoom.value = 1;
 
-    pan.value = { x: 0, y: 0 };
+      pan.value = { x: 0, y: 0 };
 
-    isLoading.value = false;
+      isLoading.value = false;
+    }
   }
 }
 
@@ -316,7 +447,7 @@ function createSourceId(): string {
 }
 
 // 通过坐标创建标记
-function addSourceAtPointer(event: MouseEvent | PointerEvent): void {
+function addSourceAtPointer(event: MouseEvent | PointerEvent, category: SourceCategory): void {
   const wrapper = imageWrapperRef.value;
 
   if (!wrapper || !projectPage.value) {
@@ -335,21 +466,39 @@ function addSourceAtPointer(event: MouseEvent | PointerEvent): void {
 
   const newSource: TranslationSource = {
     id: createSourceId(),
-    category: 'inside',
+    category,
     status: 'empty',
     translationText: '',
     proofText: '',
     position: {
-      x: Math.min(Math.max(relativeX - 0.12, 0), 0.88),
-      y: Math.min(Math.max(relativeY - 0.08, 0), 0.88),
-      width: 0.24,
-      height: 0.16,
+      x: Math.min(Math.max(relativeX, 0), 1),
+      y: Math.min(Math.max(relativeY, 0), 1),
+      width: 0,
+      height: 0,
     },
   };
 
   sources.value = [...sources.value, newSource];
 
   activeSourceId.value = newSource.id;
+}
+
+function handleTogglePanel(): void {
+  if (!hasPanelOverride.value) {
+    hasPanelOverride.value = true;
+  }
+
+  isPanelCollapsed.value = !isPanelCollapsed.value;
+
+  if (isPanelCollapsed.value) {
+    activeSourceId.value = null;
+
+    return;
+  }
+
+  nextTick(() => {
+    moveEditorNearPanel(true);
+  });
 }
 
 // 拖拽标记开始
@@ -370,9 +519,13 @@ function handleSourcePointerDown(event: PointerEvent, sourceId: string): void {
 
   const rect = wrapper.getBoundingClientRect();
 
-  const offsetX = event.clientX - (targetSource.position.x * rect.width + rect.left);
+  const pointerX = rect.left + targetSource.position.x * rect.width;
 
-  const offsetY = event.clientY - (targetSource.position.y * rect.height + rect.top);
+  const pointerY = rect.top + targetSource.position.y * rect.height;
+
+  const offsetX = event.clientX - pointerX;
+
+  const offsetY = event.clientY - pointerY;
 
   markerDragOffset.value = {
     x: offsetX,
@@ -400,17 +553,17 @@ function updateDraggingSourcePosition(event: PointerEvent): void {
 
   const rect = wrapper.getBoundingClientRect();
 
-  const newLeft = event.clientX - markerDragOffset.value.x - rect.left;
+  const pointerX = event.clientX - markerDragOffset.value.x;
 
-  const newTop = event.clientY - markerDragOffset.value.y - rect.top;
+  const pointerY = event.clientY - markerDragOffset.value.y;
 
-  const relativeX = newLeft / rect.width;
+  const relativeX = (pointerX - rect.left) / rect.width;
 
-  const relativeY = newTop / rect.height;
+  const relativeY = (pointerY - rect.top) / rect.height;
 
-  targetSource.position.x = Math.min(Math.max(relativeX, 0), 1 - targetSource.position.width);
+  targetSource.position.x = Math.min(Math.max(relativeX, 0), 1);
 
-  targetSource.position.y = Math.min(Math.max(relativeY, 0), 1 - targetSource.position.height);
+  targetSource.position.y = Math.min(Math.max(relativeY, 0), 1);
 }
 
 // 停止拖拽标记
@@ -483,7 +636,7 @@ function handleCanvasWheel(event: WheelEvent): void {
 
 // 处理画布鼠标按下
 function handleCanvasPointerDown(event: PointerEvent): void {
-  if (event.button !== 0) {
+  if (event.button !== 0 && event.button !== 2) {
     return;
   }
 
@@ -492,6 +645,8 @@ function handleCanvasPointerDown(event: PointerEvent): void {
   if (target.closest('[data-source-id]')) {
     return;
   }
+
+  canvasPointerButton.value = event.button as 0 | 2;
 
   isCanvasPointerDown.value = true;
 
@@ -563,7 +718,15 @@ function handleCanvasPointerUp(event: PointerEvent): void {
 
   lastCanvasPointerEvent.value = null;
 
+  const pointerButton = canvasPointerButton.value;
+
+  canvasPointerButton.value = null;
+
   if (pointerWasPanning) {
+    return;
+  }
+
+  if (isPanelCollapsed.value || (pointerButton !== 0 && pointerButton !== 2)) {
     return;
   }
 
@@ -584,7 +747,9 @@ function handleCanvasPointerUp(event: PointerEvent): void {
     return;
   }
 
-  addSourceAtPointer(referenceEvent);
+  const category: SourceCategory = pointerButton === 2 ? 'outside' : 'inside';
+
+  addSourceAtPointer(referenceEvent, category);
 }
 
 function handleCanvasPointerCancel(event: PointerEvent): void {
@@ -602,7 +767,16 @@ function handleCanvasPointerCancel(event: PointerEvent): void {
 
   canvasPointerId.value = null;
 
+  canvasPointerButton.value = null;
+
   lastCanvasPointerEvent.value = null;
+}
+
+function handleWindowResize(): void {
+  windowSize.value = {
+    width: window.innerWidth,
+    height: window.innerHeight,
+  };
 }
 
 // 选中标记
@@ -638,13 +812,17 @@ function updateEditorPosition(event: PointerEvent): void {
 
   const deltaY = event.clientY - editorPointerStart.value.y;
 
-  const nextX = editorPositionStart.value.x + (deltaX / window.innerWidth) * 100;
+  const nextX = editorPositionStart.value.x + deltaX;
 
-  const nextY = editorPositionStart.value.y + (deltaY / window.innerHeight) * 100;
+  const nextY = editorPositionStart.value.y + deltaY;
+
+  const maxX = window.innerWidth - editorSize.value.width - 12;
+
+  const maxY = window.innerHeight - editorSize.value.height - 12;
 
   editorPosition.value = {
-    x: Math.min(92, Math.max(6, nextX)),
-    y: Math.min(90, Math.max(8, nextY)),
+    x: Math.min(Math.max(12, nextX), Math.max(12, maxX)),
+    y: Math.min(Math.max(12, nextY), Math.max(12, maxY)),
   };
 
   if (!hasEditorBeenDragged.value && (Math.abs(deltaX) > 1 || Math.abs(deltaY) > 1)) {
@@ -665,39 +843,97 @@ function stopDraggingEditor(): void {
 function moveEditorToDefault(): void {
   editorPosition.value = { ...DEFAULT_EDITOR_POSITION };
 
+  editorSize.value = { ...DEFAULT_EDITOR_SIZE };
+
+  clampEditorWithinViewport();
+
   hasEditorBeenDragged.value = false;
 }
 
-// 根据标记位置移动编辑器
-function moveEditorNearSource(force = false): void {
+// 保证浮窗在视口内
+function clampEditorWithinViewport(): void {
+  const maxX = Math.max(12, window.innerWidth - editorSize.value.width - 12);
+
+  const maxY = Math.max(12, window.innerHeight - editorSize.value.height - 12);
+
+  editorPosition.value = {
+    x: Math.min(Math.max(12, editorPosition.value.x), maxX),
+    y: Math.min(Math.max(12, editorPosition.value.y), maxY),
+  };
+}
+
+// 移动编辑器到面板下方
+function moveEditorNearPanel(force = false): void {
   if (hasEditorBeenDragged.value && !force) {
     return;
   }
 
-  const wrapper = imageWrapperRef.value;
+  const panel = panelRef.value;
 
-  if (!wrapper || !selectedSource.value) {
+  if (!panel) {
     moveEditorToDefault();
 
     return;
   }
 
-  const rect = wrapper.getBoundingClientRect();
+  const panelRect = panel.getBoundingClientRect();
 
-  const source = selectedSource.value;
+  const rawWidth = panelRect.width * 0.9;
 
-  const left = rect.left + source.position.x * rect.width + source.position.width * rect.width;
+  const rawHeight = panelRect.height * 0.5;
 
-  const top = rect.top + source.position.y * rect.height;
+  const clampedWidth = Math.min(Math.max(260, rawWidth), window.innerWidth - 32);
 
-  const nextX = ((left + 24) / window.innerWidth) * 100;
+  const clampedHeight = Math.min(Math.max(220, rawHeight), window.innerHeight - 48);
 
-  const nextY = (top / window.innerHeight) * 100;
+  const left = panelRect.left + panelRect.width / 2 - clampedWidth / 2;
+
+  const bottomAlignedTop = panelRect.bottom - clampedHeight;
+
+  const safeTop = Math.min(bottomAlignedTop, window.innerHeight - clampedHeight - 16);
+
+  editorSize.value = {
+    width: clampedWidth,
+    height: clampedHeight,
+  };
 
   editorPosition.value = {
-    x: Math.min(92, Math.max(6, nextX)),
-    y: Math.min(88, Math.max(9, nextY)),
+    x: Math.max(16, left),
+    y: Math.max(16, safeTop),
   };
+
+  clampEditorWithinViewport();
+
+  clampEditorWithinViewport();
+}
+
+// Tab 快捷键聚焦源
+function handleTabFocusShortcut(event: KeyboardEvent): void {
+  if (event.key !== 'Tab') {
+    return;
+  }
+
+  if (event.repeat) {
+    return;
+  }
+
+  event.preventDefault();
+
+  if (sources.value.length === 0) {
+    return;
+  }
+
+  if (!activeSourceId.value) {
+    activeSourceId.value = sources.value[0].id;
+
+    return;
+  }
+
+  const currentIndex = sources.value.findIndex(item => item.id === activeSourceId.value);
+
+  const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % sources.value.length : 0;
+
+  activeSourceId.value = sources.value[nextIndex].id;
 }
 
 // 切换标记类别
@@ -777,6 +1013,36 @@ function handleNextPage(): void {
   emit('update:pageIndex', currentPageIndex.value);
 }
 
+function handleJumpToPage(): void {
+  const total = projectPage.value?.pageCount ?? 0;
+
+  if (total <= 0) {
+    pageInputValue.value = currentPageIndex.value + 1;
+
+    return;
+  }
+
+  const requested = Number(pageInputValue.value);
+
+  if (!Number.isFinite(requested)) {
+    pageInputValue.value = currentPageIndex.value + 1;
+
+    return;
+  }
+
+  const clamped = Math.min(Math.max(1, Math.round(requested)), total);
+
+  pageInputValue.value = clamped;
+
+  if (clamped - 1 === currentPageIndex.value) {
+    return;
+  }
+
+  currentPageIndex.value = clamped - 1;
+
+  emit('update:pageIndex', currentPageIndex.value);
+}
+
 onMounted(() => {
   window.addEventListener('pointermove', updateDraggingSourcePosition);
 
@@ -789,6 +1055,10 @@ onMounted(() => {
   window.addEventListener('pointercancel', stopDraggingSource);
 
   window.addEventListener('pointercancel', stopDraggingEditor);
+
+  window.addEventListener('keydown', handleTabFocusShortcut, true);
+
+  window.addEventListener('resize', handleWindowResize);
 });
 
 onBeforeUnmount(() => {
@@ -803,6 +1073,10 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointercancel', stopDraggingSource);
 
   window.removeEventListener('pointercancel', stopDraggingEditor);
+
+  window.removeEventListener('keydown', handleTabFocusShortcut, true);
+
+  window.removeEventListener('resize', handleWindowResize);
 });
 </script>
 
@@ -810,12 +1084,27 @@ onBeforeUnmount(() => {
   <section class="translator">
     <header class="translator__header">
       <div class="translator__title-group">
-        <span class="translator__badge"
+        <!-- <span class="translator__badge"
           >第 {{ projectPage?.pageIndex ?? '-' }} / {{ projectPage?.pageCount ?? '-' }} 页</span
-        >
+        > -->
         <h1 class="translator__title">{{ projectPage?.title ?? '加载中' }}</h1>
       </div>
-      <div class="translator__zoom-indicator">{{ Math.round(zoom * 100) }}%</div>
+      <div class="translator__actions">
+        <div class="translator__zoom-indicator">{{ Math.round(zoom * 100) }}%</div>
+        <form class="translator__page-jump" @submit.prevent="handleJumpToPage">
+          <input
+            class="page-jump__input"
+            type="number"
+            min="1"
+            :max="projectPage?.pageCount ?? 1"
+            v-model.number="pageInputValue"
+            :disabled="!projectPage"
+            aria-label="跳转页码"
+          />
+          <span class="page-jump__divider">/ {{ projectPage?.pageCount ?? '-' }}</span>
+          <button type="submit" class="page-jump__button" :disabled="!projectPage">跳转</button>
+        </form>
+      </div>
     </header>
     <div class="translator__body">
       <aside class="toolbox">
@@ -849,11 +1138,30 @@ onBeforeUnmount(() => {
             <path d="M9.5 6L15.5 12L9.5 18" />
           </svg>
         </button>
+        <button
+          type="button"
+          class="toolbox__button"
+          :title="isPanelCollapsed ? '展开源列表' : '收起源列表'"
+          @click="handleTogglePanel"
+          :aria-pressed="!isPanelCollapsed"
+        >
+          <span class="sr-only">{{ isPanelCollapsed ? '展开源列表' : '收起源列表' }}</span>
+          <svg class="toolbox__icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              :d="isPanelCollapsed ? 'M15 5L8 12L15 19' : 'M9 5L16 12L9 19'"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
       </aside>
-      <div class="translator__workspace">
+      <div class="translator__workspace" :style="workspaceStyle">
         <div
           class="board"
-          :class="{ 'board--grabbing': isBoardGrabbing }"
+          :class="boardGridClass"
           @wheel="handleCanvasWheel"
           @pointerdown="handleCanvasPointerDown"
           @pointermove="handleCanvasPointerMove"
@@ -869,50 +1177,48 @@ onBeforeUnmount(() => {
               class="board__image"
               draggable="false"
             />
-            <button
-              v-for="item in sources"
-              :key="item.id"
-              type="button"
-              class="marker"
-              :class="{
-                'marker--active': item.id === activeSourceId,
-                'marker--translated': item.status === 'translated',
-                'marker--proofed': item.status === 'proofed',
-                'marker--outside': item.category === 'outside',
-                'marker--inside': item.category === 'inside',
-              }"
-              :data-source-id="item.id"
-              :style="{
-                left: `${item.position.x * 100}%`,
-                top: `${item.position.y * 100}%`,
-                width: `${item.position.width * 100}%`,
-                height: `${item.position.height * 100}%`,
-              }"
-              @pointerdown="event => handleSourcePointerDown(event, item.id)"
-              @click.stop="handleSelectSource(item.id)"
-              @contextmenu.prevent.stop="handleRemoveSource(item.id)"
-            >
-              <span class="marker__label">{{ sourceLabelMap.get(item.id) }}</span>
-              <span class="marker__pointer" aria-hidden="true"></span>
-            </button>
+            <template v-if="showMarkers">
+              <button
+                v-for="item in sources"
+                :key="item.id"
+                type="button"
+                class="marker"
+                :class="{
+                  'marker--active': item.id === activeSourceId,
+                  'marker--outside': item.category === 'outside',
+                  'marker--inside': item.category === 'inside',
+                }"
+                :data-source-id="item.id"
+                :style="{
+                  left: `${item.position.x * 100}%`,
+                  top: `${item.position.y * 100}%`,
+                  transform: markerTransform,
+                }"
+                @pointerdown="event => handleSourcePointerDown(event, item.id)"
+                @click.stop="handleSelectSource(item.id)"
+                @contextmenu.prevent.stop="handleRemoveSource(item.id)"
+              >
+                <span class="marker__label">{{ sourceLabelMap.get(item.id)?.number ?? '' }}</span>
+                <span class="marker__pointer" aria-hidden="true"></span>
+              </button>
+            </template>
           </div>
         </div>
-        <aside class="panel">
-          <ul class="panel__list">
+        <aside class="panel" :class="{ 'panel--collapsed': isPanelCollapsed }" ref="panelRef">
+          <ul v-if="!isPanelCollapsed" class="panel__list">
             <li
               v-for="item in sources"
               :key="item.id"
               class="panel__item"
               :class="{
                 'panel__item--active': item.id === activeSourceId,
-                'panel__item--empty': item.status === 'empty',
                 'panel__item--proofed': item.status === 'proofed',
                 'panel__item--translated': item.status === 'translated',
               }"
               @click="handleSelectSource(item.id)"
             >
               <div class="panel__item-top">
-                <span>{{ sourceLabelMap.get(item.id) }}</span>
+                <span>{{ sourceLabelMap.get(item.id)?.display ?? '' }}</span>
                 <span
                   class="panel__status-dot"
                   :class="{
@@ -937,16 +1243,15 @@ onBeforeUnmount(() => {
       v-if="selectedSource"
       class="editor"
       :style="{
-        left: `${editorPosition.x}vw`,
-        top: `${editorPosition.y}vh`,
+        left: `${editorPosition.x}px`,
+        top: `${editorPosition.y}px`,
+        width: `${editorSize.width}px`,
+        maxHeight: `${editorSize.height}px`,
       }"
     >
       <header class="editor__header" @pointerdown="handleEditorPointerDown">
         <div class="editor__title">
           <span class="editor__label">{{ selectedSourceLabel }}</span>
-          <button type="button" class="editor__toggle" @click.stop="toggleSourceCategory">
-            {{ selectedSource.category === 'inside' ? '框内' : '框外' }}
-          </button>
         </div>
         <button
           type="button"
@@ -965,18 +1270,32 @@ onBeforeUnmount(() => {
         <textarea
           v-model="editorTranslationText"
           class="editor__textarea"
-          placeholder="翻译文本"
+          placeholder="待翻译..."
+          ref="translationTextareaRef"
         ></textarea>
         <textarea
           v-model="editorProofText"
           class="editor__textarea editor__textarea--proof"
-          placeholder="校对文本"
+          placeholder="待校对..."
         ></textarea>
       </div>
       <footer class="editor__footer">
-        <button type="button" class="editor__action" @click="toggleProofStatus">
-          {{ selectedSource.status === 'proofed' ? '取消校对状态' : '标记为已校对' }}
-        </button>
+        <div class="editor__footer-actions">
+          <button
+            type="button"
+            class="editor__footer-button editor__footer-button--secondary"
+            @click="toggleSourceCategory"
+          >
+            {{ selectedSource.category === 'inside' ? '切换为框外' : '切换为框内' }}
+          </button>
+          <button
+            type="button"
+            class="editor__footer-button editor__footer-button--primary"
+            @click="toggleProofStatus"
+          >
+            {{ selectedSource.status === 'proofed' ? '取消校对状态' : '标记为已校对' }}
+          </button>
+        </div>
       </footer>
     </div>
   </section>
@@ -997,6 +1316,12 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   padding: 22px 40px 16px;
+}
+
+.translator__actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
 }
 
 .translator__title-group {
@@ -1030,6 +1355,58 @@ onBeforeUnmount(() => {
   background: rgba(130, 190, 255, 0.18);
   color: #2f5a8f;
   font-size: 13px;
+}
+
+.translator__page-jump {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(170, 204, 245, 0.65);
+  background: rgba(248, 252, 255, 0.92);
+  padding: 4px 10px;
+}
+
+.page-jump__input {
+  width: 56px;
+  border: none;
+  background: transparent;
+  text-align: center;
+  font-size: 13px;
+  color: #2f3f56;
+}
+
+.page-jump__input:focus {
+  outline: none;
+}
+
+.page-jump__divider {
+  font-size: 12px;
+  color: #5a6c86;
+}
+
+.page-jump__button {
+  border: none;
+  border-radius: 999px;
+  padding: 4px 12px;
+  background: rgba(118, 184, 255, 0.85);
+  color: #123357;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    transform 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.page-jump__button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.page-jump__button:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 12px rgba(118, 184, 255, 0.35);
 }
 
 .translator__body {
@@ -1092,10 +1469,12 @@ onBeforeUnmount(() => {
 
 .translator__workspace {
   flex: 1;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(260px, 22vw, 360px);
   gap: 18px;
   align-items: stretch;
   min-height: 0;
+  height: 100%;
 }
 
 .board {
@@ -1109,14 +1488,10 @@ onBeforeUnmount(() => {
   box-shadow: 0 26px 60px rgba(118, 166, 219, 0.18);
   backdrop-filter: blur(10px);
   overflow: hidden;
-  cursor: grab;
+  cursor: default;
   touch-action: none;
   min-height: 0;
   height: 100%;
-}
-
-.board--grabbing {
-  cursor: grabbing;
 }
 
 .board__frame {
@@ -1139,8 +1514,15 @@ onBeforeUnmount(() => {
   position: absolute;
   border: none;
   background: transparent;
-  cursor: grab;
+  cursor: default;
   padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  transform-origin: 50% 100%;
+  min-width: 0;
+  touch-action: none;
 }
 
 .marker:focus-visible {
@@ -1149,11 +1531,7 @@ onBeforeUnmount(() => {
 }
 
 .marker__label {
-  position: absolute;
-  top: -28px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 4px 12px;
+  padding: 6px 14px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.95);
   color: #35506f;
@@ -1165,50 +1543,41 @@ onBeforeUnmount(() => {
 }
 
 .marker__pointer {
-  position: absolute;
-  left: 50%;
-  bottom: -20px;
   width: 22px;
   height: 18px;
-  transform: translateX(-50%);
   background: rgba(120, 185, 255, 0.6);
   clip-path: polygon(50% 100%, 0% 0%, 100% 0%);
   filter: drop-shadow(0 6px 10px rgba(94, 138, 196, 0.22));
   pointer-events: none;
 }
 
+.marker--inside .marker__label {
+  background: rgba(118, 182, 255, 0.95);
+  color: #13325c;
+  box-shadow: 0 10px 24px rgba(118, 182, 255, 0.36);
+}
+
+.marker--inside .marker__pointer {
+  background: rgba(118, 182, 255, 0.85);
+}
+
+.marker--outside .marker__label {
+  background: rgba(255, 185, 210, 0.95);
+  color: #61203b;
+  box-shadow: 0 10px 24px rgba(255, 185, 210, 0.34);
+}
+
+.marker--outside .marker__pointer {
+  background: rgba(255, 185, 210, 0.85);
+}
+
 .marker--active .marker__label {
-  background: rgba(255, 255, 255, 0.98);
-  color: #f07429;
-  box-shadow: 0 10px 24px rgba(255, 188, 140, 0.3);
-}
-
-.marker--active .marker__pointer {
-  background: rgba(255, 188, 140, 0.78);
-}
-
-.marker--translated .marker__label {
-  background: rgba(255, 255, 255, 0.96);
-  color: #2f6c4d;
-  box-shadow: 0 10px 24px rgba(124, 207, 171, 0.26);
-}
-
-.marker--translated .marker__pointer {
-  background: rgba(124, 207, 171, 0.62);
-}
-
-.marker--proofed .marker__label {
-  background: rgba(255, 255, 255, 0.98);
-  color: #4b3ab8;
-  box-shadow: 0 10px 24px rgba(151, 146, 255, 0.3);
-}
-
-.marker--proofed .marker__pointer {
-  background: rgba(151, 146, 255, 0.68);
+  outline: 2px solid rgba(255, 196, 139, 0.6);
+  outline-offset: 3px;
 }
 
 .panel {
-  width: 320px;
+  width: 100%;
   flex-shrink: 0;
   padding: 18px 18px 16px;
   border-radius: 22px;
@@ -1218,6 +1587,12 @@ onBeforeUnmount(() => {
   flex-direction: column;
   height: 100%;
   min-height: 0;
+}
+
+.panel--collapsed {
+  padding: 12px 8px;
+  align-items: stretch;
+  justify-content: flex-start;
 }
 
 .panel__list {
@@ -1238,13 +1613,14 @@ onBeforeUnmount(() => {
   width: 100%;
   padding: 11px 13px;
   border-radius: 15px;
-  background: rgba(235, 243, 255, 0.8);
-  border: 1px solid rgba(170, 204, 245, 0.42);
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(204, 212, 225, 0.8);
   cursor: pointer;
   transition:
     transform 0.16s ease,
     box-shadow 0.16s ease,
     border 0.16s ease;
+  box-sizing: border-box;
 }
 
 .panel__item--active {
@@ -1253,19 +1629,14 @@ onBeforeUnmount(() => {
   transform: translateY(-2px);
 }
 
-.panel__item--empty {
-  background: rgba(255, 240, 240, 0.7);
-  border-color: rgba(255, 210, 210, 0.55);
-}
-
 .panel__item--proofed {
-  background: rgba(235, 232, 255, 0.75);
-  border-color: rgba(200, 194, 255, 0.6);
+  background: rgba(210, 244, 225, 0.95);
+  border-color: rgba(147, 205, 173, 0.7);
 }
 
 .panel__item--translated {
-  background: rgba(222, 246, 235, 0.7);
-  border-color: rgba(150, 210, 185, 0.6);
+  background: rgba(255, 234, 214, 0.95);
+  border-color: rgba(250, 191, 143, 0.7);
 }
 
 .panel__item-top {
@@ -1281,23 +1652,23 @@ onBeforeUnmount(() => {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: rgba(120, 185, 255, 0.6);
-  box-shadow: 0 0 0 3px rgba(120, 185, 255, 0.16);
+  background: rgba(184, 194, 210, 0.8);
+  box-shadow: 0 0 0 3px rgba(184, 194, 210, 0.18);
 }
 
 .panel__status-dot--empty {
-  background: rgba(255, 160, 160, 0.75);
-  box-shadow: 0 0 0 3px rgba(255, 160, 160, 0.18);
+  background: rgba(192, 200, 215, 0.85);
+  box-shadow: 0 0 0 3px rgba(192, 200, 215, 0.2);
 }
 
 .panel__status-dot--translated {
-  background: rgba(124, 207, 171, 0.8);
-  box-shadow: 0 0 0 3px rgba(124, 207, 171, 0.2);
+  background: rgba(255, 174, 120, 0.85);
+  box-shadow: 0 0 0 3px rgba(255, 174, 120, 0.18);
 }
 
 .panel__status-dot--proofed {
-  background: rgba(151, 146, 255, 0.85);
-  box-shadow: 0 0 0 3px rgba(151, 146, 255, 0.22);
+  background: rgba(122, 204, 159, 0.85);
+  box-shadow: 0 0 0 3px rgba(122, 204, 159, 0.2);
 }
 
 .panel__item-text {
@@ -1311,7 +1682,9 @@ onBeforeUnmount(() => {
 
 .editor {
   position: fixed;
-  width: 280px;
+  width: auto;
+  max-width: 520px;
+  max-height: 80vh;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.97);
   box-shadow: 0 22px 48px rgba(120, 162, 218, 0.26);
@@ -1319,6 +1692,8 @@ onBeforeUnmount(() => {
   backdrop-filter: blur(10px);
   z-index: 30;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .editor__header {
@@ -1341,25 +1716,6 @@ onBeforeUnmount(() => {
   font-weight: 600;
   font-size: 14px;
   color: #294061;
-}
-
-.editor__toggle {
-  align-self: flex-start;
-  border: 1px solid rgba(170, 204, 245, 0.7);
-  background: rgba(236, 244, 255, 0.8);
-  border-radius: 999px;
-  padding: 4px 12px;
-  color: #325072;
-  font-size: 12px;
-  cursor: pointer;
-  transition:
-    background 0.16s ease,
-    box-shadow 0.16s ease;
-}
-
-.editor__toggle:hover {
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 8px 18px rgba(150, 190, 240, 0.28);
 }
 
 .editor__close {
@@ -1389,6 +1745,8 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 10px;
   padding: 14px;
+  flex: 1;
+  overflow: auto;
 }
 
 .editor__textarea {
@@ -1420,26 +1778,45 @@ onBeforeUnmount(() => {
 }
 
 .editor__footer {
-  display: flex;
-  justify-content: flex-end;
   padding: 12px 14px 14px;
 }
 
-.editor__action {
-  min-width: 160px;
-  border: none;
-  border-radius: 999px;
-  padding: 8px 0;
-  background: linear-gradient(120deg, rgba(124, 205, 182, 0.92), rgba(146, 214, 222, 0.9));
-  color: #234060;
-  font-size: 13px;
-  cursor: pointer;
-  transition:
-    transform 0.16s ease,
-    box-shadow 0.16s ease;
+.editor__footer-actions {
+  display: flex;
+  gap: 10px;
 }
 
-.editor__action:hover {
+.editor__footer-button {
+  flex: 1;
+  border-radius: 14px;
+  padding: 10px 0;
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition:
+    transform 0.16s ease,
+    box-shadow 0.16s ease,
+    background 0.16s ease;
+}
+
+.editor__footer-button--secondary {
+  border-color: rgba(170, 204, 245, 0.75);
+  background: rgba(236, 244, 255, 0.9);
+  color: #325072;
+}
+
+.editor__footer-button--secondary:hover {
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 8px 18px rgba(150, 190, 240, 0.25);
+}
+
+.editor__footer-button--primary {
+  border: none;
+  background: linear-gradient(120deg, rgba(124, 205, 182, 0.92), rgba(146, 214, 222, 0.9));
+  color: #234060;
+}
+
+.editor__footer-button--primary:hover {
   transform: translateY(-2px);
   box-shadow: 0 10px 20px rgba(130, 205, 182, 0.26);
 }
@@ -1469,6 +1846,7 @@ onBeforeUnmount(() => {
   }
 
   .translator__workspace {
+    display: flex;
     flex-direction: column;
   }
 
