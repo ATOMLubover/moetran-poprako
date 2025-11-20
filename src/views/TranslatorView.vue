@@ -81,6 +81,10 @@ const WORKSPACE_BOTTOM_GUTTER = 32;
 
 const MARKER_TIP_OFFSET_PX = 26; // 圆心到指针尖端的偏移，需与样式保持一致
 
+const KEYBOARD_PAN_STEP = 96;
+
+const KEYBOARD_ZOOM_RATIO = 0.25;
+
 const SHORTCUT_HINTS: ShortcutHint[] = [
   {
     combo: 'Tab',
@@ -106,6 +110,26 @@ const SHORTCUT_HINTS: ShortcutHint[] = [
     combo: 'Ctrl + U',
     description: '切换到上一页',
   },
+  {
+    combo: 'Ctrl + P',
+    description: '在翻译与校对模式之间切换',
+  },
+  {
+    combo: 'Ctrl + F',
+    description: '切换自动重定位模式',
+  },
+  {
+    combo: 'Ctrl + L',
+    description: '收起或展开源列表',
+  },
+  {
+    combo: 'Ctrl + ↑ / ↓ / ← / →',
+    description: '按当前缩放比例平移画布视图',
+  },
+  {
+    combo: 'Ctrl + + / Ctrl + -',
+    description: '一次调整 25% 的缩放比例',
+  },
   // {
   //   combo: 'Ctrl + Esc',
   //   description: '返回项目详情',
@@ -113,11 +137,11 @@ const SHORTCUT_HINTS: ShortcutHint[] = [
 ];
 
 const MOCK_IMAGE_URLS = [
-  new URL('../../../tests/images/cover_miseyari_01_0001.jpg', import.meta.url).href,
-  new URL('../../../tests/images/miseyari_01_0001.jpg', import.meta.url).href,
-  new URL('../../../tests/images/miseyari_02_0001.jpg', import.meta.url).href,
-  new URL('../../../tests/images/miseyari_03_0001.jpg', import.meta.url).href,
-  new URL('../../../tests/images/miseyari_04_0001.jpg', import.meta.url).href,
+  new URL('../../tests/images/cover_miseyari_01_0001.jpg', import.meta.url).href,
+  new URL('../../tests/images/miseyari_01_0001.jpg', import.meta.url).href,
+  new URL('../../tests/images/miseyari_02_0001.jpg', import.meta.url).href,
+  new URL('../../tests/images/miseyari_03_0001.jpg', import.meta.url).href,
+  new URL('../../tests/images/miseyari_04_0001.jpg', import.meta.url).href,
 ];
 
 const currentPageIndex = ref(props.pageIndex);
@@ -172,6 +196,8 @@ const hasPanelOverride = ref(false);
 
 const isPanelCollapsed = ref(window.innerWidth < PANEL_COLLAPSE_BREAKPOINT);
 
+const isAutoRelocateEnabled = ref(false);
+
 const draggingSourceId = ref<string | null>(null);
 
 const markerDragOffset = ref({ x: 0, y: 0 });
@@ -207,6 +233,16 @@ let boardResizeObserver: ResizeObserver | null = null;
 const isShortcutHelpVisible = ref(false);
 
 const shortcutHelpRef = ref<HTMLDivElement | null>(null);
+
+const toastMessage = ref('');
+
+const toastVisible = ref(false);
+
+const toastAnimating = ref(false);
+
+const toastActive = ref(false);
+
+let toastTimer: number | null = null;
 
 function cloneSource(source: TranslationSource): TranslationSource {
   return {
@@ -344,8 +380,30 @@ const selectedSourceLabel = computed(() => {
   return sourceLabelMap.value.get(selectedSource.value.id)?.display ?? '';
 });
 
+// 切换翻译/校对模式
 function handleToggleMode(): void {
-  activeMode.value = isProofMode.value ? 'translate' : 'proof';
+  const nextMode: 'translate' | 'proof' = isProofMode.value ? 'translate' : 'proof';
+
+  if (toastAnimating.value) {
+    return;
+  }
+
+  activeMode.value = nextMode;
+
+  showModeToast(nextMode === 'proof' ? '已进入校对模式' : '已切换为翻译模式');
+}
+
+// 切换自动重定位
+function handleToggleAutoRelocate(): void {
+  const nextState = !isAutoRelocateEnabled.value;
+
+  if (toastAnimating.value) {
+    return;
+  }
+
+  isAutoRelocateEnabled.value = nextState;
+
+  showModeToast(nextState ? '自动重定位已开启' : '自动重定位已关闭');
 }
 
 watch(
@@ -385,6 +443,12 @@ watch(selectedSource, (source, previousSource) => {
 
     translationTextareaRef.value?.focus();
   });
+
+  if (source && isAutoRelocateEnabled.value) {
+    nextTick(() => {
+      centerSourceOnBoard(source);
+    });
+  }
 });
 
 watch(editorTranslationText, value => {
@@ -462,6 +526,20 @@ watch(isPanelCollapsed, () => {
     syncPanelHeightWithBoard();
 
     updateWorkspaceHeight();
+  });
+});
+
+watch(isAutoRelocateEnabled, value => {
+  if (!value || !selectedSource.value) {
+    return;
+  }
+
+  nextTick(() => {
+    if (!selectedSource.value) {
+      return;
+    }
+
+    centerSourceOnBoard(selectedSource.value);
   });
 });
 
@@ -734,46 +812,11 @@ function handleCanvasWheel(event: WheelEvent): void {
 
   event.preventDefault();
 
-  const wrapper = imageWrapperRef.value;
-
-  if (!wrapper) {
-    return;
-  }
-
   const direction = event.deltaY > 0 ? -1 : 1;
 
-  const next = Number((zoom.value + direction * ZOOM_STEP).toFixed(2));
+  const candidate = zoom.value + direction * ZOOM_STEP;
 
-  const nextZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
-
-  if (nextZoom === zoom.value) {
-    return;
-  }
-
-  const rect = wrapper.getBoundingClientRect();
-
-  const baseLeft = rect.left - pan.value.x;
-
-  const baseTop = rect.top - pan.value.y;
-
-  const offsetX = event.clientX - rect.left;
-
-  const offsetY = event.clientY - rect.top;
-
-  const baseX = offsetX / zoom.value;
-
-  const baseY = offsetY / zoom.value;
-
-  const nextPanX = event.clientX - baseLeft - nextZoom * baseX;
-
-  const nextPanY = event.clientY - baseTop - nextZoom * baseY;
-
-  pan.value = {
-    x: nextPanX,
-    y: nextPanY,
-  };
-
-  zoom.value = nextZoom;
+  applyZoomWithAnchor(candidate, event.clientX, event.clientY);
 }
 
 // 处理画布鼠标按下
@@ -966,9 +1009,161 @@ function handleBoardContentLoaded(): void {
   updateWorkspaceHeight();
 }
 
+// 根据当前源进行画面居中
+function centerSourceOnBoard(source: TranslationSource): void {
+  const boardElement = boardRef.value;
+
+  const wrapper = imageWrapperRef.value;
+
+  if (!boardElement || !wrapper) {
+    return;
+  }
+
+  const baseWidth = wrapper.offsetWidth;
+
+  const baseHeight = wrapper.offsetHeight;
+
+  if (baseWidth === 0 || baseHeight === 0) {
+    return;
+  }
+
+  const markerX = source.position.x * baseWidth;
+
+  const markerY = source.position.y * baseHeight;
+
+  const nextPanX = baseWidth / 2 - markerX * zoom.value;
+
+  const nextPanY = baseHeight / 2 - markerY * zoom.value;
+
+  pan.value = {
+    x: nextPanX,
+    y: nextPanY,
+  };
+}
+
+// 展示模式切换提示
+function showModeToast(message: string): void {
+  if (toastAnimating.value) {
+    return;
+  }
+
+  toastMessage.value = message;
+
+  toastAnimating.value = true;
+
+  toastVisible.value = true;
+
+  nextTick(() => {
+    toastActive.value = true;
+  });
+
+  if (toastTimer !== null) {
+    window.clearTimeout(toastTimer);
+  }
+
+  toastTimer = window.setTimeout(() => {
+    toastActive.value = false;
+
+    toastTimer = window.setTimeout(() => {
+      toastVisible.value = false;
+
+      toastAnimating.value = false;
+
+      toastTimer = null;
+    }, 260);
+  }, 1800);
+}
+
+// 根据锚点调整缩放
+function applyZoomWithAnchor(targetZoom: number, anchorX: number, anchorY: number): void {
+  const wrapper = imageWrapperRef.value;
+
+  if (!wrapper) {
+    return;
+  }
+
+  const clamped = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number(targetZoom.toFixed(4))));
+
+  if (clamped === zoom.value) {
+    return;
+  }
+
+  const rect = wrapper.getBoundingClientRect();
+
+  const baseLeft = rect.left - pan.value.x;
+
+  const baseTop = rect.top - pan.value.y;
+
+  const offsetX = anchorX - rect.left;
+
+  const offsetY = anchorY - rect.top;
+
+  const baseX = offsetX / zoom.value;
+
+  const baseY = offsetY / zoom.value;
+
+  const nextPanX = anchorX - baseLeft - clamped * baseX;
+
+  const nextPanY = anchorY - baseTop - clamped * baseY;
+
+  pan.value = {
+    x: nextPanX,
+    y: nextPanY,
+  };
+
+  zoom.value = clamped;
+}
+
+// 处理键盘平移
+function handleKeyboardPan(deltaX: number, deltaY: number): void {
+  pan.value = {
+    x: pan.value.x + deltaX,
+    y: pan.value.y + deltaY,
+  };
+}
+
+// 处理键盘缩放
+function handleKeyboardZoom(direction: 1 | -1): void {
+  if (!projectPage.value) {
+    return;
+  }
+
+  const boardElement = boardRef.value;
+
+  if (!boardElement) {
+    return;
+  }
+
+  const boardRect = boardElement.getBoundingClientRect();
+
+  const anchorX = boardRect.left + boardRect.width / 2;
+
+  const anchorY = boardRect.top + boardRect.height / 2;
+
+  const factor = direction > 0 ? 1 + KEYBOARD_ZOOM_RATIO : 1 - KEYBOARD_ZOOM_RATIO;
+
+  const nextZoom = zoom.value * factor;
+
+  applyZoomWithAnchor(nextZoom, anchorX, anchorY);
+}
+
 // 选中标记
 function handleSelectSource(sourceId: string): void {
   if (activeSourceId.value === sourceId) {
+    if (!isAutoRelocateEnabled.value) {
+      return;
+    }
+
+    const target = sources.value.find(item => item.id === sourceId);
+
+    if (!target) {
+      return;
+    }
+
+    nextTick(() => {
+      centerSourceOnBoard(target);
+    });
+
     return;
   }
 
@@ -1161,6 +1356,74 @@ function handleGlobalShortcuts(event: KeyboardEvent): void {
 
   if (event.ctrlKey && !event.metaKey && !event.altKey) {
     const key = event.key.toLowerCase();
+
+    if (key === 'arrowup' || key === 'arrowdown' || key === 'arrowleft' || key === 'arrowright') {
+      event.preventDefault();
+
+      const step = KEYBOARD_PAN_STEP / zoom.value;
+
+      if (key === 'arrowup') {
+        handleKeyboardPan(0, step);
+
+        return;
+      }
+
+      if (key === 'arrowdown') {
+        handleKeyboardPan(0, -step);
+
+        return;
+      }
+
+      if (key === 'arrowleft') {
+        handleKeyboardPan(step, 0);
+
+        return;
+      }
+
+      handleKeyboardPan(-step, 0);
+
+      return;
+    }
+
+    if (event.key === '+' || event.key === '=' || key === 'add') {
+      event.preventDefault();
+
+      handleKeyboardZoom(1);
+
+      return;
+    }
+
+    if (event.key === '-' || event.key === '_' || key === 'subtract') {
+      event.preventDefault();
+
+      handleKeyboardZoom(-1);
+
+      return;
+    }
+
+    if (key === 'p') {
+      event.preventDefault();
+
+      handleToggleMode();
+
+      return;
+    }
+
+    if (key === 'f') {
+      event.preventDefault();
+
+      handleToggleAutoRelocate();
+
+      return;
+    }
+
+    if (key === 'l') {
+      event.preventDefault();
+
+      handleTogglePanel();
+
+      return;
+    }
 
     if (key === 'd') {
       event.preventDefault();
@@ -1367,6 +1630,12 @@ onBeforeUnmount(() => {
 
     boardResizeObserver = null;
   }
+
+  if (toastTimer !== null) {
+    window.clearTimeout(toastTimer);
+
+    toastTimer = null;
+  }
 });
 </script>
 
@@ -1447,6 +1716,29 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="toolbox__button"
+          :class="{ 'toolbox__button--active': isAutoRelocateEnabled }"
+          :title="isAutoRelocateEnabled ? '关闭自动重定位' : '开启自动重定位'"
+          @click="handleToggleAutoRelocate"
+          :aria-pressed="isAutoRelocateEnabled"
+        >
+          <span class="sr-only">{{
+            isAutoRelocateEnabled ? '关闭自动重定位' : '开启自动重定位'
+          }}</span>
+          <svg class="toolbox__icon" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="5.2" fill="none" stroke="currentColor" stroke-width="1.8" />
+            <path
+              d="M12 4V6.4M12 17.6V20M6.4 12H4M20 12H17.6"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="toolbox__button"
           :class="{ 'toolbox__button--active': isProofMode }"
           :title="isProofMode ? '切换为翻译模式' : '切换为校对模式'"
           @click="handleToggleMode"
@@ -1495,7 +1787,7 @@ onBeforeUnmount(() => {
       <div class="translator__workspace" :style="workspaceStyle" ref="workspaceRef">
         <div
           class="board"
-          :class="boardGridClass"
+          :class="[boardGridClass, { 'board--proof': isProofMode }]"
           ref="boardRef"
           @wheel="handleCanvasWheel"
           @pointerdown="handleCanvasPointerDown"
@@ -1545,7 +1837,7 @@ onBeforeUnmount(() => {
               :style="proofOverlayStyle"
             >
               <div class="marker-overlay__content">
-                {{ selectedSource.translationText || '—' }}
+                {{ selectedSource.translationText || '<empty>' }}
               </div>
             </div>
           </div>
@@ -1582,7 +1874,7 @@ onBeforeUnmount(() => {
               </div>
               <p class="panel__item-text">
                 {{
-                  item.status === 'proofed' ? item.proofText || '—' : item.translationText || '—'
+                  item.status === 'proofed' ? item.proofText || '<empty>' : item.translationText || '<empty>'
                 }}
               </p>
             </li>
@@ -1695,6 +1987,14 @@ onBeforeUnmount(() => {
           <span class="shortcut-help__description">{{ item.description }}</span>
         </li>
       </ul>
+    </div>
+    <div
+      v-if="toastVisible"
+      :class="['mode-toast', { 'mode-toast--active': toastActive }]"
+      role="status"
+      aria-live="polite"
+    >
+      {{ toastMessage }}
     </div>
   </section>
 </template>
@@ -1901,6 +2201,10 @@ onBeforeUnmount(() => {
   touch-action: none;
   min-height: 0;
   height: 100%;
+}
+
+.board--proof {
+  border: 1px solid rgba(255, 182, 193, 0.85);
 }
 
 .board__frame {
@@ -2413,6 +2717,31 @@ onBeforeUnmount(() => {
   font-size: 13px;
   color: #30455f;
   line-height: 1.5;
+}
+
+.mode-toast {
+  position: fixed;
+  top: -80px;
+  left: 50%;
+  transform: translate(-50%, 0) translateY(0);
+  padding: 12px 18px;
+  border-radius: 14px;
+  background: rgba(223, 239, 217, 0.96);
+  box-shadow: 0 16px 32px rgba(120, 162, 218, 0.24);
+  border: 1px solid rgba(162, 192, 233, 0.4);
+  color: #2a3b4f;
+  font-size: 13px;
+  letter-spacing: 0.3px;
+  z-index: 60;
+  min-width: 168px;
+  text-align: center;
+  transition: transform 0.26s ease, opacity 0.2s ease;
+  opacity: 0;
+}
+
+.mode-toast--active {
+  transform: translate(-50%, 0) translateY(96px);
+  opacity: 1;
 }
 
 .sr-only {

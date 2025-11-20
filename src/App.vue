@@ -1,26 +1,30 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import TranslatorView from './views/translator/TranslatorView.vue';
+import TranslatorView from './views/TranslatorView.vue';
+import LoginView from './views/LoginView.vue';
+
+type ViewName = 'login' | 'translator' | 'placeholder';
 
 const projectId = ref('demo-project');
 
 const pageIndex = ref(0);
 
-const showTranslator = ref(true);
+const currentView = ref<ViewName>('login');
 
 function handleBack(): void {
-  showTranslator.value = false;
+  currentView.value = 'placeholder';
 }
 
 function handleOpenTranslator(): void {
-  showTranslator.value = true;
+  currentView.value = 'translator';
 }
 </script>
 
 <template>
   <main class="app-root">
+    <LoginView v-if="currentView === 'login'" />
     <TranslatorView
-      v-if="showTranslator"
+      v-else-if="currentView === 'translator'"
       :project-id="projectId"
       v-model:page-index="pageIndex"
       @back="handleBack"
@@ -32,6 +36,22 @@ function handleOpenTranslator(): void {
         进入翻译工作台
       </button>
     </section>
+
+    <!-- 临时调试导航栏 -->
+    <div class="debug-nav">
+      <button @click="currentView = 'login'" :class="{ active: currentView === 'login' }">
+        登录页
+      </button>
+      <button
+        @click="currentView = 'placeholder'"
+        :class="{ active: currentView === 'placeholder' }"
+      >
+        项目详情
+      </button>
+      <button @click="currentView = 'translator'" :class="{ active: currentView === 'translator' }">
+        翻译页
+      </button>
+    </div>
   </main>
 </template>
 
@@ -45,6 +65,38 @@ function handleOpenTranslator(): void {
 
 .app-root {
   min-height: 100vh;
+  padding-bottom: 60px; /* 为调试栏留出空间 */
+}
+
+.debug-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 50px;
+  background: rgba(30, 40, 50, 0.9);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 20px;
+  z-index: 9999;
+  backdrop-filter: blur(4px);
+}
+
+.debug-nav button {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #fff;
+  padding: 6px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.debug-nav button.active {
+  background: rgba(100, 180, 255, 0.3);
+  border-color: #64b4ff;
+  color: #64b4ff;
 }
 
 .placeholder {

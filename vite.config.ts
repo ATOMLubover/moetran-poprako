@@ -4,6 +4,9 @@ import vue from '@vitejs/plugin-vue';
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
+// 默认使用 IPv4 回环地址，避免在某些 Windows 环境中对 ::1 的绑定导致 EACCES
+const defaultHost = '127.0.0.1';
+
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
   plugins: [vue()],
@@ -14,9 +17,9 @@ export default defineConfig(async () => ({
   clearScreen: false,
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
-    port: 1420,
+    port: 5173,
     strictPort: true,
-    host: host || false,
+    host: host || defaultHost,
     hmr: host
       ? {
           protocol: 'ws',
