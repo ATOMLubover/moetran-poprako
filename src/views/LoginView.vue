@@ -1,5 +1,27 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { MOETRAN_API_BASE } from '../api/moetran';
+import AppToast from '../components/AppToast.vue';
+
+interface CaptchaResponse {
+  image: string;
+  info: string;
+}
+
+interface LoginRequestBody {
+  email: string;
+  password: string;
+  captcha: string;
+  info: string;
+}
+
+type ToastTone = 'success' | 'error';
+
+interface ToastState {
+  message: string;
+  tone: ToastTone;
+  visible: boolean;
+}
 
 // 邮箱输入
 const email = ref('');
@@ -13,28 +35,71 @@ const captcha = ref('');
 // 验证码图片 Base64
 const captchaImage = ref('');
 
+// 验证码附带信息
+const captchaInfo = ref('');
+
 // 加载状态
 const isLoading = ref(false);
 
-// 模拟获取验证码
-// TODO: 对接真实后端接口
-async function __mockFetchCaptcha() {
-  // 这里使用一个简单的 mock base64 图片（一个 1x1 的透明像素或者简单的色块，实际开发中替换为真实数据）
-  // 为了演示效果，这里放一个简单的 SVG 转 Base64
-  const svg = `
-  <svg width="100" height="40" xmlns="http://www.w3.org/2000/svg">
-    <rect width="100%" height="100%" fill="#f0f8ff"/>
-    <text x="50%" y="50%" font-family="Arial" font-size="20" fill="#3b82f6" dominant-baseline="middle" text-anchor="middle">1234</text>
-  </svg>`;
+const toastState = reactive<ToastState>({
+  message: '',
+  tone: 'success',
+  visible: false,
+});
 
-  captchaImage.value = 'data:image/svg+xml;base64,' + btoa(svg);
+let toastTimer: number | null = null;
+
+function showToast(message: string, tone: ToastTone = 'success', duration = 2400): void {
+  toastState.message = message;
+  toastState.tone = tone;
+  toastState.visible = true;
+
+  if (toastTimer !== null) {
+    window.clearTimeout(toastTimer);
+  }
+
+  toastTimer = window.setTimeout(() => {
+    toastState.visible = false;
+    toastTimer = null;
+  }, duration);
+}
+
+// 获取验证码
+async function fetchCaptcha(): Promise<void> {
+  try {
+    const response = await fetch(`${MOETRAN_API_BASE}/captchas`, {
+      method: 'GET',
+    });
+
+    if (!response.ok) {
+      console.error('获取验证码失败', response.status);
+
+      showToast('验证码加载失败，请稍后再试', 'error');
+
+      return;
+    }
+
+    const data = (await response.json()) as CaptchaResponse;
+
+    captchaImage.value = data.image;
+
+    captchaInfo.value = data.info;
+
+    captcha.value = '';
+  } catch (error) {
+    console.error('获取验证码时出现异常', error);
+
+    showToast('验证码加载失败，请检查网络', 'error');
+  }
 }
 
 // 处理登录逻辑
-// TODO: 对接真实后端接口
-async function __mockHandleLogin() {
+async function handleLogin(): Promise<void> {
   if (!email.value || !password.value || !captcha.value) {
     console.warn('请填写完整信息');
+
+    showToast('请填写完整信息', 'error');
+
     return;
   }
 
@@ -44,24 +109,57 @@ async function __mockHandleLogin() {
     email: email.value,
     password: password.value,
     captcha: captcha.value,
+    info: captchaInfo.value,
   });
 
   try {
-    // 模拟网络请求延迟
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    const payload: LoginRequestBody = {
+      email: email.value,
+      password: password.value,
+      captcha: captcha.value,
+      info: captchaInfo.value,
+    };
+
+    const response = await fetch(`${MOETRAN_API_BASE}/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      console.error('登录失败', response.status);
+
+      await fetchCaptcha();
+
+      showToast('登录失败，请检查输入后重试', 'error');
+
+      return;
+    }
 
     console.log('登录成功');
 
-    // TODO: 跳转到主页或项目列表页
+    showToast('登录成功', 'success');
   } catch (error) {
     console.error('登录失败', error);
+
+    showToast('登录失败，请稍后再试', 'error');
   } finally {
     isLoading.value = false;
   }
 }
 
 onMounted(() => {
-  __mockFetchCaptcha();
+  fetchCaptcha();
+});
+
+onBeforeUnmount(() => {
+  if (toastTimer !== null) {
+    window.clearTimeout(toastTimer);
+
+    toastTimer = null;
+  }
 });
 </script>
 
@@ -73,7 +171,7 @@ onMounted(() => {
         <p class="login-card__subtitle">登录到 Moetran Native</p>
       </div>
 
-      <form class="login-form" @submit.prevent="__mockHandleLogin">
+      <form class="login-form" @submit.prevent="handleLogin">
         <div class="form-group">
           <label class="form-label">邮箱</label>
           <input
@@ -106,7 +204,7 @@ onMounted(() => {
               placeholder="验证码"
               required
             />
-            <div class="captcha-image-wrapper" @click="__mockFetchCaptcha" title="点击刷新验证码">
+            <div class="captcha-image-wrapper" @click="fetchCaptcha" title="点击刷新验证码">
               <img v-if="captchaImage" :src="captchaImage" alt="验证码" class="captcha-image" />
               <span v-else class="captcha-placeholder">加载中...</span>
             </div>
@@ -119,6 +217,7 @@ onMounted(() => {
         </button>
       </form>
     </div>
+    <AppToast :visible="toastState.visible" :message="toastState.message" :tone="toastState.tone" />
   </div>
 </template>
 

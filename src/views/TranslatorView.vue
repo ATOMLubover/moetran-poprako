@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import AppToast from '../components/AppToast.vue';
 
 interface SourcePosition {
   x: number;
@@ -37,6 +38,14 @@ interface SourceLabelInfo {
 interface ShortcutHint {
   combo: string;
   description: string;
+}
+
+type ToastTone = 'success' | 'error';
+
+interface ToastState {
+  message: string;
+  tone: ToastTone;
+  visible: boolean;
 }
 
 const props = defineProps<{
@@ -234,13 +243,11 @@ const isShortcutHelpVisible = ref(false);
 
 const shortcutHelpRef = ref<HTMLDivElement | null>(null);
 
-const toastMessage = ref('');
-
-const toastVisible = ref(false);
-
-const toastAnimating = ref(false);
-
-const toastActive = ref(false);
+const toastState = reactive<ToastState>({
+  message: '',
+  tone: 'success',
+  visible: false,
+});
 
 let toastTimer: number | null = null;
 
@@ -384,26 +391,18 @@ const selectedSourceLabel = computed(() => {
 function handleToggleMode(): void {
   const nextMode: 'translate' | 'proof' = isProofMode.value ? 'translate' : 'proof';
 
-  if (toastAnimating.value) {
-    return;
-  }
-
   activeMode.value = nextMode;
 
-  showModeToast(nextMode === 'proof' ? '已进入校对模式' : '已切换为翻译模式');
+  showToast(nextMode === 'proof' ? '已进入校对模式' : '已切换为翻译模式');
 }
 
 // 切换自动重定位
 function handleToggleAutoRelocate(): void {
   const nextState = !isAutoRelocateEnabled.value;
 
-  if (toastAnimating.value) {
-    return;
-  }
-
   isAutoRelocateEnabled.value = nextState;
 
-  showModeToast(nextState ? '自动重定位已开启' : '自动重定位已关闭');
+  showToast(nextState ? '自动重定位已开启' : '自动重定位已关闭');
 }
 
 watch(
@@ -1041,37 +1040,19 @@ function centerSourceOnBoard(source: TranslationSource): void {
   };
 }
 
-// 展示模式切换提示
-function showModeToast(message: string): void {
-  if (toastAnimating.value) {
-    return;
-  }
-
-  toastMessage.value = message;
-
-  toastAnimating.value = true;
-
-  toastVisible.value = true;
-
-  nextTick(() => {
-    toastActive.value = true;
-  });
+function showToast(message: string, tone: ToastTone = 'success', duration = 2000): void {
+  toastState.message = message;
+  toastState.tone = tone;
+  toastState.visible = true;
 
   if (toastTimer !== null) {
     window.clearTimeout(toastTimer);
   }
 
   toastTimer = window.setTimeout(() => {
-    toastActive.value = false;
-
-    toastTimer = window.setTimeout(() => {
-      toastVisible.value = false;
-
-      toastAnimating.value = false;
-
-      toastTimer = null;
-    }, 260);
-  }, 1800);
+    toastState.visible = false;
+    toastTimer = null;
+  }, duration);
 }
 
 // 根据锚点调整缩放
@@ -1988,14 +1969,7 @@ onBeforeUnmount(() => {
         </li>
       </ul>
     </div>
-    <div
-      v-if="toastVisible"
-      :class="['mode-toast', { 'mode-toast--active': toastActive }]"
-      role="status"
-      aria-live="polite"
-    >
-      {{ toastMessage }}
-    </div>
+    <AppToast :visible="toastState.visible" :message="toastState.message" :tone="toastState.tone" />
   </section>
 </template>
 
@@ -2717,31 +2691,6 @@ onBeforeUnmount(() => {
   font-size: 13px;
   color: #30455f;
   line-height: 1.5;
-}
-
-.mode-toast {
-  position: fixed;
-  top: -80px;
-  left: 50%;
-  transform: translate(-50%, 0) translateY(0);
-  padding: 12px 18px;
-  border-radius: 14px;
-  background: rgba(223, 239, 217, 0.96);
-  box-shadow: 0 16px 32px rgba(120, 162, 218, 0.24);
-  border: 1px solid rgba(162, 192, 233, 0.4);
-  color: #2a3b4f;
-  font-size: 13px;
-  letter-spacing: 0.3px;
-  z-index: 60;
-  min-width: 168px;
-  text-align: center;
-  transition: transform 0.26s ease, opacity 0.2s ease;
-  opacity: 0;
-}
-
-.mode-toast--active {
-  transform: translate(-50%, 0) translateY(96px);
-  opacity: 1;
 }
 
 .sr-only {
