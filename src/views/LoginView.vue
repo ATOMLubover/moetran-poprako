@@ -1,19 +1,8 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
-import { MOETRAN_API_BASE } from '../api/moetran';
+import { getCaptcha as fetchCaptchaApi, requestLoginToken } from '../api/moetran';
+import type { UserLoginReq } from '../api/model/auth';
 import AppToast from '../components/AppToast.vue';
-
-interface CaptchaResponse {
-  image: string;
-  info: string;
-}
-
-interface LoginRequestBody {
-  email: string;
-  password: string;
-  captcha: string;
-  info: string;
-}
 
 type ToastTone = 'success' | 'error';
 
@@ -67,19 +56,7 @@ function showToast(message: string, tone: ToastTone = 'success', duration = 2400
 // 获取验证码
 async function fetchCaptcha(): Promise<void> {
   try {
-    const response = await fetch(`${MOETRAN_API_BASE}/captchas`, {
-      method: 'GET',
-    });
-
-    if (!response.ok) {
-      console.error('获取验证码失败', response.status);
-
-      showToast('验证码加载失败，请稍后再试', 'error');
-
-      return;
-    }
-
-    const data = (await response.json()) as CaptchaResponse;
+    const data = await fetchCaptchaApi();
 
     captchaImage.value = data.image;
 
@@ -89,7 +66,12 @@ async function fetchCaptcha(): Promise<void> {
   } catch (error) {
     console.error('获取验证码时出现异常', error);
 
-    showToast('验证码加载失败，请检查网络', 'error');
+    const message =
+      error instanceof Error && error.message.includes('status')
+        ? '验证码加载失败，请稍后再试'
+        : '验证码加载失败，请检查网络';
+
+    showToast(message, 'error');
   }
 }
 
@@ -105,46 +87,30 @@ async function handleLogin(): Promise<void> {
 
   isLoading.value = true;
 
-  console.log('正在登录...', {
-    email: email.value,
-    password: password.value,
-    captcha: captcha.value,
-    info: captchaInfo.value,
-  });
-
   try {
-    const payload: LoginRequestBody = {
+    const payload: UserLoginReq = {
       email: email.value,
       password: password.value,
       captcha: captcha.value,
       info: captchaInfo.value,
     };
 
-    const response = await fetch(`${MOETRAN_API_BASE}/auth/login`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
+    const tokenResponse = await requestLoginToken(payload);
 
-    if (!response.ok) {
-      console.error('登录失败', response.status);
-
-      await fetchCaptcha();
-
-      showToast('登录失败，请检查输入后重试', 'error');
-
-      return;
-    }
-
-    console.log('登录成功');
+    console.log('登录成功', tokenResponse.token);
 
     showToast('登录成功', 'success');
   } catch (error) {
     console.error('登录失败', error);
 
-    showToast('登录失败，请稍后再试', 'error');
+    await fetchCaptcha();
+
+    const message =
+      error instanceof Error && error.message.includes('status')
+        ? '登录失败，请检查输入后重试'
+        : '登录失败，请稍后再试';
+
+    showToast(message, 'error');
   } finally {
     isLoading.value = false;
   }
@@ -314,22 +280,25 @@ onBeforeUnmount(() => {
 }
 
 .captcha-image-wrapper {
-  flex: 0 0 90px;
-  height: 42px;
+  flex: 0 0 140px;
+  /* Allow image to define height while keeping a reasonable min height */
+  min-height: 54px;
   border-radius: 10px;
   overflow: hidden;
   cursor: pointer;
-  border: 1px solid rgba(188, 206, 233, 0.4);
+  border: 1px solid rgba(188, 206, 233, 0.5);
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #fff;
+  background: #ffffff;
+  box-shadow: 0 2px 4px rgba(118, 166, 219, 0.18);
 }
 
 .captcha-image {
+  display: block;
   width: 100%;
-  height: 100%;
-  object-fit: cover;
+  height: auto;
+  object-fit: contain; /* ensure full image visible */
 }
 
 .captcha-placeholder {

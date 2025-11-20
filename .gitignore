@@ -29,3 +29,6 @@ dist-ssr
 
 # Images
 tests/images/**
+
+# Env var
+**/.env
