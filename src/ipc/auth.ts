@@ -1,9 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
-import { UserLoginResp } from '../api/model/auth';
+import { ResMoeToken } from '../api/model/auth';
 
-export async function getCaptcha(): Promise<UserLoginResp> {
+export async function getCaptcha(): Promise<ResMoeToken> {
   // Throw error to caller.
-  let response = await invoke<UserLoginResp>('get_captcha');
+  let response = await invoke<ResMoeToken>('get_captcha');
 
   return response;
 }

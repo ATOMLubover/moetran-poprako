@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
-import { getCaptcha as fetchCaptchaApi, requestLoginToken } from '../api/moetran';
-import type { UserLoginReq } from '../api/model/auth';
+import { getCaptcha as fetchCaptchaApi, aquireMoetranToken } from '../api/moetran';
+import type { ReqMoeToken } from '../api/model/auth';
 import AppToast from '../components/AppToast.vue';
 
 type ToastTone = 'success' | 'error';
@@ -26,6 +26,31 @@ const captchaImage = ref('');
 
 // 验证码附带信息
 const captchaInfo = ref('');
+
+// 验证码容器与尺寸
+const captchaWrapperRef = ref<HTMLDivElement | null>(null);
+const captchaNatural = reactive({ width: 0, height: 0 });
+const captchaWrapperHeight = ref<number | null>(null);
+
+function updateCaptchaWrapperHeight(): void {
+  const wrapper = captchaWrapperRef.value;
+  if (!wrapper || captchaNatural.width <= 0 || captchaNatural.height <= 0) return;
+
+  const wrapperWidth = wrapper.clientWidth;
+  if (wrapperWidth <= 0) return;
+
+  const scale = wrapperWidth / captchaNatural.width;
+  const nextHeight = Math.round(captchaNatural.height * scale);
+  captchaWrapperHeight.value = nextHeight;
+}
+
+function handleCaptchaLoad(event: Event): void {
+  const img = event.target as HTMLImageElement | null;
+  if (!img) return;
+  captchaNatural.width = img.naturalWidth;
+  captchaNatural.height = img.naturalHeight;
+  updateCaptchaWrapperHeight();
+}
 
 // 加载状态
 const isLoading = ref(false);
@@ -63,6 +88,9 @@ async function fetchCaptcha(): Promise<void> {
     captchaInfo.value = data.info;
 
     captcha.value = '';
+
+    // 清空旧高度，等待新图 onload 后计算
+    captchaWrapperHeight.value = null;
   } catch (error) {
     console.error('获取验证码时出现异常', error);
 
@@ -88,14 +116,14 @@ async function handleLogin(): Promise<void> {
   isLoading.value = true;
 
   try {
-    const payload: UserLoginReq = {
+    const payload: ReqMoeToken = {
       email: email.value,
       password: password.value,
       captcha: captcha.value,
       info: captchaInfo.value,
     };
 
-    const tokenResponse = await requestLoginToken(payload);
+    const tokenResponse = await aquireMoetranToken(payload);
 
     console.log('登录成功', tokenResponse.token);
 
@@ -118,6 +146,7 @@ async function handleLogin(): Promise<void> {
 
 onMounted(() => {
   fetchCaptcha();
+  window.addEventListener('resize', updateCaptchaWrapperHeight);
 });
 
 onBeforeUnmount(() => {
@@ -126,6 +155,7 @@ onBeforeUnmount(() => {
 
     toastTimer = null;
   }
+  window.removeEventListener('resize', updateCaptchaWrapperHeight);
 });
 </script>
 
@@ -170,8 +200,20 @@ onBeforeUnmount(() => {
               placeholder="验证码"
               required
             />
-            <div class="captcha-image-wrapper" @click="fetchCaptcha" title="点击刷新验证码">
-              <img v-if="captchaImage" :src="captchaImage" alt="验证码" class="captcha-image" />
+            <div
+              class="captcha-image-wrapper"
+              ref="captchaWrapperRef"
+              @click="fetchCaptcha"
+              title="点击刷新验证码"
+              :style="{ height: captchaWrapperHeight ? captchaWrapperHeight + 'px' : undefined }"
+            >
+              <img
+                v-if="captchaImage"
+                :src="captchaImage"
+                alt="验证码"
+                class="captcha-image"
+                @load="handleCaptchaLoad"
+              />
               <span v-else class="captcha-placeholder">加载中...</span>
             </div>
           </div>

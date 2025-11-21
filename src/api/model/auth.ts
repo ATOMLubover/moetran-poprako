@@ -1,15 +1,15 @@
-export interface GetCaptchaResp {
+export interface ResCaptcha {
   image: string;
   info: string;
 }
 
-export interface UserLoginReq {
+export interface ReqMoeToken {
   email: string;
   password: string;
   captcha: string;
   info: string;
 }
 
-export interface UserLoginResp {
+export interface ResMoeToken {
   token: string;
 }

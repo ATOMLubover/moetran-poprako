@@ -1818,7 +1818,7 @@ onBeforeUnmount(() => {
               :style="proofOverlayStyle"
             >
               <div class="marker-overlay__content">
-                {{ selectedSource.translationText || '<empty>' }}
+                {{ selectedSource.translationText || '〈empty〉' }}
               </div>
             </div>
           </div>
@@ -1855,7 +1855,9 @@ onBeforeUnmount(() => {
               </div>
               <p class="panel__item-text">
                 {{
-                  item.status === 'proofed' ? item.proofText || '<empty>' : item.translationText || '<empty>'
+                  item.status === 'proofed'
+                    ? item.proofText || '〈empty〉'
+                    : item.translationText || '〈empty〉'
                 }}
               </p>
             </li>
