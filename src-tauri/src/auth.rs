@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::moetran_post_opt;
+use crate::http::moetran_post_opt;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ResCaptcha {
