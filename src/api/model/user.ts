@@ -1,18 +1,15 @@
-interface UserProfile {
-  poprakoId: string;
-  poprakoToken: string;
-  username: string;
-  email: string;
-  moetranId: string;
-  moetranToken: string;
-}
-
-interface MoeUserLoginReq {
+export interface ReqLogin {
   email: string;
   password: string;
-  captchaToken: string;
 }
 
-interface MoeUserLoginRes {
+export interface ResLogin {
   token: string;
+}
+
+export interface ResUser {
+  id: string;
+  name: string;
+  has_avatar: boolean;
+  avatar: string;
 }

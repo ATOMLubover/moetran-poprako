@@ -2,14 +2,18 @@
 import { ref } from 'vue';
 import TranslatorView from './views/TranslatorView.vue';
 import LoginView from './views/LoginView.vue';
+import PanelView from './views/PanelView.vue';
+import AppToast from './components/AppToast.vue';
+import { useToastStore } from './stores/toast';
 
-type ViewName = 'login' | 'translator' | 'placeholder';
+type ViewName = 'login' | 'translator' | 'placeholder' | 'panel';
 
 const projectId = ref('demo-project');
 
 const pageIndex = ref(0);
 
 const currentView = ref<ViewName>('login');
+const toastStore = useToastStore();
 
 function handleBack(): void {
   currentView.value = 'placeholder';
@@ -22,7 +26,8 @@ function handleOpenTranslator(): void {
 
 <template>
   <main class="app-root">
-    <LoginView v-if="currentView === 'login'" />
+    <LoginView v-if="currentView === 'login'" @logged="currentView = 'panel'" />
+    <PanelView v-else-if="currentView === 'panel'" />
     <TranslatorView
       v-else-if="currentView === 'translator'"
       :project-id="projectId"
@@ -37,6 +42,9 @@ function handleOpenTranslator(): void {
       </button>
     </section>
 
+    <!-- 全局 Toast -->
+    <AppToast :visible="toastStore.visible" :message="toastStore.message" :tone="toastStore.tone" />
+
     <!-- 临时调试导航栏 -->
     <div class="debug-nav">
       <button @click="currentView = 'login'" :class="{ active: currentView === 'login' }">
@@ -50,6 +58,9 @@ function handleOpenTranslator(): void {
       </button>
       <button @click="currentView = 'translator'" :class="{ active: currentView === 'translator' }">
         翻译页
+      </button>
+      <button @click="currentView = 'panel'" :class="{ active: currentView === 'panel' }">
+        面板
       </button>
     </div>
   </main>

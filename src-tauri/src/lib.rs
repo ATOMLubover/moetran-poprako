@@ -1,14 +1,17 @@
 pub mod auth;
 mod http;
-
+mod project;
 mod storage;
+mod team; // 汉化组相关
+mod token;
+mod user; // 用户与登录相关 // 项目与项目集相关
 
 use std::{path::PathBuf, str::FromStr, sync::LazyLock};
 
 use tracing::info;
 use tracing_subscriber::fmt;
 
-use crate::auth::{aquire_token, get_captcha};
+// Direct imports not strictly required; commands referenced in generate_handler by path.
 
 const DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
     dotenvy::dotenv().expect("Failed to load .end file");
@@ -47,7 +50,28 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![get_captcha, aquire_token])
+        .invoke_handler(tauri::generate_handler![
+            // auth
+            crate::auth::get_captcha,
+            crate::auth::aquire_token,
+            // token cache operations
+            crate::token::get_moetran_token,
+            crate::token::save_moetran_token,
+            crate::token::remove_moetran_token,
+            crate::token::get_poprako_token,
+            crate::token::save_poprako_token,
+            crate::token::remove_poprako_token,
+            // poprako login
+            crate::user::login_poprako,
+            // user info
+            crate::user::get_user_info,
+            // user teams
+            crate::team::get_user_teams,
+            // project sets & projects
+            crate::project::get_team_project_sets,
+            crate::project::get_team_projects,
+            crate::project::get_user_projects,
+        ])
         .run(tauri::generate_context!())
         .expect("Error while running tauri application");
 }

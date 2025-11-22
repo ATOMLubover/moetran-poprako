@@ -1,16 +1,15 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
-import { getCaptcha as fetchCaptchaApi, aquireMoetranToken } from '../api/moetran';
-import type { ReqMoeToken } from '../api/model/auth';
-import AppToast from '../components/AppToast.vue';
+import type { ReqToken } from '../api/model/auth';
+import { useTokenStore } from '../stores/token';
+import { loginPoprako } from '../ipc/user';
+import { useToastStore } from '../stores/toast';
+import { aquireMoetranToken, getCaptcha, saveMoetranToken, savePoprakoToken } from '../ipc/auth';
 
-type ToastTone = 'success' | 'error';
+// 使用全局 toast store
 
-interface ToastState {
-  message: string;
-  tone: ToastTone;
-  visible: boolean;
-}
+// 父组件事件：登录成功或已经有 token 时直接跳转
+const emit = defineEmits<{ (e: 'logged'): void }>();
 
 // 邮箱输入
 const email = ref('');
@@ -55,33 +54,12 @@ function handleCaptchaLoad(event: Event): void {
 // 加载状态
 const isLoading = ref(false);
 
-const toastState = reactive<ToastState>({
-  message: '',
-  tone: 'success',
-  visible: false,
-});
-
-let toastTimer: number | null = null;
-
-function showToast(message: string, tone: ToastTone = 'success', duration = 2400): void {
-  toastState.message = message;
-  toastState.tone = tone;
-  toastState.visible = true;
-
-  if (toastTimer !== null) {
-    window.clearTimeout(toastTimer);
-  }
-
-  toastTimer = window.setTimeout(() => {
-    toastState.visible = false;
-    toastTimer = null;
-  }, duration);
-}
+const toastStore = useToastStore();
 
 // 获取验证码
 async function fetchCaptcha(): Promise<void> {
   try {
-    const data = await fetchCaptchaApi();
+    const data = await getCaptcha();
 
     captchaImage.value = data.image;
 
@@ -99,16 +77,21 @@ async function fetchCaptcha(): Promise<void> {
         ? '验证码加载失败，请稍后再试'
         : '验证码加载失败，请检查网络';
 
-    showToast(message, 'error');
+    toastStore.show(message, 'error');
   }
 }
+
+// 静默 Poprako 登录无需用户选择，成功后写入 store，失败仅 toast 提示
+
+// 全局 token store
+const tokenStore = useTokenStore();
 
 // 处理登录逻辑
 async function handleLogin(): Promise<void> {
   if (!email.value || !password.value || !captcha.value) {
     console.warn('请填写完整信息');
 
-    showToast('请填写完整信息', 'error');
+    toastStore.show('请填写完整信息', 'error');
 
     return;
   }
@@ -116,7 +99,7 @@ async function handleLogin(): Promise<void> {
   isLoading.value = true;
 
   try {
-    const payload: ReqMoeToken = {
+    const payload: ReqToken = {
       email: email.value,
       password: password.value,
       captcha: captcha.value,
@@ -125,9 +108,29 @@ async function handleLogin(): Promise<void> {
 
     const tokenResponse = await aquireMoetranToken(payload);
 
-    console.log('登录成功', tokenResponse.token);
+    // 前端与后端同时更新 moetran token
+    await saveMoetranToken(tokenResponse.token);
+    await tokenStore.setMoetranToken(tokenResponse.token);
 
-    showToast('登录成功', 'success');
+    // 静默尝试 Poprako 登录（不影响主登录流程，不阻塞跳转）
+    loginPoprako({ email: email.value, password: password.value })
+      .then(async poprakoRes => {
+        try {
+          await savePoprakoToken(poprakoRes.token);
+          await tokenStore.setPoprakoToken(poprakoRes.token);
+          console.log('Poprako 静默登录成功');
+        } catch (e) {
+          console.warn('保存 Poprako token 失败', e);
+        }
+      })
+      .catch(e => {
+        console.warn('Poprako 静默登录失败', e);
+        toastStore.show('Poprako 登录失败', 'error');
+      });
+
+    console.log('登录成功', tokenResponse.token);
+    toastStore.show('登录成功', 'success');
+    emit('logged');
   } catch (error) {
     console.error('登录失败', error);
 
@@ -138,23 +141,30 @@ async function handleLogin(): Promise<void> {
         ? '登录失败，请检查输入后重试'
         : '登录失败，请稍后再试';
 
-    showToast(message, 'error');
+    toastStore.show(message, 'error');
   } finally {
     isLoading.value = false;
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
+  // 进入页面先检查是否已存在 moetran token
+  try {
+    await tokenStore.loadAll();
+    if (tokenStore.moetranToken) {
+      // 已有 token，跳转面板
+      emit('logged');
+      return;
+    }
+  } catch (e) {
+    console.warn('预加载 token 失败', e);
+  }
+
   fetchCaptcha();
   window.addEventListener('resize', updateCaptchaWrapperHeight);
 });
 
 onBeforeUnmount(() => {
-  if (toastTimer !== null) {
-    window.clearTimeout(toastTimer);
-
-    toastTimer = null;
-  }
   window.removeEventListener('resize', updateCaptchaWrapperHeight);
 });
 </script>
@@ -219,13 +229,15 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
+        <!-- 静默 Poprako 登录：无需用户操作，移除手动选择 UI -->
+
         <button type="submit" class="login-button" :disabled="isLoading">
           <span v-if="isLoading">登录中...</span>
           <span v-else>登录</span>
         </button>
       </form>
     </div>
-    <AppToast :visible="toastState.visible" :message="toastState.message" :tone="toastState.tone" />
+    <!-- 全局 toast 在 App.vue 中挂载 -->
   </div>
 </template>
 
@@ -346,6 +358,61 @@ onBeforeUnmount(() => {
 .captcha-placeholder {
   font-size: 12px;
   color: #a0b0c8;
+}
+
+.extra-row {
+  display: flex;
+  gap: 8px;
+}
+
+.toggle-option {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end; /* right-align contents */
+  gap: 10px;
+  padding: 6px 10px; /* flatter */
+  border-radius: 10px;
+  border: 1px solid rgba(188, 206, 233, 0.6);
+  background: #f8fbff;
+  cursor: pointer;
+  min-width: 120px;
+  box-shadow: 0 1px 4px rgba(100, 140, 180, 0.04);
+  transition:
+    background-color 180ms ease,
+    transform 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.toggle-option:active {
+  transform: translateY(1px);
+}
+
+.toggle-option .toggle-label {
+  font-size: 13px;
+  color: #2a3b4f;
+  font-weight: 400; /* lighter than input placeholders */
+  margin-right: 8px;
+}
+
+.toggle-option .toggle-badge {
+  font-size: 12px;
+  color: #5a6c86;
+  background: rgba(255, 255, 255, 0.6);
+  padding: 4px 6px; /* smaller badge */
+  border-radius: 8px;
+  border: 1px solid rgba(160, 176, 196, 0.12);
+}
+
+.toggle-option.selected {
+  background: linear-gradient(90deg, #e6f7ff 0%, #ccedff 100%);
+  border-color: #64b4ff;
+  box-shadow: 0 6px 18px rgba(100, 160, 220, 0.08);
+}
+
+.toggle-option.selected .toggle-badge {
+  background: rgba(100, 180, 255, 0.12);
+  color: #0f3a63;
+  border-color: rgba(100, 180, 255, 0.18);
 }
 
 .login-button {

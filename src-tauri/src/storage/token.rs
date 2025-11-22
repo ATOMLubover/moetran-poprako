@@ -12,7 +12,7 @@ pub async fn migrate_token_table(pool: &sqlx::SqlitePool) -> Result<(), String> 
     )
     .execute(pool)
     .await
-    .map_err(|e| format!("Failed to initialize database schema: {}", e))?;
+    .map_err(|err| format!("Failed to initialize database schema: {}", err))?;
 
     Ok(())
 }

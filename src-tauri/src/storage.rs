@@ -1,16 +1,15 @@
-use std::cell::OnceCell;
 use std::fs;
 use std::path::Path;
-use std::sync::{LazyLock, OnceLock};
+use std::sync::OnceLock;
 
-mod token;
+pub mod token;
 
 pub struct LocalStorage {
     pool: sqlx::SqlitePool,
 }
 
 impl LocalStorage {
-    /// Initialize LocalStorage: ensure directory & file exist, open pool, run migrations.
+    /// 初始化： 创建 db 文件, 建立连接池, 执行迁移
     pub async fn init(database_path: &str) -> Result<(), String> {
         let path = Path::new(database_path);
 
@@ -20,7 +19,6 @@ impl LocalStorage {
         }
 
         if !path.exists() {
-            // create empty file so that relative path mistakes are surfaced early.
             fs::File::create(path).map_err(|err| format!("Failed to create db file: {}", err))?;
         }
 

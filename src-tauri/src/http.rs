@@ -61,6 +61,7 @@ impl ApiClient {
     pub async fn https_post<B, R>(
         client: &reqwest::Client,
         url: reqwest::Url,
+        headers: Vec<(HeaderName, HeaderValue)>,
         body: Option<B>,
     ) -> Result<R, String>
     where
@@ -76,7 +77,19 @@ impl ApiClient {
             req = req.body("");
         }
 
+        let mut headers_map = reqwest::header::HeaderMap::new();
+
+        headers.into_iter().for_each(|(key, value)| {
+            if let Some(prev) = headers_map.insert(key, value) {
+                warn!(
+                    ?prev,
+                    "Header key duplicated when building headers for POST"
+                );
+            }
+        });
+
         let resp = req
+            .headers(headers_map)
             .send()
             .await
             .map_err(|err| format!("request send error: {}", err))?;
@@ -144,7 +157,17 @@ where
         .join(path)
         .map_err(|err| format!("Failed to build URL for {}: {}", path, err))?;
 
-    ApiClient::https_post(&client, url, body).await
+    let mut headers = Vec::new();
+
+    if let Some(token) = crate::token::cached_moetran_token() {
+        headers.push((
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", token))
+                .map_err(|err| format!("Invalid token header value: {}", err))?,
+        ));
+    }
+
+    ApiClient::https_post(&client, url, headers, body).await
 }
 
 pub async fn moetran_get<R>(path: &str) -> Result<R, String>
@@ -185,7 +208,17 @@ where
         .join(path)
         .map_err(|err| format!("Failed to build URL for {}: {}", path, err))?;
 
-    ApiClient::https_post(&client, url, body).await
+    let mut headers = Vec::new();
+
+    if let Some(token) = crate::token::cached_poprako_token() {
+        headers.push((
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", token))
+                .map_err(|err| format!("Invalid token header value: {}", err))?,
+        ));
+    }
+
+    ApiClient::https_post(&client, url, headers, body).await
 }
 
 pub async fn poprako_get<R>(path: &str) -> Result<R, String>

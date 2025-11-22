@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import AppToast from '../components/AppToast.vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useToastStore } from '../stores/toast';
 
 interface SourcePosition {
   x: number;
@@ -40,13 +40,8 @@ interface ShortcutHint {
   description: string;
 }
 
-type ToastTone = 'success' | 'error';
-
-interface ToastState {
-  message: string;
-  tone: ToastTone;
-  visible: boolean;
-}
+// 全局 toast store
+const toastStore = useToastStore();
 
 const props = defineProps<{
   projectId: string;
@@ -243,13 +238,7 @@ const isShortcutHelpVisible = ref(false);
 
 const shortcutHelpRef = ref<HTMLDivElement | null>(null);
 
-const toastState = reactive<ToastState>({
-  message: '',
-  tone: 'success',
-  visible: false,
-});
-
-let toastTimer: number | null = null;
+// 使用全局 store，不再维护本地状态
 
 function cloneSource(source: TranslationSource): TranslationSource {
   return {
@@ -1040,19 +1029,8 @@ function centerSourceOnBoard(source: TranslationSource): void {
   };
 }
 
-function showToast(message: string, tone: ToastTone = 'success', duration = 2000): void {
-  toastState.message = message;
-  toastState.tone = tone;
-  toastState.visible = true;
-
-  if (toastTimer !== null) {
-    window.clearTimeout(toastTimer);
-  }
-
-  toastTimer = window.setTimeout(() => {
-    toastState.visible = false;
-    toastTimer = null;
-  }, duration);
+function showToast(message: string, tone: 'success' | 'error' = 'success', duration = 2000): void {
+  toastStore.show(message, tone, duration);
 }
 
 // 根据锚点调整缩放
@@ -1612,11 +1590,7 @@ onBeforeUnmount(() => {
     boardResizeObserver = null;
   }
 
-  if (toastTimer !== null) {
-    window.clearTimeout(toastTimer);
-
-    toastTimer = null;
-  }
+  // 全局 toast 不需要在此清理
 });
 </script>
 
@@ -1971,7 +1945,7 @@ onBeforeUnmount(() => {
         </li>
       </ul>
     </div>
-    <AppToast :visible="toastState.visible" :message="toastState.message" :tone="toastState.tone" />
+    <!-- 全局 toast 在 App.vue 中挂载 -->
   </section>
 </template>
 

@@ -3,13 +3,13 @@ export interface ResCaptcha {
   info: string;
 }
 
-export interface ReqMoeToken {
+export interface ReqToken {
   email: string;
   password: string;
   captcha: string;
   info: string;
 }
 
-export interface ResMoeToken {
+export interface ResToken {
   token: string;
 }
