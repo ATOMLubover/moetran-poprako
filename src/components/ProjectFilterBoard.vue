@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import RoundSwitch from './RoundSwitch.vue';
+import MemberSelector, { MemberInfo } from './MemberSelector.vue';
 // 与示例逻辑对应的筛选面板，实现项目集/项目/成员/状态筛选
 // 发出 confirmOptions 事件供父组件应用过滤
 
@@ -12,6 +13,32 @@ interface FilterOption {
 }
 
 const filterOptions = ref<FilterOption[]>([]);
+// 高级成员选择（职位+多选）
+const advancedPickedMembers = ref<MemberInfo[]>([]);
+const memberSelectorOpen = ref(false);
+function openMemberSelector() {
+  memberSelectorOpen.value = true;
+}
+function handleMemberSelectorConfirm() {
+  const labelMap: Record<MemberInfo['position'], string> = {
+    translator: '翻译',
+    proofreader: '校对',
+    typesetter: '嵌字',
+  };
+  for (const m of advancedPickedMembers.value) {
+    const key = `member-${m.position}`;
+    const label = `成员(${labelMap[m.position]})：${m.name}`;
+    if (!filterOptions.value.find(o => o.key === key && o.value === m.name)) {
+      filterOptions.value.push({ label, key, value: m.name });
+    }
+  }
+}
+function handleMemberSelectorCancel() {
+  // 取消不做合并
+}
+function handleMemberSelectorClose() {
+  memberSelectorOpen.value = false;
+}
 
 // 控制筛选板是否启用的开关（由 RoundSwitch v-model 绑定）
 const filterEnabled = ref<boolean>(true);
@@ -149,6 +176,7 @@ function clearAllOptions() {
   projectInput.value = '';
   memberInput.value = '';
   selectedLabor.value = '';
+  advancedPickedMembers.value = [];
 }
 const emit = defineEmits<{ (e: 'confirmOptions', options: FilterOption[]): void }>();
 function onConfirm() {
@@ -159,7 +187,7 @@ function onConfirm() {
   <div class="filter-board" :class="{ 'fb--disabled': !filterEnabled }">
     <div class="fb-header">
       <h3 class="fb-title">筛选控制板</h3>
-      <RoundSwitch v-model="filterEnabled" />
+      <!-- <RoundSwitch v-model="filterEnabled" /> -->
     </div>
 
     <!-- 项目集输入 -->
@@ -186,33 +214,6 @@ function onConfirm() {
       />
     </div>
 
-    <!-- 成员输入 -->
-    <div class="fb-row fb-row--member">
-      <label class="fb-label">筛选成员</label>
-      <div class="fb-member-wrapper">
-        <input
-          class="fb-input"
-          placeholder="输入成员昵称 [Enter 搜索]"
-          v-model="memberInput"
-          @focus="showMemberDropdown = true"
-          @blur="hideMemberDropdown"
-          @keyup.enter="fetchAndDisplayMembers"
-          :disabled="!filterEnabled"
-        />
-        <ul v-if="showMemberDropdown && filteredMemberOptions.length" class="fb-dropdown">
-          <li
-            v-for="m in filteredMemberOptions"
-            :key="m.memberId"
-            class="fb-dropdown__item"
-            @mousedown.prevent="selectMemberOption(m)"
-          >
-            {{ m.nickname }}
-          </li>
-        </ul>
-      </div>
-    </div>
-
-    <!-- 状态选择（强制单行填充） -->
     <div class="fb-status-block">
       <label class="fb-label">筛选项目状态</label>
       <div v-if="!selectedLabor" class="fb-status-group">
@@ -233,6 +234,14 @@ function onConfirm() {
       </div>
     </div>
 
+    <!-- 高级成员选择（包含职位） -->
+    <div class="fb-row">
+      <label class="fb-label">成员筛选</label>
+      <button type="button" class="fb-adv-btn" @click="openMemberSelector">选择成员</button>
+    </div>
+
+    <!-- 状态选择（强制单行填充） -->
+
     <!-- 条件预览：使用 transition-group 动画展示 -->
     <div class="fb-preview" v-if="filterOptions.length">
       <span class="fb-preview__label">筛选条件预览：</span>
@@ -251,6 +260,13 @@ function onConfirm() {
       </button>
       <button class="fb-confirm-btn" @click="onConfirm">确认查询</button>
     </div>
+    <MemberSelector
+      :show="memberSelectorOpen"
+      :picked="advancedPickedMembers"
+      @confirm="handleMemberSelectorConfirm"
+      @cancel="handleMemberSelectorCancel"
+      @close="handleMemberSelectorClose"
+    />
   </div>
 </template>
 <style scoped>
@@ -328,12 +344,15 @@ function onConfirm() {
   background: #f1f7ff;
 }
 .fb-status-block {
+  /* lay out label and status buttons in one row, matching other fb-row
+     controls: label on the left, buttons fill the remaining space */
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  gap: 12px;
 }
 .fb-status-group {
   display: flex;
+  flex: 1 1 auto; /* fill remaining horizontal space beside the label */
   flex-wrap: nowrap; /* 强制单行 */
   gap: 8px;
 }
@@ -467,5 +486,43 @@ function onConfirm() {
 }
 .fb-confirm-btn:hover {
   background: #4d97fc;
+}
+.fb-adv-btn {
+  padding: 6px 14px;
+  border: none;
+  background: #e6f1ff;
+  color: #2b577e;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 300px;
+  cursor: pointer;
+  border: 1px solid rgba(219, 226, 238, 0.6);
+  box-shadow: 0 4px 12px rgba(118, 184, 255, 0.28);
+  transition:
+    background 0.18s ease,
+    transform 0.18s ease;
+}
+.fb-adv-btn:hover {
+  background: #d8e9fc;
+}
+.fb-adv-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+  color: #2f4b66;
+}
+.fb-adv-chip {
+  background: #f0fbf3;
+  border: 1px solid #bfe6c6;
+  padding: 3px 8px;
+  border-radius: 999px;
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.fb-adv-role {
+  color: #3a6f4d;
+  font-weight: 600;
 }
 </style>

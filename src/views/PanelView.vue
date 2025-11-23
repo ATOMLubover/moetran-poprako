@@ -187,6 +187,7 @@ onMounted(() => {
   loadUser();
   loadTeams();
   loadUserProjects(); // 初始加载用户项目
+  loadAnnouncements();
 });
 
 // ======================= 新过滤逻辑 =======================
@@ -211,7 +212,8 @@ function applyFilters() {
       base = base.filter(
         p => p.title.includes(v) || p.author.includes(v) || String(p.id).includes(v)
       );
-    } else if (opt.key === 'member') {
+    } else if (opt.key === 'member' || opt.key.startsWith('member-')) {
+      // 成员过滤（简单：匹配作者名；真实实现应根据项目参与成员维度）
       base = base.filter(p => p.author.includes(opt.value));
     } else if (opt.key.endsWith('-status')) {
       // 状态：翻译/校对/嵌字/监修/发布，对应 phases 中 phase
@@ -232,8 +234,33 @@ const displayProjects = computed(() =>
   filteredProjects.value.length ? filteredProjects.value : rawProjects.value
 );
 
-// 筛选控制板折叠状态（默认收起）
-const filterOpen = ref(false);
+// 公告列表（mock）
+interface Announcement {
+  id: number;
+  title: string;
+  content: string;
+  date: string;
+}
+const announcements = ref<Announcement[]>([]);
+async function loadAnnouncements(): Promise<void> {
+  // mock API
+  await new Promise(r => setTimeout(r, 220));
+  announcements.value = [
+    {
+      id: 1,
+      title: '系统维护',
+      content: '11/25 将进行短时维护，届时服务可能中断。',
+      date: '2025-11-20',
+    },
+    { id: 2, title: '新功能上线', content: '新增成员筛选与项目模板支持。', date: '2025-11-10' },
+    {
+      id: 3,
+      title: '社群活动',
+      content: '本周五举办线上翻译交流会，欢迎报名。',
+      date: '2025-11-08',
+    },
+  ];
+}
 
 // 打开新建项目视图（供 ProjectList 的 create 事件调用）
 function handleOpenCreator(): void {
@@ -292,36 +319,25 @@ function handleOpenCreator(): void {
 
       <!-- 主体区域 -->
       <main class="projects-main">
-        <div class="projects-header">
-          <h1 class="projects-title">项目列表</h1>
-          <button
-            class="filter-toggle"
-            @click="filterOpen = !filterOpen"
-            :aria-expanded="filterOpen"
-            title="筛选"
-          >
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="2" />
-              <path
-                d="M15 15L21 21"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-              />
-            </svg>
-          </button>
-        </div>
-        <transition name="filter-panel-fade">
-          <div v-show="filterOpen" class="filter-panel-wrapper">
+        <div class="projects-top">
+          <div class="projects-announcements">
+            <div class="ann-header">
+              <h3 class="ann-title">公告</h3>
+            </div>
+            <ul class="ann-list">
+              <li v-for="a in announcements" :key="a.id" class="ann-item">
+                <div class="ann-item__title">{{ a.title }}</div>
+                <div class="ann-item__content">{{ a.content }}</div>
+                <div class="ann-item__date">{{ a.date }}</div>
+              </li>
+              <li v-if="!announcements.length" class="ann-empty">暂无公告</li>
+            </ul>
+          </div>
+
+          <div class="filter-panel-wrapper">
             <ProjectFilterBoard @confirmOptions="handleConfirmOptions" />
           </div>
-        </transition>
+        </div>
         <div class="projects-content">
           <div v-if="loadingProjects" class="placeholder">载入项目...</div>
           <div class="projects-scroll" v-else>
@@ -502,8 +518,76 @@ function handleOpenCreator(): void {
 }
 .projects-title {
   margin: 0;
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 600;
+}
+.projects-top {
+  display: flex;
+  gap: 18px;
+  /* stretch children so left (announcements) and right (filter panel)
+     share the same top and bottom edges */
+  align-items: stretch;
+}
+.projects-announcements {
+  flex: 1;
+  background: #fff;
+  border: 1px solid rgba(170, 190, 215, 0.85);
+  border-radius: 12px;
+  padding: 12px;
+  box-sizing: border-box;
+  min-height: 84px;
+}
+.ann-header {
+  margin-bottom: 8px;
+}
+.ann-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: #203650;
+}
+.ann-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ann-item {
+  padding: 8px;
+  border-radius: 8px;
+  background: #fbfdff;
+  border: 1px solid rgba(230, 240, 250, 0.9);
+}
+.ann-item__title {
+  font-weight: 600;
+  font-size: 13px;
+  color: #214b66;
+}
+.ann-item__content {
+  font-size: 13px;
+  color: #48657a;
+  margin-top: 4px;
+}
+.ann-item__date {
+  font-size: 12px;
+  color: #7a8b99;
+  margin-top: 6px;
+}
+.ann-empty {
+  text-align: center;
+  color: #6b7c91;
+  padding: 10px 0;
+}
+/* 让原有的 filter-panel-wrapper 在并排时占右半 */
+.filter-panel-wrapper {
+  /* keep the wrapper lightweight to avoid double borders; the child
+     (ProjectFilterBoard) will receive the visible card styling so only
+     a single border is shown and typography/height can match announcements */
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 .filter-toggle {
   border: 1px solid rgba(118, 184, 255, 0.7);
@@ -535,6 +619,28 @@ function handleOpenCreator(): void {
     max-height 0.3s ease,
     opacity 0.25s ease,
     margin-top 0.3s ease;
+}
+/* apply the card styling to the direct child so we don't produce a
+   double border (ProjectFilterBoard itself already renders a bordered
+   card); also ensure it fills the wrapper and uses matching font size */
+.filter-panel-wrapper > * {
+  flex: 1 1 auto;
+  min-height: 84px;
+  box-sizing: border-box;
+  background: #fff;
+  border: 1px solid rgba(170, 190, 215, 0.85);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+}
+
+/* remove the filter-board's default top margin and slightly adjust
+   its top padding so its inner content aligns with announcements */
+.filter-panel-wrapper > .filter-board {
+  margin-top: 0;
+  padding-top: 12px;
 }
 .filter-panel-fade-enter-from,
 .filter-panel-fade-leave-to {
