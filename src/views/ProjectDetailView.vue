@@ -10,6 +10,7 @@ import {
   PointElement,
   LinearScale,
   CategoryScale,
+  Filler,
 } from 'chart.js';
 import CircularProgress from '../components/CircularProgress.vue';
 import { useToastStore } from '../stores/toast';
@@ -116,7 +117,16 @@ const statusBlocks = computed(() => {
 });
 
 // Chart.js 注册组件
-ChartJS.register(Title, Tooltip, Legend, LineElement, PointElement, LinearScale, CategoryScale);
+ChartJS.register(
+  Title,
+  Tooltip,
+  Legend,
+  LineElement,
+  PointElement,
+  LinearScale,
+  CategoryScale,
+  Filler
+);
 
 // 视口高度与动态图表高度控制，避免出现垂直滚动条
 const windowHeight = ref(window.innerHeight);
@@ -383,18 +393,6 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </div>
-          <!-- 成员标签行 -->
-          <div class="pd-members-tags">
-            <div v-for="blk in statusBlocks" :key="blk.label + '-members'" class="pd-member-chip">
-              <span class="pd-member-chip__role">[{{ blk.label }}]</span>
-              <span class="pd-member-chip__list">
-                <template v-if="blk.members && blk.members.length > 0">
-                  {{ blk.members.join('、') }}
-                </template>
-                <template v-else>未分配</template>
-              </span>
-            </div>
-          </div>
           <!-- 指标统计栅格 -->
           <div class="pd-metrics-grid">
             <div class="pd-metric-box">
@@ -418,6 +416,41 @@ onBeforeUnmount(() => {
               }}</span>
             </div>
           </div>
+          <!-- 成员标签行 -->
+          <div class="pd-members-tags">
+            <div v-for="blk in statusBlocks" :key="blk.label + '-members'" class="pd-member-chip">
+              <span class="pd-member-chip__role">[{{ blk.label }}]</span>
+              <span class="pd-member-chip__list">
+                <template v-if="blk.members && blk.members.length > 0">
+                  {{ blk.members.join('、') }}
+                </template>
+                <template v-else>未分配</template>
+              </span>
+            </div>
+          </div>
+          <!-- 指标统计栅格 -->
+          <!-- <div class="pd-metrics-grid">
+            <div class="pd-metric-box">
+              <span class="pd-metric-box__label">总页数</span>
+              <span class="pd-metric-box__value">{{ project.totalPages }}</span>
+            </div>
+            <div class="pd-metric-box">
+              <span class="pd-metric-box__label">总标记数</span>
+              <span class="pd-metric-box__value">{{ project.totalMarkers }}</span>
+            </div>
+            <div class="pd-metric-box">
+              <span class="pd-metric-box__label">已翻译标记数</span>
+              <span class="pd-metric-box__value pd-metric-box__value--yellow">{{
+                project.totalTranslatedMarkers
+              }}</span>
+            </div>
+            <div class="pd-metric-box">
+              <span class="pd-metric-box__label">已校对标记数</span>
+              <span class="pd-metric-box__value pd-metric-box__value--pink">{{
+                project.totalProofreadMarkers
+              }}</span>
+            </div>
+          </div> -->
         </div>
       </div>
     </div>
@@ -829,11 +862,13 @@ onBeforeUnmount(() => {
   color: #466079;
 }
 .pd-metrics-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 18px 20px;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 18px;
 }
 .pd-metric-box {
+  flex: 1 1 0;
   display: flex;
   align-items: center;
   justify-content: space-between;

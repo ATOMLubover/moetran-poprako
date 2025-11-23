@@ -9,7 +9,7 @@ mod user; // 用户与登录相关 // 项目与项目集相关
 use std::{path::PathBuf, str::FromStr, sync::LazyLock};
 
 use tracing::info;
-use tracing_subscriber::fmt;
+use tracing_subscriber::EnvFilter;
 
 // Direct imports not strictly required; commands referenced in generate_handler by path.
 
@@ -31,20 +31,31 @@ const DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialize tracing (idempotent if called once). Use RUST_LOG for level control, default to info.
-    let _ = fmt().with_target(false).compact().try_init();
+    // 初始化 tracing（一次性），添加 EnvFilter 方便用户手动调节日志等级：
+    // 例如设置 RUST_LOG=debug,reqwest=warn
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    tracing_subscriber::fmt()
+        .with_target(false)
+        .compact()
+        .with_env_filter(filter)
+        .try_init()
+        .expect("Error when initializing tracing log");
 
     tauri::Builder::default()
-        .setup(|_| {
-            tauri::async_runtime::block_on(async {
-                storage::LocalStorage::init(&DATA_DIR.join("local.db").to_string_lossy())
+        .setup(|_app| {
+            // 不再使用 block_on 阻塞主事件循环，避免 winit 事件顺序异常警告
+            // 在后台异步初始化本地存储
+            tauri::async_runtime::spawn(async {
+                match storage::LocalStorage::init(&DATA_DIR.join("local.db").to_string_lossy())
                     .await
-                    .expect("Failed to initialize local storage");
-
-                info!(
-                    "Local storage initialized at {:?}",
-                    DATA_DIR.join("local.db")
-                );
+                {
+                    Ok(_) => info!(
+                        "Local storage initialized at {:?}",
+                        DATA_DIR.join("local.db")
+                    ),
+                    Err(err) => tracing::error!(%err, "Local storage init failed"),
+                }
             });
 
             Ok(())

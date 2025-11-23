@@ -54,7 +54,7 @@ const palette = computed(() => colorMap[props.color] || colorMap.yellow);
           :stroke-dasharray="circumference + ' ' + circumference"
           :stroke-dashoffset="dashOffset"
           stroke-linecap="round"
-          transform="rotate(-90, ' + size/2 + ', ' + size/2 + ')"
+          :transform="'rotate(-90 ' + size / 2 + ' ' + size / 2 + ')'"
         />
         <text
           class="cp-text"
