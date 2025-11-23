@@ -43,10 +43,15 @@ interface ShortcutHint {
 // 全局 toast store
 const toastStore = useToastStore();
 
+// 传入：项目 ID、当前页索引、是否具备编辑权限（isEnabled=false 表示只读模式）
 const props = defineProps<{
   projectId: string;
   pageIndex: number;
+  isEnabled: boolean;
 }>();
+
+// 是否允许编辑（参与者）
+const canEdit = computed(() => props.isEnabled);
 
 const emit = defineEmits<{
   (event: 'update:pageIndex', value: number): void;
@@ -377,7 +382,9 @@ const selectedSourceLabel = computed(() => {
 });
 
 // 切换翻译/校对模式
+// 切换翻译 / 校对模式（只读模式下禁止）
 function handleToggleMode(): void {
+  if (!canEdit.value) return;
   const nextMode: 'translate' | 'proof' = isProofMode.value ? 'translate' : 'proof';
 
   activeMode.value = nextMode;
@@ -386,7 +393,9 @@ function handleToggleMode(): void {
 }
 
 // 切换自动重定位
+// 切换自动重定位（只读模式下禁止）
 function handleToggleAutoRelocate(): void {
+  if (!canEdit.value) return;
   const nextState = !isAutoRelocateEnabled.value;
 
   isAutoRelocateEnabled.value = nextState;
@@ -645,11 +654,13 @@ function createSourceId(): string {
 }
 
 // 通过坐标创建标记
+// 通过坐标创建标记（只读模式下禁止）
 function addSourceAtPointer(
   event: MouseEvent | PointerEvent,
   category: SourceCategory,
   activate = true
 ): void {
+  if (!canEdit.value) return;
   const wrapper = imageWrapperRef.value;
 
   if (!wrapper || !projectPage.value) {
@@ -687,7 +698,9 @@ function addSourceAtPointer(
   }
 }
 
+// 收起 / 展开源列表（只读模式下禁止）
 function handleTogglePanel(): void {
+  if (!canEdit.value) return;
   if (!hasPanelOverride.value) {
     hasPanelOverride.value = true;
   }
@@ -710,7 +723,9 @@ function handleTogglePanel(): void {
 }
 
 // 拖拽标记开始
+// 拖拽标记开始（只读模式下禁止）
 function handleSourcePointerDown(event: PointerEvent, sourceId: string): void {
+  if (!canEdit.value) return;
   if (event.button !== 0) {
     return;
   }
@@ -746,7 +761,9 @@ function handleSourcePointerDown(event: PointerEvent, sourceId: string): void {
 }
 
 // 拖拽标记移动
+// 拖拽标记移动（只读模式下禁止）
 function updateDraggingSourcePosition(event: PointerEvent): void {
+  if (!canEdit.value) return;
   if (!draggingSourceId.value) {
     return;
   }
@@ -784,7 +801,9 @@ function stopDraggingSource(): void {
 }
 
 // 删除标记
+// 删除标记（只读模式下禁止）
 function handleRemoveSource(sourceId: string): void {
+  if (!canEdit.value) return;
   sources.value = sources.value.filter(item => item.id !== sourceId);
 
   if (activeSourceId.value === sourceId) {
@@ -1107,7 +1126,9 @@ function handleKeyboardZoom(direction: 1 | -1): void {
 }
 
 // 选中标记
+// 选中标记（只读模式下禁止进入编辑）
 function handleSelectSource(sourceId: string): void {
+  if (!canEdit.value) return;
   if (activeSourceId.value === sourceId) {
     if (!isAutoRelocateEnabled.value) {
       return;
@@ -1130,7 +1151,9 @@ function handleSelectSource(sourceId: string): void {
 }
 
 // 拖拽编辑器开始
+// 拖拽编辑器浮窗（只读模式下禁止）
 function handleEditorPointerDown(event: PointerEvent): void {
+  if (!canEdit.value) return;
   event.preventDefault();
 
   isDraggingEditor.value = true;
@@ -1361,26 +1384,23 @@ function handleGlobalShortcuts(event: KeyboardEvent): void {
     }
 
     if (key === 'p') {
+      if (!canEdit.value) return;
       event.preventDefault();
-
       handleToggleMode();
-
       return;
     }
 
     if (key === 'f') {
+      if (!canEdit.value) return;
       event.preventDefault();
-
       handleToggleAutoRelocate();
-
       return;
     }
 
     if (key === 'l') {
+      if (!canEdit.value) return;
       event.preventDefault();
-
       handleTogglePanel();
-
       return;
     }
 
@@ -1411,7 +1431,9 @@ function handleGlobalShortcuts(event: KeyboardEvent): void {
 }
 
 // 切换标记类别
+// 切换标记类别（只读模式下禁止）
 function toggleSourceCategory(): void {
+  if (!canEdit.value) return;
   if (!selectedSource.value) {
     return;
   }
@@ -1420,7 +1442,9 @@ function toggleSourceCategory(): void {
 }
 
 // 切换校对状态
+// 切换校对状态（只读模式下禁止）
 function toggleProofStatus(): void {
+  if (!canEdit.value) return;
   if (!selectedSource.value) {
     return;
   }
@@ -1453,7 +1477,9 @@ function toggleProofStatus(): void {
   selectedSource.value.status = 'proofed';
 }
 
+// 校对模式快捷键（只读模式下禁止）
 function handleProofShortcut(event: KeyboardEvent): void {
+  if (!canEdit.value) return;
   if (!isProofMode.value) {
     return;
   }
@@ -1532,6 +1558,12 @@ function handleJumpToPage(): void {
 }
 
 onMounted(() => {
+  // 只读模式初始化：强制折叠面板并清空选中
+  if (!canEdit.value) {
+    isPanelCollapsed.value = true;
+    hasPanelOverride.value = true;
+    activeSourceId.value = null;
+  }
   window.addEventListener('pointermove', updateDraggingSourcePosition);
 
   window.addEventListener('pointermove', updateEditorPosition);
@@ -1655,6 +1687,7 @@ onBeforeUnmount(() => {
           :title="isPanelCollapsed ? '展开源列表' : '收起源列表'"
           @click="handleTogglePanel"
           :aria-pressed="!isPanelCollapsed"
+          v-if="canEdit"
         >
           <span class="sr-only">{{ isPanelCollapsed ? '展开源列表' : '收起源列表' }}</span>
           <svg class="toolbox__icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -1675,6 +1708,7 @@ onBeforeUnmount(() => {
           :title="isAutoRelocateEnabled ? '关闭自动重定位' : '开启自动重定位'"
           @click="handleToggleAutoRelocate"
           :aria-pressed="isAutoRelocateEnabled"
+          v-if="canEdit"
         >
           <span class="sr-only">{{
             isAutoRelocateEnabled ? '关闭自动重定位' : '开启自动重定位'
@@ -1698,6 +1732,7 @@ onBeforeUnmount(() => {
           :title="isProofMode ? '切换为翻译模式' : '切换为校对模式'"
           @click="handleToggleMode"
           :aria-pressed="isProofMode"
+          v-if="canEdit"
         >
           <span class="sr-only">{{ isProofMode ? '切换为翻译模式' : '切换为校对模式' }}</span>
           <svg class="toolbox__icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -1760,7 +1795,7 @@ onBeforeUnmount(() => {
               draggable="false"
               @load="handleBoardContentLoaded"
             />
-            <template v-if="showMarkers">
+            <template v-if="showMarkers && canEdit">
               <button
                 v-for="item in sources"
                 :key="item.id"
@@ -1803,7 +1838,7 @@ onBeforeUnmount(() => {
           ref="panelRef"
           :style="panelStyle"
         >
-          <ul v-if="!isPanelCollapsed" class="panel__list">
+          <ul v-if="!isPanelCollapsed && canEdit" class="panel__list">
             <li
               v-for="item in sources"
               :key="item.id"
@@ -1840,7 +1875,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
     <div
-      v-if="selectedSource"
+      v-if="selectedSource && canEdit"
       class="editor"
       :style="{
         left: `${editorPosition.x}px`,

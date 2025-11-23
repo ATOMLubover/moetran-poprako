@@ -5,22 +5,25 @@ import LoginView from './views/LoginView.vue';
 import PanelView from './views/PanelView.vue';
 import AppToast from './components/AppToast.vue';
 import { useToastStore } from './stores/toast';
+import ProjectDetailView from './views/ProjectDetailView.vue';
 
-type ViewName = 'login' | 'translator' | 'placeholder' | 'panel';
+// 视图名称枚举：新增 projectDetail
+type ViewName = 'login' | 'translator' | 'projectDetail' | 'panel';
 
+// 项目详情使用数字 ID；翻译视图仍沿用字符串 ID
+const projectDetailId = ref(1);
 const projectId = ref('demo-project');
 
 const pageIndex = ref(0);
 
 const currentView = ref<ViewName>('login');
+// 翻译页面是否具备编辑权限（项目参与者）
+const translatorEnabled = ref<boolean>(true);
 const toastStore = useToastStore();
 
 function handleBack(): void {
-  currentView.value = 'placeholder';
-}
-
-function handleOpenTranslator(): void {
-  currentView.value = 'translator';
+  // 返回到项目详情（便于来回测试）
+  currentView.value = 'projectDetail';
 }
 </script>
 
@@ -28,19 +31,24 @@ function handleOpenTranslator(): void {
   <main class="app-root">
     <LoginView v-if="currentView === 'login'" @logged="currentView = 'panel'" />
     <PanelView v-else-if="currentView === 'panel'" />
+    <ProjectDetailView
+      v-else-if="currentView === 'projectDetail'"
+      :project-id="projectDetailId"
+      @close="currentView = 'panel'"
+      @open-translator="
+        (enabled: boolean) => {
+          translatorEnabled = enabled;
+          currentView = 'translator';
+        }
+      "
+    />
     <TranslatorView
       v-else-if="currentView === 'translator'"
       :project-id="projectId"
+      :is-enabled="translatorEnabled"
       v-model:page-index="pageIndex"
       @back="handleBack"
     />
-    <section v-else class="placeholder">
-      <h1>项目详情（待实现）</h1>
-      <p>这里将展示项目元信息、分工等内容。点击下方按钮可进入翻译工作台。</p>
-      <button type="button" class="placeholder__action" @click="handleOpenTranslator">
-        进入翻译工作台
-      </button>
-    </section>
 
     <!-- 全局 Toast -->
     <AppToast :visible="toastStore.visible" :message="toastStore.message" :tone="toastStore.tone" />
@@ -51,8 +59,8 @@ function handleOpenTranslator(): void {
         登录页
       </button>
       <button
-        @click="currentView = 'placeholder'"
-        :class="{ active: currentView === 'placeholder' }"
+        @click="currentView = 'projectDetail'"
+        :class="{ active: currentView === 'projectDetail' }"
       >
         项目详情
       </button>
@@ -151,5 +159,11 @@ function handleOpenTranslator(): void {
 .placeholder__action:hover {
   transform: translateY(-2px);
   box-shadow: 0 12px 24px rgba(136, 190, 247, 0.28);
+}
+.placeholder__actions {
+  display: flex;
+  flex-direction: row;
+  gap: 16px;
+  margin-top: 8px;
 }
 </style>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { onBeforeUnmount, onMounted, reactive, ref, computed } from 'vue';
 import type { ReqToken } from '../api/model/auth';
 import { useTokenStore } from '../stores/token';
 import { loginPoprako } from '../ipc/user';
@@ -56,29 +56,56 @@ const isLoading = ref(false);
 
 const toastStore = useToastStore();
 
-// 获取验证码
-async function fetchCaptcha(): Promise<void> {
+// 验证码获取相关：增加点击触发 + 冷却限制
+const CAPTCHA_COOLDOWN_MS = 10_000; // 冷却时间 10 秒
+const lastCaptchaFetchAt = ref<number | null>(null);
+const isCaptchaLoading = ref(false);
+
+const canFetchCaptcha = computed(() => {
+  if (isCaptchaLoading.value) return false;
+  if (lastCaptchaFetchAt.value == null) return true;
+  return Date.now() - lastCaptchaFetchAt.value >= CAPTCHA_COOLDOWN_MS;
+});
+
+const captchaCooldownRemaining = computed(() => {
+  if (lastCaptchaFetchAt.value == null) return 0;
+  const diff = Date.now() - lastCaptchaFetchAt.value;
+  const remain = CAPTCHA_COOLDOWN_MS - diff;
+  return remain > 0 ? Math.ceil(remain / 1000) : 0;
+});
+
+// 获取验证码（仅手动点击触发）
+async function fetchCaptcha(showToast: boolean = false): Promise<void> {
+  isCaptchaLoading.value = true;
   try {
     const data = await getCaptcha();
-
     captchaImage.value = data.image;
-
     captchaInfo.value = data.info;
-
     captcha.value = '';
-
-    // 清空旧高度，等待新图 onload 后计算
-    captchaWrapperHeight.value = null;
+    captchaWrapperHeight.value = null; // 重置高度等待 onload
+    lastCaptchaFetchAt.value = Date.now();
+    if (showToast) {
+      toastStore.show('验证码已获取', 'success');
+    }
   } catch (error) {
     console.error('获取验证码时出现异常', error);
-
     const message =
       error instanceof Error && error.message.includes('status')
         ? '验证码加载失败，请稍后再试'
         : '验证码加载失败，请检查网络';
-
     toastStore.show(message, 'error');
+  } finally {
+    isCaptchaLoading.value = false;
   }
+}
+
+// 点击验证码容器处理函数
+function handleCaptchaClick(): void {
+  if (!canFetchCaptcha.value) {
+    toastStore.show('验证码正在冷却', 'error');
+    return;
+  }
+  fetchCaptcha(true);
 }
 
 // 静默 Poprako 登录无需用户选择，成功后写入 store，失败仅 toast 提示
@@ -134,7 +161,7 @@ async function handleLogin(): Promise<void> {
   } catch (error) {
     console.error('登录失败', error);
 
-    await fetchCaptcha();
+    await fetchCaptcha(false); // 登录失败自动刷新但不提示“已获取”
 
     const message =
       error instanceof Error && error.message.includes('status')
@@ -160,7 +187,7 @@ onMounted(async () => {
     console.warn('预加载 token 失败', e);
   }
 
-  fetchCaptcha();
+  // 初次不自动获取验证码，等待用户手动点击
   window.addEventListener('resize', updateCaptchaWrapperHeight);
 });
 
@@ -212,19 +239,31 @@ onBeforeUnmount(() => {
             />
             <div
               class="captcha-image-wrapper"
+              :class="[
+                canFetchCaptcha
+                  ? 'captcha-image-wrapper--ready'
+                  : 'captcha-image-wrapper--cooldown',
+              ]"
               ref="captchaWrapperRef"
-              @click="fetchCaptcha"
-              title="点击刷新验证码"
+              @click="handleCaptchaClick"
+              :title="
+                canFetchCaptcha ? '点击获取 / 刷新验证码' : `冷却中 (${captchaCooldownRemaining}s)`
+              "
               :style="{ height: captchaWrapperHeight ? captchaWrapperHeight + 'px' : undefined }"
             >
-              <img
-                v-if="captchaImage"
-                :src="captchaImage"
-                alt="验证码"
-                class="captcha-image"
-                @load="handleCaptchaLoad"
-              />
-              <span v-else class="captcha-placeholder">加载中...</span>
+              <template v-if="captchaImage">
+                <img
+                  :src="captchaImage"
+                  alt="验证码"
+                  class="captcha-image"
+                  @load="handleCaptchaLoad"
+                />
+              </template>
+              <template v-else>
+                <span class="captcha-placeholder">
+                  {{ isCaptchaLoading ? '加载中...' : '点击获取验证码' }}
+                </span>
+              </template>
             </div>
           </div>
         </div>
@@ -346,6 +385,15 @@ onBeforeUnmount(() => {
   justify-content: center;
   background: #ffffff;
   box-shadow: 0 2px 4px rgba(118, 166, 219, 0.18);
+  position: relative;
+}
+
+.captcha-image-wrapper--ready {
+  border-color: #31b86a;
+}
+
+.captcha-image-wrapper--cooldown {
+  border-color: #e886a6;
 }
 
 .captcha-image {
