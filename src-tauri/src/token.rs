@@ -1,6 +1,9 @@
 use std::sync::RwLock;
 
-use crate::storage::{token as storage_token, LOCAL_STORAGE};
+use crate::{
+    defer::WarnDefer,
+    storage::{token as storage_token, LOCAL_STORAGE},
+};
 
 static MOETRAN_TOKEN: RwLock<Option<String>> = RwLock::new(None);
 
@@ -11,6 +14,8 @@ static POPRAKO_TOKEN: RwLock<Option<String>> = RwLock::new(None);
 pub async fn get_moetran_token() -> Result<Option<String>, String> {
     tracing::info!("token.get_moetran.start");
 
+    let mut defer = WarnDefer::new("token.get_moetran");
+
     // 先检查内存缓存
     {
         let guard = MOETRAN_TOKEN
@@ -19,6 +24,8 @@ pub async fn get_moetran_token() -> Result<Option<String>, String> {
 
         if let Some(token) = &*guard {
             tracing::info!("token.get_moetran.ok");
+
+            defer.success();
 
             return Ok(Some(token.clone()));
         }
@@ -40,6 +47,8 @@ pub async fn get_moetran_token() -> Result<Option<String>, String> {
 
             tracing::info!("token.get_moetran.ok");
 
+            defer.success();
+
             Ok(Some(token))
         }
         Err(_) => {
@@ -55,6 +64,8 @@ pub async fn get_moetran_token() -> Result<Option<String>, String> {
 #[tauri::command]
 pub async fn save_moetran_token(token: String) -> Result<(), String> {
     tracing::info!("token.save_moetran.start");
+
+    let mut defer = WarnDefer::new("token.save_moetran");
 
     let storage = LOCAL_STORAGE
         .get()
@@ -72,6 +83,8 @@ pub async fn save_moetran_token(token: String) -> Result<(), String> {
 
     tracing::info!("token.save_moetran.ok");
 
+    defer.success();
+
     Ok(())
 }
 
@@ -79,6 +92,8 @@ pub async fn save_moetran_token(token: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn remove_moetran_token() -> Result<(), String> {
     tracing::info!("token.remove_moetran.start");
+
+    let mut defer = WarnDefer::new("token.remove_moetran");
 
     let storage = LOCAL_STORAGE
         .get()
@@ -96,6 +111,8 @@ pub async fn remove_moetran_token() -> Result<(), String> {
 
     tracing::info!("token.remove_moetran.ok");
 
+    defer.success();
+
     Ok(())
 }
 
@@ -103,6 +120,8 @@ pub async fn remove_moetran_token() -> Result<(), String> {
 #[tauri::command]
 pub async fn get_poprako_token() -> Result<Option<String>, String> {
     tracing::info!("token.get_poprako.start");
+
+    let mut defer = WarnDefer::new("token.get_poprako");
 
     // 先检查内存缓存
     {
@@ -112,6 +131,8 @@ pub async fn get_poprako_token() -> Result<Option<String>, String> {
 
         if let Some(token) = &*guard {
             tracing::info!("token.get_poprako.ok");
+
+            defer.success();
 
             return Ok(Some(token.clone()));
         }
@@ -133,6 +154,8 @@ pub async fn get_poprako_token() -> Result<Option<String>, String> {
 
             tracing::info!("token.get_poprako.ok");
 
+            defer.success();
+
             Ok(Some(token))
         }
         Err(_) => {
@@ -148,6 +171,8 @@ pub async fn get_poprako_token() -> Result<Option<String>, String> {
 #[tauri::command]
 pub async fn save_poprako_token(token: String) -> Result<(), String> {
     tracing::info!("token.save_poprako.start");
+
+    let mut defer = WarnDefer::new("token.save_poprako");
 
     let storage = LOCAL_STORAGE
         .get()
@@ -165,6 +190,8 @@ pub async fn save_poprako_token(token: String) -> Result<(), String> {
 
     tracing::info!("token.save_poprako.ok");
 
+    defer.success();
+
     Ok(())
 }
 
@@ -172,6 +199,8 @@ pub async fn save_poprako_token(token: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn remove_poprako_token() -> Result<(), String> {
     tracing::info!("token.remove_poprako.start");
+
+    let mut defer = WarnDefer::new("token.remove_poprako");
 
     let storage = LOCAL_STORAGE
         .get()
@@ -188,6 +217,8 @@ pub async fn remove_poprako_token() -> Result<(), String> {
     *guard = None;
 
     tracing::info!("token.remove_poprako.ok");
+
+    defer.success();
 
     Ok(())
 }

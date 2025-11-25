@@ -1,4 +1,7 @@
-use crate::http::{moetran_get, poprako_post_opt};
+use crate::{
+    http::{moetran_get, poprako_post_opt},
+    defer::WarnDefer,
+};
 use serde::{Deserialize, Serialize};
 
 // 项目集 DTO
@@ -17,6 +20,8 @@ pub async fn get_team_project_sets(
 ) -> Result<Vec<ResProjectSet>, String> {
     tracing::info!(team_id = %team_id, page = page, limit = limit, "team.project_sets.request.start");
 
+    let mut defer = WarnDefer::new("team.project_sets.request");
+
     let path = format!("teams/{team_id}/project-sets?page={page}&limit={limit}");
 
     let list: Vec<ResProjectSet> = moetran_get(&path, None)
@@ -24,6 +29,8 @@ pub async fn get_team_project_sets(
         .map_err(|err| format!("获取项目集列表失败: {}", err))?;
 
     tracing::info!(count = list.len(), "team.project_sets.request.ok");
+
+    defer.success();
 
     Ok(list)
 }
@@ -50,6 +57,8 @@ pub async fn get_team_projects(
 ) -> Result<Vec<ResProject>, String> {
     tracing::info!(team_id = %team_id, project_set = %project_set, page = page, limit = limit, "team.projects.request.start");
 
+    let mut defer = WarnDefer::new("team.projects.request");
+
     let path =
         format!("teams/{team_id}/projects?project_set={project_set}&page={page}&limit={limit}");
 
@@ -59,6 +68,8 @@ pub async fn get_team_projects(
 
     tracing::info!(count = list.len(), "team.projects.request.ok");
 
+    defer.success();
+
     Ok(list)
 }
 
@@ -67,6 +78,8 @@ pub async fn get_team_projects(
 pub async fn get_user_projects(page: u32, limit: u32) -> Result<Vec<ResProject>, String> {
     tracing::info!(page = page, limit = limit, "user.projects.request.start");
 
+    let mut defer = WarnDefer::new("user.projects.request");
+
     let path = format!("user/projects?page={page}&limit={limit}");
 
     let list: Vec<ResProject> = moetran_get(&path, None)
@@ -74,6 +87,8 @@ pub async fn get_user_projects(page: u32, limit: u32) -> Result<Vec<ResProject>,
         .map_err(|err| format!("获取用户项目列表失败: {}", err))?;
 
     tracing::info!(count = list.len(), "user.projects.request.ok");
+
+    defer.success();
 
     Ok(list)
 }

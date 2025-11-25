@@ -2,9 +2,9 @@
 import { onBeforeUnmount, onMounted, reactive, ref, computed } from 'vue';
 import type { ReqToken } from '../api/model/auth';
 import { useTokenStore } from '../stores/token';
-import { syncUser } from '../ipc/user';
+import { getUserInfo, syncUser } from '../ipc/user';
 import { useToastStore } from '../stores/toast';
-import { aquireMoetranToken, getCaptcha, saveMoetranToken, savePoprakoToken } from '../ipc/auth';
+import { aquireMoetranToken, getCaptcha, savePoprakoToken } from '../ipc/auth';
 
 // 使用全局 toast store
 
@@ -135,30 +135,47 @@ async function handleLogin(): Promise<void> {
 
     const tokenResponse = await aquireMoetranToken(payload);
 
-    // 前端与后端同时更新 moetran token
-    await saveMoetranToken(tokenResponse.token);
+    // 由 token store 负责持久化（LoginView 调用 set + persist）
     await tokenStore.setMoetranToken(tokenResponse.token);
 
-    // 静默尝试 PopRaKo 用户同步（不影响主登录流程，不阻塞跳转）
-    syncUser({
-      user_id: email.value,
-      username: email.value,
-      email: email.value,
-      password: password.value,
-    })
-      .then(async poprakoRes => {
-        try {
-          await savePoprakoToken(poprakoRes.token);
-          await tokenStore.setPoprakoToken(poprakoRes.token);
-          console.log('PopRaKo sync success');
-        } catch (e: unknown) {
-          console.warn('保存 PopRaKo token 失败', e);
-        }
-      })
-      .catch((e: unknown) => {
-        console.warn('PopRaKo sync failed', e);
-        toastStore.show('PopRaKo 同步失败', 'error');
-      });
+    // // 静默尝试 PopRaKo 用户同步（不影响主登录流程，不阻塞跳转）
+    // syncUser({
+    //   user_id: email.value,
+    //   username: email.value,
+    //   email: email.value,
+    //   password: password.value,
+    // })
+    //   .then(async poprakoRes => {
+    //     try {
+    //       await tokenStore.setPoprakoToken(poprakoRes.token);
+    //       console.log('PopRaKo sync success');
+    //     } catch (e: unknown) {
+    //       console.warn('保存 PopRaKo token 失败', e);
+    //     }
+    //   })
+    //   .catch((e: unknown) => {
+    //     console.warn('PopRaKo sync failed', e);
+    //     toastStore.show('PopRaKo 同步失败', 'error');
+    //   });
+
+    // 尝试获取 moetran 的用户信息以验证 token 可用性
+    let userInfo = await getUserInfo();
+
+    // 获取 moetran 的用户信息成功后，登录 PopRaKo
+    if (userInfo) {
+      let poprakoToken = (
+        await syncUser({
+          user_id: userInfo.id,
+          username: userInfo.name,
+          email: email.value,
+          password: password.value,
+        })
+      ).token;
+
+      await savePoprakoToken(poprakoToken);
+
+      console.log('PopRaKo 同步成功');
+    }
 
     console.log('登录成功', tokenResponse.token);
     toastStore.show('登录成功', 'success');

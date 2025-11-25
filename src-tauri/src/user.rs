@@ -1,4 +1,7 @@
-use crate::http::{moetran_get, poprako_post_opt};
+use crate::{
+    http::{moetran_get, poprako_post_opt},
+    defer::WarnDefer,
+};
 use serde::{Deserialize, Serialize};
 
 // PopRaKo 同步用户请求 DTO
@@ -29,7 +32,9 @@ pub struct ResSync {
 pub async fn sync_user(payload: ReqSync) -> Result<ResSync, String> {
     tracing::info!(username = %payload.username, "poprako.sync.request.start");
 
-    let reply = poprako_post_opt::<ReqSync, PoprakoEnvelope<ResSync>>("user/sync", Some(payload))
+    let mut defer = WarnDefer::new("poprako.sync.request");
+
+    let reply: PoprakoEnvelope<ResSync> = poprako_post_opt("user/sync", Some(payload))
         .await
         .map_err(|err| format!("Failed to sync user to Poprako: {}", err))?;
 
@@ -46,6 +51,8 @@ pub async fn sync_user(payload: ReqSync) -> Result<ResSync, String> {
         .ok_or_else(|| "Poprako sync response missing data".to_string())?;
 
     tracing::info!("poprako.sync.request.ok");
+
+    defer.success();
 
     Ok(data)
 }
@@ -64,11 +71,15 @@ pub struct ResUser {
 pub async fn get_user_info() -> Result<ResUser, String> {
     tracing::info!("user.info.request.start");
 
+    let mut defer = WarnDefer::new("user.info.request");
+
     let body: ResUser = moetran_get("user/info", None)
         .await
         .map_err(|err| format!("Failed to get user info: {}", err))?;
 
     tracing::info!("user.info.request.ok");
+
+    defer.success();
 
     Ok(body)
 }

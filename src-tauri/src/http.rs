@@ -39,12 +39,29 @@ impl ApiClient {
     }
 
     // 通用 GET：执行请求 -> 状态检查 -> 解析 JSON
-    pub async fn https_get<R>(client: &reqwest::Client, url: reqwest::Url) -> Result<R, String>
+    pub async fn http_get<R>(
+        client: &reqwest::Client,
+        url: reqwest::Url,
+        headers: Vec<(HeaderName, HeaderValue)>,
+    ) -> Result<R, String>
     where
         R: DeserializeOwned,
     {
-        let resp = client
-            .get(url)
+        let mut req = client.get(url);
+
+        if !headers.is_empty() {
+            let mut headers_map = reqwest::header::HeaderMap::new();
+
+            headers.into_iter().for_each(|(key, value)| {
+                if let Some(prev) = headers_map.insert(key, value) {
+                    warn!(?prev, "Header key duplicated when building headers for GET");
+                }
+            });
+
+            req = req.headers(headers_map);
+        }
+
+        let resp = req
             .send()
             .await
             .map_err(|err| format!("request send error: {}", err))?;
@@ -62,7 +79,7 @@ impl ApiClient {
     }
 
     // 通用 POST：构造请求（必要时空 body） -> 附加头 -> 状态检查 -> 解析 JSON
-    pub async fn https_post<B, R>(
+    pub async fn http_post<B, R>(
         client: &reqwest::Client,
         url: reqwest::Url,
         headers: Vec<(HeaderName, HeaderValue)>,
@@ -166,14 +183,20 @@ where
     let mut headers = Vec::new();
 
     if let Some(token) = crate::token::cached_moetran_token() {
-        headers.push((
-            header::AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", token))
-                .map_err(|err| format!("Invalid token header value: {}", err))?,
-        ));
+        match HeaderValue::from_str(&format!("Bearer {}", token)) {
+            Ok(header_value) => {
+                headers.push((header::AUTHORIZATION, header_value));
+                debug!("Authorization header added for moetran_post_opt");
+            }
+            Err(err) => {
+                warn!("Invalid token header value: {}", err);
+            }
+        }
+    } else {
+        warn!("No cached Moetran token available");
     }
 
-    ApiClient::https_post(&client, url, headers, body).await
+    ApiClient::http_post(&client, url, headers, body).await
 }
 
 pub async fn moetran_get<R>(path: &str, query: Option<&HashMap<&str, String>>) -> Result<R, String>
@@ -196,14 +219,30 @@ where
     if let Some(q) = query {
         {
             let mut pairs = url.query_pairs_mut();
+
             for (key, value) in q.iter() {
                 pairs.append_pair(key, value);
             }
         }
-        // drop(pairs) happens here when going out of scope
     }
 
-    ApiClient::https_get(&client, url).await
+    let mut headers = Vec::new();
+
+    if let Some(token) = crate::token::cached_moetran_token() {
+        match HeaderValue::from_str(&format!("Bearer {}", token)) {
+            Ok(header_value) => {
+                headers.push((header::AUTHORIZATION, header_value));
+                debug!("Authorization header added for moetran_get");
+            }
+            Err(err) => {
+                warn!("Invalid token header value: {}", err);
+            }
+        }
+    } else {
+        warn!("No cached Moetran token available");
+    }
+
+    ApiClient::http_get(&client, url, headers).await
 }
 
 pub async fn poprako_post_opt<B, R>(path: &str, body: Option<B>) -> Result<R, String>
@@ -234,7 +273,7 @@ where
         ));
     }
 
-    ApiClient::https_post(&client, url, headers, body).await
+    ApiClient::http_post(&client, url, headers, body).await
 }
 
 pub async fn poprako_get<R>(path: &str, query: Option<&HashMap<&str, String>>) -> Result<R, String>
@@ -257,11 +296,25 @@ where
     if let Some(q) = query {
         {
             let mut pairs = url.query_pairs_mut();
+
             for (key, value) in q.iter() {
                 pairs.append_pair(key, value);
             }
         }
     }
 
-    ApiClient::https_get(&client, url).await
+    let mut headers = Vec::new();
+
+    if let Some(token) = crate::token::cached_poprako_token() {
+        match HeaderValue::from_str(&format!("Bearer {}", token)) {
+            Ok(header_value) => {
+                headers.push((header::AUTHORIZATION, header_value));
+            }
+            Err(err) => {
+                warn!("Invalid token header value: {}", err);
+            }
+        }
+    }
+
+    ApiClient::http_get(&client, url, headers).await
 }

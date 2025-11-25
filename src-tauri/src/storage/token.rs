@@ -18,7 +18,7 @@ pub async fn migrate_token_table(pool: &sqlx::SqlitePool) -> Result<(), String> 
 }
 
 pub async fn get_moetran_token(pool: &sqlx::SqlitePool) -> Result<String, String> {
-    let row = sqlx::query("SELECT moetoken FROM tokens WHERE name = 'moetran_token'")
+    let row = sqlx::query("SELECT token FROM tokens WHERE name = 'moetran_token'")
         .fetch_optional(pool)
         .await
         .map_err(|err| format!("Failed to get MoeToken from database: {}", err))?;
@@ -40,7 +40,7 @@ pub async fn save_moetran_token(pool: &sqlx::SqlitePool, token: &str) -> Result<
         r#"
         INSERT INTO tokens (name, token, updated_at)
         VALUES ('moetran_token', ?, strftime('%s', 'now'))
-        ON CONFLICT(id) DO UPDATE SET
+        ON CONFLICT(name) DO UPDATE SET
             token = excluded.token,
             updated_at = excluded.updated_at;
         "#,
@@ -85,7 +85,7 @@ pub async fn save_poprako_token(pool: &sqlx::SqlitePool, token: &str) -> Result<
         r#"
         INSERT INTO tokens (name, token, updated_at)
         VALUES ('poprako_token', ?, strftime('%s', 'now'))
-        ON CONFLICT(id) DO UPDATE SET
+        ON CONFLICT(name) DO UPDATE SET
             token = excluded.token,
             updated_at = excluded.updated_at;
         "#,

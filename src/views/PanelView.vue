@@ -54,11 +54,13 @@ async function loadUser(): Promise<void> {
 
   try {
     user.value = await getUserInfo();
+    console.log('用户信息加载成功:', user.value);
   } catch (err) {
-    toastStore.show('获取用户信息失败');
+    console.error('获取用户信息失败:', err);
+    toastStore.show('获取用户信息失败', 'error');
+  } finally {
+    loadingUser.value = false;
   }
-
-  loadingUser.value = false;
 }
 
 // 载入汉化组列表
@@ -67,14 +69,16 @@ async function loadTeams(): Promise<void> {
 
   try {
     const list = await getUserTeams({ page: 1, limit: 100 });
-
     teams.value = list;
+    console.log('汉化组列表加载成功:', teams.value);
   } catch (err) {
+    console.error('获取汉化组列表失败:', err);
     teams.value = [];
-    toastStore.show('获取汉化组列表失败');
+    toastStore.show('获取汉化组列表失败', 'error');
+  } finally {
+    loadingTeams.value = false;
   }
 
-  loadingTeams.value = false;
   // 总是补充 mock 汉化组以便测试展开动效（确保至少 8 个）
   const base = teams.value.length;
   for (let i = base; i < 8; i++) {
@@ -85,6 +89,7 @@ async function loadTeams(): Promise<void> {
       has_avatar: false,
     });
   }
+  console.log('补充 Mock 汉化组:', teams.value);
 }
 
 // ========== Mock 辅助：生成阶段集 ==========

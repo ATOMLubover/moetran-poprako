@@ -1,4 +1,5 @@
 pub mod auth;
+mod defer;
 mod http;
 mod member; // 成员搜索等相关
 mod project; // 项目与项目集相关
@@ -34,7 +35,7 @@ const DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
 pub fn run() {
     // 初始化 tracing（一次性），添加 EnvFilter 方便用户通过环境变量调整日志等级：
     // 示例：RUST_LOG=debug,reqwest=warn
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
 
     tracing_subscriber::fmt()
         .with_target(false)

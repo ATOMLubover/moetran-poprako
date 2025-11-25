@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use tracing::info;
 
-use crate::http::poprako_get;
+use crate::{http::poprako_get, defer::WarnDefer};
 use std::collections::HashMap;
 
 #[derive(Debug, Deserialize)]
@@ -48,38 +48,38 @@ pub async fn get_members(payload: ReqMembers) -> Result<MembersReply, String> {
         "Calling PopRaKo /api/v1/members via IPC",
     );
 
-    // 构造查询参数 Map，由 http::poprako_get 负责编码到 URL
-    let mut query: HashMap<&str, String> = HashMap::new();
+    let mut defer = WarnDefer::new("poprako.members.request");
 
-    query.insert("team_id", payload.team_id.clone());
+    // 构造查询参数 Map，由 http::poprako_get 负责编码到 URL
+    let mut params: HashMap<&str, String> = HashMap::new();
+
+    params.insert("team_id", payload.team_id.clone());
 
     if let Some(pos) = payload.position.clone() {
-        query.insert("position", pos);
+        params.insert("position", pos);
     }
     if let Some(name) = payload.fuzzy_name.clone() {
-        query.insert("fuzzy_name", name);
+        params.insert("fuzzy_name", name);
     }
     if let Some(page) = payload.page {
-        query.insert("page", page.to_string());
+        params.insert("page", page.to_string());
     }
     if let Some(limit) = payload.limit {
-        query.insert("limit", limit.to_string());
+        params.insert("limit", limit.to_string());
     }
 
-    let resp: PoprakoEnvelope<Vec<PoprakoMemberBrief>> =
-        poprako_get("members", Some(&query)).await?;
+    let reply: PoprakoEnvelope<Vec<PoprakoMemberBrief>> =
+        poprako_get("/api/v1/members", Some(&params))
+            .await
+            .map_err(|err| format!("Failed to fetch members: {}", err))?;
 
-    if resp.code != 200 {
-        let msg = resp
-            .message
-            .unwrap_or_else(|| "PopRaKo members query failed".to_string());
-
-        return Err(format!("PopRaKo error (code {}): {}", resp.code, msg));
+    if reply.code != 200 {
+        return Err(reply.message.unwrap_or_else(|| "Unknown error".to_string()));
     }
 
-    let items = resp
-        .data
-        .ok_or_else(|| "PopRaKo members response missing data".to_string())?;
+    let items = reply.data.unwrap_or_default();
+
+    defer.success();
 
     Ok(MembersReply { items })
 }

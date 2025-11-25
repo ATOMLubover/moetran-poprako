@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::http::moetran_post_opt;
+use crate::{defer::WarnDefer, http::moetran_post_opt};
 
 // ================== Captcha 与登录 Token DTO 定义 ==================
 
@@ -29,11 +29,15 @@ pub struct ResToken {
 pub async fn get_captcha() -> Result<ResCaptcha, String> {
     tracing::info!("captcha.request.start");
 
+    let mut defer = WarnDefer::new("captcha.request");
+
     let body = moetran_post_opt::<serde_json::Value, ResCaptcha>("captchas", None)
         .await
         .map_err(|err| format!("Captcha request failed: {}", err))?;
 
     tracing::info!(info = %body.info, "captcha.request.ok");
+
+    defer.success();
 
     Ok(body)
 }
@@ -44,11 +48,15 @@ pub async fn get_captcha() -> Result<ResCaptcha, String> {
 pub async fn aquire_token(payload: ReqToken) -> Result<ResToken, String> {
     tracing::info!(email = %payload.email, "token.request.start");
 
+    let mut defer = WarnDefer::new("token.request");
+
     let body = moetran_post_opt::<ReqToken, ResToken>("user/token", Some(payload))
         .await
         .map_err(|err| format!("Token request failed: {}", err))?;
 
     tracing::info!(token_len = body.token.len(), "token.request.ok");
+
+    defer.success();
 
     Ok(body)
 }
