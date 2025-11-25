@@ -1,9 +1,11 @@
-use std::{cell::LazyCell, ops::Deref as _, time::Duration};
+use std::{cell::LazyCell, collections::HashMap, ops::Deref as _, time::Duration};
 
 use reqwest::header::{self, HeaderName, HeaderValue};
 use serde::{de::DeserializeOwned, Serialize};
 
 use tracing::{debug, warn};
+
+// ================== API Client 封装结构 ==================
 
 struct ApiClient {
     client: reqwest::Client,
@@ -13,7 +15,7 @@ struct ApiClient {
 impl ApiClient {
     const TIMEOUT_SECS: u64 = 5;
 
-    /// `new` 不设定为 pub，因为只在本模块内懒初始化时使用
+    // new：仅供模块内部懒初始化使用，不对外暴露
     fn new(base_url: reqwest::Url, default_headers: Vec<(HeaderName, HeaderValue)>) -> Self {
         let mut default_header_map = reqwest::header::HeaderMap::new();
 
@@ -36,6 +38,7 @@ impl ApiClient {
         Self { client, base_url }
     }
 
+    // 通用 GET：执行请求 -> 状态检查 -> 解析 JSON
     pub async fn https_get<R>(client: &reqwest::Client, url: reqwest::Url) -> Result<R, String>
     where
         R: DeserializeOwned,
@@ -58,6 +61,7 @@ impl ApiClient {
         Ok(parsed)
     }
 
+    // 通用 POST：构造请求（必要时空 body） -> 附加头 -> 状态检查 -> 解析 JSON
     pub async fn https_post<B, R>(
         client: &reqwest::Client,
         url: reqwest::Url,
@@ -70,11 +74,13 @@ impl ApiClient {
     {
         let mut req = client.post(url);
 
-        if let Some(b) = body {
-            req = req.json(&b);
-        } else {
-            // send empty body to match browser behavior for some endpoints
-            req = req.body("");
+        match body {
+            Some(b) => {
+                req = req.json(&b);
+            }
+            None => {
+                req = req.body("");
+            }
         }
 
         let mut headers_map = reqwest::header::HeaderMap::new();
@@ -125,7 +131,7 @@ thread_local! {
         ApiClient::new(base, default_headers)
     });
 
-    pub static POPRAKO_API_BASE: reqwest::Url = "https://hatsu1ki-lb-site.com/api/v1/".parse().expect("invalid POPRAKO_API_BASE URL");
+    pub static POPRAKO_API_BASE: reqwest::Url = "http://127.0.0.1:8080/api/v1/".parse().expect("invalid POPRAKO_API_BASE URL");
 
     static POPRAKO_API_CLIENT: LazyCell<ApiClient> = LazyCell::new(|| {
         let base = POPRAKO_API_BASE.with(|b| b.clone());
@@ -170,7 +176,7 @@ where
     ApiClient::https_post(&client, url, headers, body).await
 }
 
-pub async fn moetran_get<R>(path: &str) -> Result<R, String>
+pub async fn moetran_get<R>(path: &str, query: Option<&HashMap<&str, String>>) -> Result<R, String>
 where
     R: DeserializeOwned,
 {
@@ -183,9 +189,19 @@ where
         (api_client.client.clone(), api_client.base_url.clone())
     });
 
-    let url = base
+    let mut url = base
         .join(path)
         .map_err(|err| format!("Failed to build URL for {}: {}", path, err))?;
+
+    if let Some(q) = query {
+        {
+            let mut pairs = url.query_pairs_mut();
+            for (key, value) in q.iter() {
+                pairs.append_pair(key, value);
+            }
+        }
+        // drop(pairs) happens here when going out of scope
+    }
 
     ApiClient::https_get(&client, url).await
 }
@@ -221,7 +237,7 @@ where
     ApiClient::https_post(&client, url, headers, body).await
 }
 
-pub async fn poprako_get<R>(path: &str) -> Result<R, String>
+pub async fn poprako_get<R>(path: &str, query: Option<&HashMap<&str, String>>) -> Result<R, String>
 where
     R: DeserializeOwned,
 {
@@ -234,9 +250,18 @@ where
         (api_client.client.clone(), api_client.base_url.clone())
     });
 
-    let url = base
+    let mut url = base
         .join(path)
         .map_err(|err| format!("Failed to build URL for {}: {}", path, err))?;
+
+    if let Some(q) = query {
+        {
+            let mut pairs = url.query_pairs_mut();
+            for (key, value) in q.iter() {
+                pairs.append_pair(key, value);
+            }
+        }
+    }
 
     ApiClient::https_get(&client, url).await
 }

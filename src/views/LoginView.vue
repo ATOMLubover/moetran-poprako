@@ -2,7 +2,7 @@
 import { onBeforeUnmount, onMounted, reactive, ref, computed } from 'vue';
 import type { ReqToken } from '../api/model/auth';
 import { useTokenStore } from '../stores/token';
-import { loginPoprako } from '../ipc/user';
+import { syncUser } from '../ipc/user';
 import { useToastStore } from '../stores/toast';
 import { aquireMoetranToken, getCaptcha, saveMoetranToken, savePoprakoToken } from '../ipc/auth';
 
@@ -139,20 +139,25 @@ async function handleLogin(): Promise<void> {
     await saveMoetranToken(tokenResponse.token);
     await tokenStore.setMoetranToken(tokenResponse.token);
 
-    // 静默尝试 Poprako 登录（不影响主登录流程，不阻塞跳转）
-    loginPoprako({ email: email.value, password: password.value })
+    // 静默尝试 PopRaKo 用户同步（不影响主登录流程，不阻塞跳转）
+    syncUser({
+      user_id: email.value,
+      username: email.value,
+      email: email.value,
+      password: password.value,
+    })
       .then(async poprakoRes => {
         try {
           await savePoprakoToken(poprakoRes.token);
           await tokenStore.setPoprakoToken(poprakoRes.token);
-          console.log('Poprako 静默登录成功');
-        } catch (e) {
-          console.warn('保存 Poprako token 失败', e);
+          console.log('PopRaKo sync success');
+        } catch (e: unknown) {
+          console.warn('保存 PopRaKo token 失败', e);
         }
       })
-      .catch(e => {
-        console.warn('Poprako 静默登录失败', e);
-        toastStore.show('Poprako 登录失败', 'error');
+      .catch((e: unknown) => {
+        console.warn('PopRaKo sync failed', e);
+        toastStore.show('PopRaKo 同步失败', 'error');
       });
 
     console.log('登录成功', tokenResponse.token);

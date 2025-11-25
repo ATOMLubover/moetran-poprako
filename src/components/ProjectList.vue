@@ -1,12 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
-import type {
-  ProjectBasicInfo,
-  WorkPhase,
-  PhaseStatus,
-  PhaseChip,
-} from '../api/model/displayProject';
-import { useToastStore } from '../stores/toast';
+import { computed, ref, watch } from 'vue';
+import type { ProjectBasicInfo, PhaseStatus, PhaseChip } from '../api/model/displayProject';
 
 // 使用共享类型定义（见 src/api/model/displayProject.ts）
 
@@ -16,82 +10,13 @@ const emit = defineEmits<{
   (e: 'create'): void;
 }>();
 
-// Toast store
-const toastStore = useToastStore();
+// 目前列表组件不直接调用后端，仅通过 props 接收数据
 
-// 内部项目列表数据（若父组件未传入则使用本地加载）
-const internalProjects = ref<ProjectBasicInfo[]>([]);
-
-// 放宽为 any[] 以兼容父组件不同的展示数据结构，避免 props 类型不匹配错误
 // 接收外部传入的项目数据（用于仪表盘过滤后的结果展示）
-// 使用共享的强类型接口，避免使用 any
 const props = defineProps<{ projects?: ProjectBasicInfo[] }>();
 
-// 是否正在加载标记
+// 是否正在加载标记（由父组件控制项目数据加载，这里仅负责列表交互）
 const isLoading = ref(false);
-
-// ======================= Mock 数据生成 =======================
-// 生成单个项目的阶段初始状态
-function createPhaseSet(seed: number): PhaseChip[] {
-  // 使用 seed 简单决定不同阶段的状态分布，形成视觉差异
-  const phases: WorkPhase[] = ['translate', 'proof', 'typeset', 'review', 'publish'];
-
-  return phases.map((phase, i) => {
-    const rotate = (seed + i) % 5;
-
-    let status: PhaseStatus = 'unset';
-
-    if (rotate === 1) status = 'pending';
-    else if (rotate === 2) status = 'wip';
-    else if (rotate === 3) status = 'completed';
-    else status = 'unset';
-
-    const labelMap: Record<WorkPhase, string> = {
-      translate: '翻译',
-      proof: '校对',
-      typeset: '嵌字',
-      review: '监修',
-      publish: '发布',
-    };
-
-    return {
-      phase,
-      status,
-      label: labelMap[phase],
-    } satisfies PhaseChip;
-  });
-}
-
-// Mock 拉取项目列表
-async function __mockFetchProjects(): Promise<ProjectBasicInfo[]> {
-  // 真实实现应调用后端接口
-  return new Promise(resolve => {
-    const base: ProjectBasicInfo[] = [
-      { id: 101, index: 1, author: '作者A', title: '第一个项目标题', phases: createPhaseSet(3) },
-      { id: 102, index: 2, author: '作者B', title: '第二个项目标题', phases: createPhaseSet(5) },
-      { id: 103, index: 3, author: '作者C', title: '第三个项目标题', phases: createPhaseSet(9) },
-      { id: 104, index: 4, author: '作者D', title: '第四个项目标题', phases: createPhaseSet(11) },
-    ];
-
-    setTimeout(() => resolve(base), 160);
-  });
-}
-
-// ======================= 行为函数 =======================
-// 加载项目列表
-async function loadProjects(): Promise<void> {
-  isLoading.value = true;
-
-  try {
-    const list = await __mockFetchProjects();
-
-    internalProjects.value = list;
-  } catch (err) {
-    toastStore.show('加载项目失败', 'error');
-  } finally {
-    isLoading.value = false;
-  }
-}
 
 // 点击详情
 function handleOpenDetail(projectId: number): void {
@@ -117,11 +42,8 @@ function chipClass(phase: PhaseChip): string {
   return `${base} ${map[phase.status]}`;
 }
 
-// 是否为空列表
-// 最终展示数据：优先使用外部传入，其次内部加载
-const displayProjects = computed<ProjectBasicInfo[]>(() =>
-  props.projects && props.projects.length > 0 ? props.projects : internalProjects.value
-);
+// 最终展示数据：完全依赖父组件传入的 projects
+const displayProjects = computed<ProjectBasicInfo[]>(() => props.projects ?? []);
 
 const isEmpty = computed(() => !isLoading.value && displayProjects.value.length === 0);
 
@@ -134,9 +56,7 @@ watch(
   { deep: true }
 );
 
-onMounted(() => {
-  loadProjects();
-});
+// 数据由父组件负责加载，这里无需在挂载时自行拉取 mock
 </script>
 
 <template>

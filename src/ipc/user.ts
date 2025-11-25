@@ -1,14 +1,14 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ResLogin, ResUser } from '../api/model/user';
 
-// Poprako 登录（使用 email 作为后端的 username 字段）
-export async function loginPoprako(payload: {
+// PopRaKo 用户同步（使用 email 作为后端的 username 字段）
+export async function syncUser(payload: {
+  user_id: string;
+  username: string;
   email: string;
   password: string;
 }): Promise<ResLogin> {
-  return await invoke<ResLogin>('login_poprako', {
-    payload: { username: payload.email, password: payload.password },
-  });
+  return await invoke<ResLogin>('sync_user', { payload });
 }
 
 // 获取用户信息

@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import RoundSwitch from './RoundSwitch.vue';
 import MemberSelector, { MemberInfo } from './MemberSelector.vue';
 // 与示例逻辑对应的筛选面板，实现项目集/项目/成员/状态筛选
 // 发出 confirmOptions 事件供父组件应用过滤
+
+// 父组件传入的上下文：当前选中的团队 ID（用于成员搜索）
+const props = defineProps<{ teamId?: string }>();
 
 // 过滤条件项
 interface FilterOption {
@@ -47,14 +49,6 @@ const filterEnabled = ref<boolean>(true);
 const projectSetInput = ref('');
 const projectInput = ref('');
 const memberInput = ref('');
-
-// 成员下拉 mock
-interface Member {
-  memberId: number;
-  nickname: string;
-}
-const showMemberDropdown = ref(false);
-const filteredMemberOptions = ref<Member[]>([]);
 
 // 状态分类选择
 const selectedLabor = ref('');
@@ -126,39 +120,6 @@ function onEnterProject() {
     addOption({ label: '项目：' + v, key: 'project', value: v });
     projectInput.value = '';
   }
-}
-function fetchMembersWithNickname(nickname: string): Promise<Member[]> {
-  return new Promise(resolve => {
-    setTimeout(() => {
-      const mock: Member[] = [
-        { memberId: 1, nickname: 'Hatsu1ki' },
-        { memberId: 2, nickname: '电容' },
-        { memberId: 3, nickname: '林檎' },
-        { memberId: 4, nickname: '星野' },
-        { memberId: 5, nickname: '白夜' },
-      ];
-      resolve(mock.filter(m => m.nickname.toLowerCase().includes(nickname.toLowerCase())));
-    }, 300);
-  });
-}
-async function fetchAndDisplayMembers() {
-  const q = memberInput.value.trim();
-  if (q) {
-    const results = await fetchMembersWithNickname(q);
-    filteredMemberOptions.value = results;
-    showMemberDropdown.value = true;
-  } else {
-    showMemberDropdown.value = false;
-  }
-}
-function selectMemberOption(member: Member) {
-  addOption({ label: '成员：' + member.nickname, key: 'member', value: member.nickname });
-  memberInput.value = '';
-  showMemberDropdown.value = false;
-  filteredMemberOptions.value = [];
-}
-function hideMemberDropdown() {
-  setTimeout(() => (showMemberDropdown.value = false), 150);
 }
 function addOption(opt: FilterOption) {
   if (!filterOptions.value.find(o => o.key === opt.key && o.value === opt.value)) {
@@ -263,6 +224,7 @@ function onConfirm() {
     <MemberSelector
       :show="memberSelectorOpen"
       :picked="advancedPickedMembers"
+      :team-id="props.teamId"
       @confirm="handleMemberSelectorConfirm"
       @cancel="handleMemberSelectorCancel"
       @close="handleMemberSelectorClose"

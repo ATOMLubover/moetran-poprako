@@ -3,11 +3,11 @@ import { ref, onMounted, computed } from 'vue';
 import { useToastStore } from '../stores/toast';
 import { getUserInfo } from '../ipc/user';
 import { getUserTeams } from '../ipc/team';
-import { getUserProjects } from '../ipc/project';
+import { getUserProjectsEnriched } from '../ipc/project';
 import type { ResUser } from '../api/model/user';
 import type { ResTeam } from '../api/model/team';
 import ProjectList from '../components/ProjectList.vue';
-import type { ResProject } from '../api/model/project';
+import type { ResProjectEnriched } from '../api/model/project';
 import type { ProjectBasicInfo, PhaseChip, WorkPhase } from '../api/model/displayProject';
 // 新增过滤面板组件（综合筛选逻辑）——暂使用 mock，实现与示例类似功能
 import ProjectFilterBoard from '../components/ProjectFilterBoard.vue';
@@ -19,7 +19,8 @@ const user = ref<ResUser | null>(null);
 
 // 汉化组列表
 const teams = ref<ResTeam[]>([]);
-const teamsLimit = ref<number>(100); // 暂不分页
+// 当前选中的团队（用于成员筛选等场景；null 代表“仅看我的项目”）
+const activeTeamId = ref<string | null>(null);
 
 // 主体“当前展示”的项目列表（可能是：用户项目 / 某项目集项目）
 // 基础原始数据（未过滤）与过滤后数据分离
@@ -52,8 +53,7 @@ async function loadUser(): Promise<void> {
   loadingUser.value = true;
 
   try {
-    // TODO: mock
-    // user.value = await getUserInfo();
+    user.value = await getUserInfo();
   } catch (err) {
     toastStore.show('获取用户信息失败');
   }
@@ -66,13 +66,12 @@ async function loadTeams(): Promise<void> {
   loadingTeams.value = true;
 
   try {
-    // TODO：mock
-    teams.value = [];
-    toastStore.show('获取汉化组列表失败（使用 mock）');
+    const list = await getUserTeams({ page: 1, limit: 100 });
+
+    teams.value = list;
   } catch (err) {
-    // IPC 异常时使用 mock 兜底
     teams.value = [];
-    toastStore.show('获取汉化组列表失败（使用 mock）');
+    toastStore.show('获取汉化组列表失败');
   }
 
   loadingTeams.value = false;
@@ -110,28 +109,25 @@ function createPhaseSet(seed: number): PhaseChip[] {
   });
 }
 
-// 加载“我参与的项目”（真实应调用 getUserProjects）
+// 加载“我参与的项目”（使用 enriched IPC）
 async function loadUserProjects(): Promise<void> {
   loadingProjects.value = true;
   try {
-    // TODO: mock
-    rawProjects.value = [
-      { id: 101, index: 1, author: '作者A', title: '第一个项目标题', phases: createPhaseSet(3) },
-      { id: 102, index: 2, author: '作者B', title: '第二个项目标题', phases: createPhaseSet(6) },
-      { id: 103, index: 3, author: '作者C', title: '第三个项目标题', phases: createPhaseSet(9) },
-    ];
-    // const apiRes = await getUserProjects({ page: 1, limit: projectsLimit.value });
-    // // 将 ResProject 映射为 DisplayProject（此处假设字段存在，可根据真实结构调整）
-    // rawProjects.value = apiRes.map((p, idx) => {
-    //   const rp = p as ResProject & Partial<{ author: string; title: string }>;
-    //   return {
-    //     id: Number(rp.id),
-    //     index: idx + 1,
-    //     author: rp.author ?? '未知作者',
-    //     title: rp.title ?? '未命名项目',
-    //     phases: createPhaseSet(idx * 7 + 3),
-    //   } satisfies ProjectBasicInfo;
-    // });
+    const apiRes = await getUserProjectsEnriched({ page: 1, limit: projectsLimit.value });
+
+    rawProjects.value = apiRes.map((p, idx) => {
+      const proj = p as ResProjectEnriched;
+
+      const seed = proj.translating_status ?? proj.proofreading_status ?? 0;
+
+      return {
+        id: Number(proj.id),
+        index: idx + 1,
+        author: proj.team.name,
+        title: proj.name,
+        phases: createPhaseSet(seed + idx * 7 + 3),
+      } satisfies ProjectBasicInfo;
+    });
   } catch (err) {
     // 若接口异常，用 mock 数据兜底
     rawProjects.value = [
@@ -149,6 +145,7 @@ async function loadUserProjects(): Promise<void> {
 
 // 点击用户头像 -> 加载用户参与项目
 function selectUserProjects(): void {
+  activeTeamId.value = null;
   loadUserProjects();
 }
 
@@ -282,11 +279,9 @@ function handleOpenCreator(): void {
     <header class="top-bar">
       <div class="top-bar__user" v-if="user">
         <span class="top-bar__name">{{ user.name }}</span>
-        <span
-          v-if="(user as ResUser & { signature?: string }).signature"
-          class="top-bar__signature"
-          >{{ (user as ResUser & { signature?: string }).signature }}</span
-        >
+        <span v-if="(user as any).signature" class="top-bar__signature">
+          {{ (user as any).signature }}
+        </span>
       </div>
       <div v-else class="top-bar__user top-bar__user--loading">
         <span v-if="loadingUser">载入用户...</span>
@@ -302,7 +297,17 @@ function handleOpenCreator(): void {
             <span class="team-item__avatar user-avatar">我</span>
             <span class="team-item__name">{{ user?.name || '我的项目' }}</span>
           </li>
-          <li v-for="team in teams" :key="team.id" class="team-item" @click="loadUserProjects()">
+          <li
+            v-for="team in teams"
+            :key="team.id"
+            class="team-item"
+            @click="
+              () => {
+                activeTeamId = team.id;
+                loadUserProjects();
+              }
+            "
+          >
             <span class="team-item__avatar">{{ team.name.slice(0, 1) }}</span>
             <span class="team-item__name">{{ team.name }}</span>
           </li>
@@ -335,7 +340,10 @@ function handleOpenCreator(): void {
           </div>
 
           <div class="filter-panel-wrapper">
-            <ProjectFilterBoard @confirmOptions="handleConfirmOptions" />
+            <ProjectFilterBoard
+              :team-id="activeTeamId ?? undefined"
+              @confirmOptions="handleConfirmOptions"
+            />
           </div>
         </div>
         <div class="projects-content">

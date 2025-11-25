@@ -1,5 +1,10 @@
 import { ResTeam } from './team';
 
+export interface ResProjectSet {
+  id: string;
+  name: string;
+}
+
 export interface ResProject {
   id: string;
   name: string;
@@ -9,11 +14,16 @@ export interface ResProject {
   checked_source_count: number;
 
   team: ResTeam;
-
   project_set: ResProjectSet;
 }
 
-export interface ResProjectSet {
-  id: string;
-  name: string;
+// enriched 项目 DTO（Moetran + PopRaKo）
+export interface ResProjectEnriched extends ResProject {
+  has_poprako: boolean;
+  projset_index?: number;
+  translating_status?: number;
+  proofreading_status?: number;
+  typesetting_status?: number;
+  reviewing_status?: number;
+  is_published?: boolean;
 }

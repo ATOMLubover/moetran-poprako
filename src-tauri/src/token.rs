@@ -9,13 +9,18 @@ static POPRAKO_TOKEN: RwLock<Option<String>> = RwLock::new(None);
 // 获取 Moetran token（从内存或数据库）
 #[tauri::command]
 pub async fn get_moetran_token() -> Result<Option<String>, String> {
+    tracing::info!("token.get_moetran.start");
+
     // 先检查内存缓存
     {
         let guard = MOETRAN_TOKEN
             .read()
             .map_err(|err| format!("Failed to read MOETRAN_TOKEN: {}", err))?;
-        if guard.is_some() {
-            return Ok(guard.clone());
+
+        if let Some(token) = &*guard {
+            tracing::info!("token.get_moetran.ok");
+
+            return Ok(Some(token.clone()));
         }
     }
 
@@ -30,16 +35,27 @@ pub async fn get_moetran_token() -> Result<Option<String>, String> {
             let mut guard = MOETRAN_TOKEN
                 .write()
                 .map_err(|err| format!("Failed to write MOETRAN_TOKEN: {}", err))?;
+
             *guard = Some(token.clone());
+
+            tracing::info!("token.get_moetran.ok");
+
             Ok(Some(token))
         }
-        Err(_) => Ok(None), // 数据库中也没有
+        Err(_) => {
+            // 数据库中也没有
+            tracing::info!("token.get_moetran.not_found");
+
+            Ok(None)
+        }
     }
 }
 
 // 保存 Moetran token（到内存和数据库）
 #[tauri::command]
 pub async fn save_moetran_token(token: String) -> Result<(), String> {
+    tracing::info!("token.save_moetran.start");
+
     let storage = LOCAL_STORAGE
         .get()
         .ok_or("LOCAL_STORAGE not initialized".to_string())?;
@@ -51,7 +67,10 @@ pub async fn save_moetran_token(token: String) -> Result<(), String> {
     let mut guard = MOETRAN_TOKEN
         .write()
         .map_err(|err| format!("Failed to write MOETRAN_TOKEN: {}", err))?;
+
     *guard = Some(token);
+
+    tracing::info!("token.save_moetran.ok");
 
     Ok(())
 }
@@ -59,6 +78,8 @@ pub async fn save_moetran_token(token: String) -> Result<(), String> {
 // 删除 Moetran token（从内存和数据库）
 #[tauri::command]
 pub async fn remove_moetran_token() -> Result<(), String> {
+    tracing::info!("token.remove_moetran.start");
+
     let storage = LOCAL_STORAGE
         .get()
         .ok_or("LOCAL_STORAGE not initialized".to_string())?;
@@ -70,7 +91,10 @@ pub async fn remove_moetran_token() -> Result<(), String> {
     let mut guard = MOETRAN_TOKEN
         .write()
         .map_err(|err| format!("Failed to write MOETRAN_TOKEN: {}", err))?;
+
     *guard = None;
+
+    tracing::info!("token.remove_moetran.ok");
 
     Ok(())
 }
@@ -78,13 +102,18 @@ pub async fn remove_moetran_token() -> Result<(), String> {
 // 获取 Poprako token（从内存或数据库）
 #[tauri::command]
 pub async fn get_poprako_token() -> Result<Option<String>, String> {
+    tracing::info!("token.get_poprako.start");
+
     // 先检查内存缓存
     {
         let guard = POPRAKO_TOKEN
             .read()
             .map_err(|err| format!("Failed to read POPRAKO_TOKEN: {}", err))?;
-        if guard.is_some() {
-            return Ok(guard.clone());
+
+        if let Some(token) = &*guard {
+            tracing::info!("token.get_poprako.ok");
+
+            return Ok(Some(token.clone()));
         }
     }
 
@@ -99,16 +128,27 @@ pub async fn get_poprako_token() -> Result<Option<String>, String> {
             let mut guard = POPRAKO_TOKEN
                 .write()
                 .map_err(|err| format!("Failed to write POPRAKO_TOKEN: {}", err))?;
+
             *guard = Some(token.clone());
+
+            tracing::info!("token.get_poprako.ok");
+
             Ok(Some(token))
         }
-        Err(_) => Ok(None), // 数据库中也没有
+        Err(_) => {
+            // 数据库中也没有
+            tracing::info!("token.get_poprako.not_found");
+
+            Ok(None)
+        }
     }
 }
 
 // 保存 Poprako token（到内存和数据库）
 #[tauri::command]
 pub async fn save_poprako_token(token: String) -> Result<(), String> {
+    tracing::info!("token.save_poprako.start");
+
     let storage = LOCAL_STORAGE
         .get()
         .ok_or("LOCAL_STORAGE not initialized".to_string())?;
@@ -120,7 +160,10 @@ pub async fn save_poprako_token(token: String) -> Result<(), String> {
     let mut guard = POPRAKO_TOKEN
         .write()
         .map_err(|err| format!("Failed to write POPRAKO_TOKEN: {}", err))?;
+
     *guard = Some(token);
+
+    tracing::info!("token.save_poprako.ok");
 
     Ok(())
 }
@@ -128,6 +171,8 @@ pub async fn save_poprako_token(token: String) -> Result<(), String> {
 // 删除 Poprako token（从内存和数据库）
 #[tauri::command]
 pub async fn remove_poprako_token() -> Result<(), String> {
+    tracing::info!("token.remove_poprako.start");
+
     let storage = LOCAL_STORAGE
         .get()
         .ok_or("LOCAL_STORAGE not initialized".to_string())?;
@@ -139,7 +184,10 @@ pub async fn remove_poprako_token() -> Result<(), String> {
     let mut guard = POPRAKO_TOKEN
         .write()
         .map_err(|err| format!("Failed to write POPRAKO_TOKEN: {}", err))?;
+
     *guard = None;
+
+    tracing::info!("token.remove_poprako.ok");
 
     Ok(())
 }

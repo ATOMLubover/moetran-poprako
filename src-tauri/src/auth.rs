@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::http::moetran_post_opt;
 
+// ================== Captcha 与登录 Token DTO 定义 ==================
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ResCaptcha {
     pub image: String,
@@ -21,8 +23,8 @@ pub struct ReqToken {
 pub struct ResToken {
     pub token: String,
 }
-
-/// To avoid CORS issues, we fetch the captcha token from the backend.
+// ================== 获取验证码图与验证码信息 ==================
+// 说明：通过后端代理拉取验证码，避免跨域问题；返回图像与 info 标识。
 #[tauri::command]
 pub async fn get_captcha() -> Result<ResCaptcha, String> {
     tracing::info!("captcha.request.start");
@@ -36,6 +38,8 @@ pub async fn get_captcha() -> Result<ResCaptcha, String> {
     Ok(body)
 }
 
+// ================== 申请登录访问 Token ==================
+// 输入：邮箱、密码、验证码及其 info；输出：用户访问 token。
 #[tauri::command]
 pub async fn aquire_token(payload: ReqToken) -> Result<ResToken, String> {
     tracing::info!(email = %payload.email, "token.request.start");

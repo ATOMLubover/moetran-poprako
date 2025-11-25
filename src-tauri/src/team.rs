@@ -17,7 +17,7 @@ pub async fn get_user_teams(page: u32, limit: u32) -> Result<Vec<ResTeam>, Strin
 
     let path = format!("user/teams?page={page}&limit={limit}");
 
-    let list = moetran_get::<Vec<ResTeam>>(&path)
+    let list: Vec<ResTeam> = moetran_get(&path, None)
         .await
         .map_err(|err| format!("获取用户汉化组失败: {}", err))?;
 

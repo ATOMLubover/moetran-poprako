@@ -1,17 +1,18 @@
 pub mod auth;
 mod http;
-mod project;
-mod storage;
+mod member; // 成员搜索等相关
+mod project; // 项目与项目集相关
+mod storage; // 本地存储与数据目录管理
 mod team; // 汉化组相关
-mod token;
-mod user; // 用户与登录相关 // 项目与项目集相关
+mod token; // Token 缓存与存取
+mod user; // 用户与登录相关
 
 use std::{path::PathBuf, str::FromStr, sync::LazyLock};
 
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-// Direct imports not strictly required; commands referenced in generate_handler by path.
+// 直接导入模块便于 generate_handler 使用路径调用，不强制要求 pub 暴露全部
 
 const DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
     dotenvy::dotenv().expect("Failed to load .end file");
@@ -31,8 +32,8 @@ const DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 初始化 tracing（一次性），添加 EnvFilter 方便用户手动调节日志等级：
-    // 例如设置 RUST_LOG=debug,reqwest=warn
+    // 初始化 tracing（一次性），添加 EnvFilter 方便用户通过环境变量调整日志等级：
+    // 示例：RUST_LOG=debug,reqwest=warn
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     tracing_subscriber::fmt()
@@ -44,8 +45,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .setup(|_app| {
-            // 不再使用 block_on 阻塞主事件循环，避免 winit 事件顺序异常警告
-            // 在后台异步初始化本地存储
+            // 异步初始化本地存储，避免使用 block_on 阻塞主事件循环导致 winit 顺序警告
             tauri::async_runtime::spawn(async {
                 match storage::LocalStorage::init(&DATA_DIR.join("local.db").to_string_lossy())
                     .await
@@ -73,7 +73,7 @@ pub fn run() {
             crate::token::save_poprako_token,
             crate::token::remove_poprako_token,
             // poprako login
-            crate::user::login_poprako,
+            crate::user::sync_user,
             // user info
             crate::user::get_user_info,
             // user teams
@@ -82,6 +82,8 @@ pub fn run() {
             crate::project::get_team_project_sets,
             crate::project::get_team_projects,
             crate::project::get_user_projects,
+            // member search
+            crate::member::get_members,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running tauri application");

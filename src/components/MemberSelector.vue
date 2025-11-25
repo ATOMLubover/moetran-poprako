@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue';
+import type { MemberPosition, ResMemberBrief } from '../ipc/member';
 
 // 通用成员类型（包含职位）
 export interface MemberInfo {
@@ -40,29 +41,38 @@ const ROLE_LABEL: Record<MemberInfo['position'], string> = {
   typesetter: '嵌字',
 };
 
-// 默认的 mock 拉取实现（若未提供 fetchMembers）
-const __MOCK_DB: MemberInfo[] = [
-  { id: 'u-1001', name: '电容', position: 'translator' },
-  { id: 'u-1002', name: 'debu', position: 'translator' },
-  { id: 'u-1003', name: '小明', position: 'proofreader' },
-  { id: 'u-1004', name: '小红', position: 'proofreader' },
-  { id: 'u-1005', name: 'Alice', position: 'typesetter' },
-  { id: 'u-1006', name: 'Bob', position: 'typesetter' },
-];
+// 默认实现：通过 IPC 调用后端成员搜索接口
 async function defaultFetchMembers(
   role: MemberInfo['position'],
-  kw: string
+  kw: string,
+  teamId?: string
 ): Promise<MemberInfo[]> {
-  const lower = kw.toLowerCase();
-  return new Promise(resolve => {
-    setTimeout(() => {
-      resolve(
-        __MOCK_DB.filter(
-          m => m.position === role && (!lower || m.name.toLowerCase().includes(lower))
-        )
-      );
-    }, 220);
-  });
+  if (!teamId) {
+    return [];
+  }
+
+  const params = {
+    team_id: teamId,
+    position: role as MemberPosition,
+    fuzzy_name: kw.trim() || undefined,
+    page: 1,
+    limit: 20,
+  } satisfies {
+    team_id: string;
+    position: MemberPosition;
+    fuzzy_name?: string;
+    page?: number;
+    limit?: number;
+  };
+
+  const { searchMembersByName } = await import('../ipc/member');
+  const list = await searchMembersByName(params);
+
+  return list.map((m: ResMemberBrief) => ({
+    id: m.member_id,
+    name: m.username,
+    position: role,
+  }));
 }
 
 // 初始化或显示时建立快照 & 初始展示已选
