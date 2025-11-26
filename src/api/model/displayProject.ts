@@ -11,10 +11,10 @@ export interface PhaseChip {
 }
 
 export interface ProjectBasicInfo {
-  id: number;
-  index: number;
-  author: string;
+  id: string;
   title: string;
-  projectSetId?: number;
+  projectSetId?: string;
+  projectSetSerial?: number;
+  projectSetIndex?: number;
   phases: PhaseChip[];
 }

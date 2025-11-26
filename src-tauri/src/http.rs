@@ -47,6 +47,8 @@ impl ApiClient {
     where
         R: DeserializeOwned,
     {
+        tracing::debug!(%url, "ApiClient.http_get called");
+
         let mut req = client.get(url);
 
         if !headers.is_empty() {
@@ -89,6 +91,8 @@ impl ApiClient {
         B: Serialize,
         R: DeserializeOwned,
     {
+        tracing::debug!(%url, "ApiClient.http_post called");
+
         let mut req = client.post(url);
 
         match body {

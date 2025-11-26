@@ -1,15 +1,13 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
+import type { ProjectSearchFilters } from '../ipc/project';
 import { useToastStore } from '../stores/toast';
 import { getUserInfo } from '../ipc/user';
 import { getUserTeams } from '../ipc/team';
-import { getUserProjectsEnriched } from '../ipc/project';
 import type { ResUser } from '../api/model/user';
 import type { ResTeam } from '../api/model/team';
 import ProjectList from '../components/ProjectList.vue';
-import type { ResProjectEnriched } from '../api/model/project';
-import type { ProjectBasicInfo, PhaseChip, WorkPhase } from '../api/model/displayProject';
-// 新增过滤面板组件（综合筛选逻辑）——暂使用 mock，实现与示例类似功能
+// 使用共享的基本项目信息类型仅在本地过滤场景；当前不直接使用
 import ProjectFilterBoard from '../components/ProjectFilterBoard.vue';
 import ProjectDetailView from '../views/ProjectDetailView.vue';
 import ProjectCreatorView from '../views/ProjectCreatorView.vue';
@@ -22,15 +20,14 @@ const teams = ref<ResTeam[]>([]);
 // 当前选中的团队（用于成员筛选等场景；null 代表“仅看我的项目”）
 const activeTeamId = ref<string | null>(null);
 
-// 主体“当前展示”的项目列表（可能是：用户项目 / 某项目集项目）
-// 基础原始数据（未过滤）与过滤后数据分离
-// 使用共享的展示类型
-const rawProjects = ref<ProjectBasicInfo[]>([]);
-const filteredProjects = ref<ProjectBasicInfo[]>([]);
-const projectsLimit = ref<number>(50);
+// 主体“当前展示”的项目列表目前由 ProjectList 自行通过 IPC 拉取。
+// 这里预留 rawProjects / filteredProjects 以便后续若改回父组件统筹过滤时使用。
+// 现阶段先注释掉，避免未使用变量的类型检查错误。
+// const rawProjects = ref<ProjectBasicInfo[]>([]);
+// const filteredProjects = ref<ProjectBasicInfo[]>([]);
 
 // 右侧详情栏相关状态
-const selectedProjectId = ref<number | null>(null);
+const selectedProjectId = ref<string | null>(null);
 const detailOpen = ref(false);
 // 展开后右侧详情栏占整个 PanelView 宽度的比例，可调整
 const DETAIL_SIDEBAR_MAX_RATIO = 0.5;
@@ -47,6 +44,16 @@ const loadingProjects = ref<boolean>(false);
 
 // 依赖的 store
 const toastStore = useToastStore();
+
+// Avatar error handlers: 当图片加载失败时，将对应实体的 `has_avatar` 置为 false，以触发回退 UI（首字母）
+function onUserAvatarError(): void {
+  if (user.value) user.value.has_avatar = false;
+}
+
+function onTeamAvatarError(teamId: string): void {
+  const t = teams.value.find(x => x.id === teamId);
+  if (t) t.has_avatar = false;
+}
 
 // 载入用户信息
 async function loadUser(): Promise<void> {
@@ -79,83 +86,17 @@ async function loadTeams(): Promise<void> {
     loadingTeams.value = false;
   }
 
-  // 总是补充 mock 汉化组以便测试展开动效（确保至少 8 个）
-  const base = teams.value.length;
-  for (let i = base; i < 8; i++) {
-    teams.value.push({
-      id: String(9000 + i),
-      name: 'Mock组' + (i + 1),
-      avatar: '',
-      has_avatar: false,
-    });
-  }
-  console.log('补充 Mock 汉化组:', teams.value);
+  // （已移除示例用的补充数据）
 }
-
-// ========== Mock 辅助：生成阶段集 ==========
-function createPhaseSet(seed: number): PhaseChip[] {
-  const phases: WorkPhase[] = ['translate', 'proof', 'typeset', 'review', 'publish'];
-  const labelMap: Record<WorkPhase, string> = {
-    translate: '翻译',
-    proof: '校对',
-    typeset: '嵌字',
-    review: '监修',
-    publish: '发布',
-  };
-
-  return phases.map((phase, i) => {
-    const rotate = (seed + i) % 5;
-    let status: PhaseChip['status'] = 'unset';
-    if (rotate === 1) status = 'pending';
-    else if (rotate === 2) status = 'wip';
-    else if (rotate === 3) status = 'completed';
-
-    return { phase, status, label: labelMap[phase] } satisfies PhaseChip;
-  });
-}
-
-// 加载“我参与的项目”（使用 enriched IPC）
-async function loadUserProjects(): Promise<void> {
-  loadingProjects.value = true;
-  try {
-    const apiRes = await getUserProjectsEnriched({ page: 1, limit: projectsLimit.value });
-
-    rawProjects.value = apiRes.map((p, idx) => {
-      const proj = p as ResProjectEnriched;
-
-      const seed = proj.translating_status ?? proj.proofreading_status ?? 0;
-
-      return {
-        id: Number(proj.id),
-        index: idx + 1,
-        author: proj.team.name,
-        title: proj.name,
-        phases: createPhaseSet(seed + idx * 7 + 3),
-      } satisfies ProjectBasicInfo;
-    });
-  } catch (err) {
-    // 若接口异常，用 mock 数据兜底
-    rawProjects.value = [
-      { id: 101, index: 1, author: '作者A', title: '第一个项目标题', phases: createPhaseSet(3) },
-      { id: 102, index: 2, author: '作者B', title: '第二个项目标题', phases: createPhaseSet(6) },
-      { id: 103, index: 3, author: '作者C', title: '第三个项目标题', phases: createPhaseSet(9) },
-    ];
-    toastStore.show('获取用户项目失败（使用 mock）');
-  }
-  loadingProjects.value = false;
-  applyFilters();
-}
-
-// 分页相关逻辑暂未实现，保留接口占位
 
 // 点击用户头像 -> 加载用户参与项目
 function selectUserProjects(): void {
   activeTeamId.value = null;
-  loadUserProjects();
+  // 留空：由 ProjectList 内部负责加载；这里仅标记 activeTeamId
 }
 
 // 打开项目详情
-function handleOpenDetail(projectId: number): void {
+function handleOpenDetail(projectId: string): void {
   detailMode.value = 'detail';
   selectedProjectId.value = projectId;
   detailReady.value = false;
@@ -188,12 +129,12 @@ onMounted(() => {
   // }
   loadUser();
   loadTeams();
-  loadUserProjects(); // 初始加载用户项目
   loadAnnouncements();
 });
 
 // ======================= 新过滤逻辑 =======================
 // 来自 ProjectFilterBoard 的选项结构
+// 筛选面板返回的单个筛选项
 interface FilterOption {
   label: string;
   key: string;
@@ -201,42 +142,114 @@ interface FilterOption {
 }
 const currentFilterOptions = ref<FilterOption[]>([]);
 
-// 应用过滤（非常简化，只演示关键匹配，真实场景需与后端参数协议对接）
-function applyFilters() {
-  let base = [...rawProjects.value];
-  for (const opt of currentFilterOptions.value) {
-    if (opt.key === 'project-set') {
-      base = base.filter(
-        p => String(p.projectSetId || '') === opt.value || p.title.includes(opt.value)
-      );
-    } else if (opt.key === 'project') {
-      const v = opt.value;
-      base = base.filter(
-        p => p.title.includes(v) || p.author.includes(v) || String(p.id).includes(v)
-      );
-    } else if (opt.key === 'member' || opt.key.startsWith('member-')) {
-      // 成员过滤（简单：匹配作者名；真实实现应根据项目参与成员维度）
-      base = base.filter(p => p.author.includes(opt.value));
-    } else if (opt.key.endsWith('-status')) {
-      // 状态：翻译/校对/嵌字/监修/发布，对应 phases 中 phase
-      const phaseKey = opt.key.replace('-status', '').replace('typesetting', 'typeset');
-      base = base.filter(p => p.phases.some(ph => ph.phase.startsWith(phaseKey))); // 简化处理
+// 将 FilterOption[] 映射为后端可识别的 ProjectSearchFilters
+// 后端定义字段：
+// fuzzy_proj_name, translating_status, proofreading_status, typesetting_status, reviewing_status,
+// is_published, member_ids, (扩展) project_set_id
+interface PanelProjectSearchFilters extends ProjectSearchFilters {
+  project_set_id?: string;
+}
+
+function mapPhaseTextToNumber(text: string): number | undefined {
+  const raw = text.trim();
+  if (!raw) return undefined;
+
+  // 允许直接使用数字 0 / 1 / 2
+  if (/^[0-2]$/.test(raw)) return Number(raw);
+
+  const normalized = raw.toLowerCase();
+
+  // 0 = 未开始 / 待开始
+  if (['0', 'pending', '未开始', '待开始', '待处理', '未启动'].includes(normalized)) return 0;
+  // 1 = 进行中
+  if (['1', 'wip', '进行中', '进行', '处理中', '进行中中'].includes(normalized)) return 1;
+  // 2 = 已完成
+  if (['2', 'completed', '已完成', '完成', '结束', '已结束'].includes(normalized)) return 2;
+
+  return undefined;
+}
+
+const currentSearchFilters = computed<PanelProjectSearchFilters | undefined>(() => {
+  const opts = currentFilterOptions.value;
+
+  if (!opts.length) return undefined;
+
+  const filters: PanelProjectSearchFilters = {};
+  const memberIds: string[] = [];
+
+  for (const opt of opts) {
+    const key = opt.key;
+    const val = opt.value.trim();
+
+    if (!val) continue;
+
+    // 项目名称模糊匹配
+    if (key === 'project') {
+      filters.fuzzy_proj_name = val;
+      continue;
+    }
+
+    // 项目集筛选（若后端支持，使用 project_set_id 字段）
+    if (key === 'project-set') {
+      filters.project_set_id = val;
+      continue;
+    }
+
+    // 成员 / 指定角色成员（目前统一推入 member_ids，后端若需区分角色可扩展）
+    if (key === 'member' || key.startsWith('member-')) {
+      memberIds.push(val);
+      continue;
+    }
+
+    // 各阶段状态（翻译 / 校对 / 嵌字 / 监修）
+    if (key.endsWith('-status')) {
+      // key 示例： translation-status / proofreading-status / typesetting-status / reviewing-status / publish-status
+      const phaseBase = key.replace('-status', '');
+
+      if (phaseBase === 'publish') {
+        // 发布状态特殊：支持数字或文本输入 -> 2/"已完成"/"已发布" 视为已发布
+        if (/^[0-2]$/.test(val)) {
+          filters.is_published = Number(val) === 2;
+        } else {
+          filters.is_published = ['已发布', 'true', 'yes', 'published', '完成', '已完成'].includes(
+            val.toLowerCase()
+          );
+        }
+        continue;
+      }
+
+      const mapField: Record<string, keyof PanelProjectSearchFilters> = {
+        translation: 'translating_status',
+        proofreading: 'proofreading_status',
+        typesetting: 'typesetting_status',
+        reviewing: 'reviewing_status',
+      };
+
+      const targetField = mapField[phaseBase];
+      if (targetField) {
+        const num = mapPhaseTextToNumber(val);
+        if (num !== undefined) (filters as PanelProjectSearchFilters)[targetField] = num;
+      }
+      continue;
     }
   }
-  filteredProjects.value = base;
-}
+
+  if (memberIds.length) filters.member_ids = memberIds;
+
+  return filters;
+});
 
 function handleConfirmOptions(options: FilterOption[]) {
   currentFilterOptions.value = options;
-  applyFilters();
+  // 由 ProjectList 根据 currentSearchFilters 调用 IPC 搜索，无需本地过滤
 }
 
-// 最终传递给 ProjectList 的项目（若有过滤则用过滤结果）
-const displayProjects = computed(() =>
-  filteredProjects.value.length ? filteredProjects.value : rawProjects.value
-);
+// 最终传递给 ProjectList 的项目已由其内部管理；此处预留接口以备未来需要
+// const displayProjects = computed(() =>
+//   filteredProjects.value.length ? filteredProjects.value : rawProjects.value
+// );
 
-// 公告列表（mock）
+// 公告列表（示例数据）
 interface Announcement {
   id: number;
   title: string;
@@ -245,7 +258,7 @@ interface Announcement {
 }
 const announcements = ref<Announcement[]>([]);
 async function loadAnnouncements(): Promise<void> {
-  // mock API
+  // 示例 API
   await new Promise(r => setTimeout(r, 220));
   announcements.value = [
     {
@@ -299,22 +312,39 @@ function handleOpenCreator(): void {
       <aside class="teams-sidebar">
         <ul class="teams-list">
           <li class="team-item team-item--user" @click="selectUserProjects">
-            <span class="team-item__avatar user-avatar">我</span>
-            <span class="team-item__name">{{ user?.name || '我的项目' }}</span>
+            <template v-if="user?.has_avatar && user?.avatar">
+              <img
+                class="team-item__avatar-img"
+                :src="user.avatar"
+                alt="user"
+                @error="onUserAvatarError"
+              />
+            </template>
+            <template v-else>
+              <span class="team-item__avatar user-avatar">{{
+                user?.name ? user.name.slice(0, 1) : '我'
+              }}</span>
+            </template>
+            <span class="team-item__name">{{ user?.name || '我' }} 的项目</span>
           </li>
           <li
             v-for="team in teams"
             :key="team.id"
             class="team-item"
-            @click="
-              () => {
-                activeTeamId = team.id;
-                loadUserProjects();
-              }
-            "
+            @click="activeTeamId = team.id"
           >
-            <span class="team-item__avatar">{{ team.name.slice(0, 1) }}</span>
-            <span class="team-item__name">{{ team.name }}</span>
+            <template v-if="team.has_avatar && team.avatar">
+              <img
+                class="team-item__avatar-img"
+                :src="team.avatar"
+                :alt="team.name"
+                @error="() => onTeamAvatarError(team.id)"
+              />
+            </template>
+            <template v-else>
+              <span class="team-item__avatar">{{ team.name.slice(0, 1) }}</span>
+            </template>
+            <span class="team-item__name">{{ team.name }} 的项目</span>
           </li>
           <li v-if="!loadingTeams && teams.length === 0" class="team-item team-item--empty">
             <span class="team-item__avatar">-</span>
@@ -351,11 +381,12 @@ function handleOpenCreator(): void {
             />
           </div>
         </div>
-        <div class="projects-content">
+        <div class="projects-content" ref="projectsContainerRef">
           <div v-if="loadingProjects" class="placeholder">载入项目...</div>
           <div class="projects-scroll" v-else>
             <ProjectList
-              :projects="displayProjects"
+              :team-id="activeTeamId"
+              :filters="currentSearchFilters"
               @open-detail="handleOpenDetail"
               @create="handleOpenCreator"
             />
@@ -381,7 +412,11 @@ function handleOpenCreator(): void {
           @close="handleCloseDetail"
           @open-translator="() => {}"
         />
-        <ProjectCreatorView v-else-if="detailMode === 'create'" @close="handleCloseDetail" />
+        <ProjectCreatorView
+          v-else-if="detailMode === 'create'"
+          :team-id="activeTeamId || undefined"
+          @close="handleCloseDetail"
+        />
       </aside>
     </div>
   </div>
@@ -450,6 +485,25 @@ function handleOpenCreator(): void {
   width: clamp(260px, 26vw, 360px);
 }
 
+/* 当侧栏收起（未 hover）时，隐藏名字，防止文字首字母在收起状态下溢出 */
+.teams-sidebar:not(:hover) .team-item__name {
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition:
+    max-width 0.18s ease,
+    opacity 0.18s ease,
+    transform 0.18s ease;
+  overflow: hidden;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* 确保列表项在 flex 收缩时不会导致子元素溢出 */
+.team-item {
+  min-width: 0;
+}
+
 .teams-list {
   list-style: none;
   margin: 0;
@@ -481,6 +535,8 @@ function handleOpenCreator(): void {
 
 .team-item__avatar {
   flex: 0 0 34px;
+  width: 34px;
+  min-width: 34px;
   height: 28px;
   border-radius: 8px;
   background: #eef6ff;
@@ -494,6 +550,54 @@ function handleOpenCreator(): void {
 }
 .team-item--user .team-item__avatar {
   background: linear-gradient(135deg, #cde6ff, #e6f4ff);
+}
+
+/* Avatar image styles */
+.team-item__avatar-img {
+  width: 34px;
+  height: 28px;
+  min-width: 34px;
+  min-height: 28px;
+  border-radius: 8px;
+  object-fit: cover;
+  display: block;
+  box-sizing: border-box;
+  align-self: center;
+}
+
+.top-bar__avatar-img {
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  border-radius: 50%;
+  object-fit: cover;
+  margin-right: 10px;
+  box-sizing: border-box;
+}
+
+.top-bar__avatar {
+  display: inline-flex;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #eef6ff;
+  color: #2a4b66;
+  font-weight: 600;
+  margin-right: 10px;
+  box-sizing: border-box;
+}
+
+/* Ensure avatar containers don't shrink when parent gets narrow */
+.team-item__avatar,
+.team-item__avatar-img,
+.top-bar__avatar,
+.top-bar__avatar-img {
+  flex-shrink: 0;
 }
 
 .team-item__name {

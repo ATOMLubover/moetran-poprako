@@ -170,18 +170,35 @@ curl -G https://api.poprako.example/api/v1/member/info \
 
 ### 4. 按条件筛选成员列表
 
-按团队、职位及用户名模糊查询成员列表，返回简要信息（`member_id` 与 `username`）。
+按团队、职位及用户名模糊查询成员列表，返回简要信息（`member_id` 与 `username`）。本服务同时支持两种调用方式：
 
-| 方法 | 路径                     | 认证 | 查询参数                                                                 |
-| ---- | ------------------------ | ---- | ------------------------------------------------------------------------ |
-| GET  | `/api/v1/members`  | 需要 | `team_id`（必填）、`position`（可选）、`fuzzy_name`（可选）、`page`、`limit` |
+- JSON POST（推荐，用于复杂或较长参数）：`POST /api/v1/members/search`
+- 兼容的 Query GET（旧接口包装）：`GET /api/v1/members`（查询字符串）
 
-查询参数说明：
+1) JSON POST（`PickMemberPayload`）
+
+| 方法 | 路径                        | 认证 |
+| ---- | --------------------------- | ---- |
+| POST | `/api/v1/members/search`    | 需要 |
+
+请求体（JSON，`PickMemberPayload`）：
+
+```json
+{
+    "team_id": "team_a",           // 必填
+    "position": "translator",      // 可选：translator/proofreader/typesetter/principal
+    "fuzzy_name": "ali",           // 可选，用户名模糊匹配
+    "page": 1,
+    "limit": 20
+}
+```
+
+说明：
 
 - `team_id`：所属团队 ID，必填。
 - `position`：可选职位过滤，取值：`translator` / `proofreader` / `typesetter` / `principal`。
-    - 若不传，则不按职位过滤。
 - `fuzzy_name`：可选用户名模糊匹配关键字，对应 `u.f_username ILIKE '%fuzzy_name%'`。
+    - 若不传，则不按职位过滤。
     - 若与 `position` 一起传入，则先按职位，再按用户名模糊过滤。
     - 若仅传 `fuzzy_name`，则仅按用户名模糊 + team 过滤。
 - `page`：页码，从 1 开始，默认 1。
@@ -204,14 +221,31 @@ curl -G https://api.poprako.example/api/v1/member/info \
 | 场景                | code | 说明                      |
 | ------------------- | ---- | ------------------------- |
 | 未认证              | 401  | 缺失或非法 JWT            |
-| team_id 缺失        | 400  | Missing team_id parameter.|
+| team_id 缺失        | 422  | 请求体解析失败或缺少必填字段 |
 | position 非法取值   | 400  | Invalid position          |
 | 内部错误            | 500  | 数据库或服务异常          |
 
-示例 cURL：
+示例 cURL（POST）：
 
 ```bash
-curl -G "https://api.poprako.example/api/v1/members" \
+curl -X POST https://api.poprako.example/api/v1/members/search \
+    -H "Authorization: Bearer <jwt>" \
+    -H "Content-Type: application/json" \
+    -d '{"team_id":"team_a","position":"translator","fuzzy_name":"ali","page":1,"limit":20}'
+```
+
+兼容 GET 查询（旧版包装）
+
+| 方法 | 路径                 | 认证 | 查询参数示例 |
+| ---- | -------------------- | ---- | ------------- |
+| GET  | `/api/v1/members`    | 需要 | `team_id`, `position`, `fuzzy_name`, `page`, `limit` |
+
+说明：GET 形式是对 `PickMemberPayload` 的简单 query-string 包装，行为与 POST 相同，但适合短查询或兼容旧客户端。`team_id` 仍为必填查询参数；`position` 与 `fuzzy_name` 可选。
+
+示例 cURL（GET）：
+
+```bash
+curl -G https://api.poprako.example/api/v1/members \
     -H "Authorization: Bearer <jwt>" \
     --data-urlencode "team_id=team_a" \
     --data-urlencode "position=translator" \
@@ -268,6 +302,53 @@ curl -X POST https://api.poprako.example/api/v1/projset/create \
     -H "Authorization: Bearer <jwt>" \
     -H "Content-Type: application/json" \
     -d '{"projset_name":"主线文本","projset_description":"主线剧情相关文本","team_id":"team_a","mtr_token":"<moetran-token>"}'
+```
+
+### 列出团队下的项目集
+
+列出指定团队下的所有项目集（project sets）。返回每个项目集的基本信息与序号。
+
+| 方法 | 路径                 | 认证 | 查询参数 |
+| ---- | -------------------- | ---- | -------- |
+| GET  | `/api/v1/projsets`   | 需要 | `team_id`：目标团队 ID（必填，query 参数） |
+
+说明：
+
+- `team_id`：必填，作为 query 参数传入，例如 `GET /api/v1/projsets?team_id=team_a`。
+
+成功响应示例：
+
+```json
+{
+    "code": 200,
+    "data": {
+        "projsets": [
+            {
+                "projset_id": "projset_123",
+                "projset_name": "主线文本",
+                "projset_description": "主线剧情相关文本",
+                "projset_serial": 3,
+                "team_id": "team_a"
+            }
+        ]
+    }
+}
+```
+
+错误响应：
+
+| 场景                | code | 说明                      |
+| ------------------- | ---- | ------------------------- |
+| 未认证              | 401  | 缺失或非法 JWT            |
+| 团队不存在          | 404  | 未找到对应团队或项目集    |
+| 内部错误            | 500  | 数据库或服务异常          |
+
+示例 cURL：
+
+```bash
+curl -G https://api.poprako.example/api/v1/projsets \
+    -H "Authorization: Bearer <jwt>" \
+    --data-urlencode "team_id=team_a"
 ```
 
 ---
@@ -333,21 +414,39 @@ curl -X POST https://api.poprako.example/api/v1/projs \
         -d '{"proj_name":"章节1对话","proj_description":"第一章主要对话文本","team_id":"team_a","projset_id":"projset_123","mtr_auth":"<moetran-token>","source_language":"ja","target_languages":["zh_CN"],"allow_apply_type":1,"application_check_type":0,"default_role":"translator"}'
 ```
 
-### 6. 按 ID 批量获取项目详情
+### 6. 搜索/筛选项目列表
 
-根据一组项目 ID，返回每个项目的基础信息、各流程状态以及参与成员列表。内部会联表查询 `t_proj`、`t_proj_assgin`、`t_member`、`t_user` 等表。
+通用的项目搜索接口：支持按项目 ID 列表直接查询，也支持按项目名模糊、各流程状态、是否已发布、参与成员 ID、以及创建时间起点等条件筛选并分页返回项目信息与参与成员列表。
 
-| 方法 | 路径                  | 认证 |
-| ---- | --------------------- | ---- |
-| POST | `/api/v1/projs/batch` | 需要 |
+| 方法 | 路径             | 认证 |
+| ---- | ---------------- | ---- |
+| POST | `/api/v1/projs/search`  | 需要 |
 
-请求体（JSON）：
+请求体（JSON，`PickProjPayload`）：
 
 ```json
 {
-    "ids": ["proj_id_1", "proj_id_2"]
+    "proj_ids": ["proj_id_1", "proj_id_2"],      // 可选：若提供且非空，则直接按 ID 列表查询（忽略其他筛选条件）
+    "fuzzy_proj_name": "章节1",                   // 可选，模糊匹配项目名（ILIKE '%...%'）
+    "translating_status": 0,                        // 可选，0/1/2
+    "proofreading_status": 0,                       // 可选，0/1/2
+    "typesetting_status": 0,                        // 可选，0/1/2
+    "reviewing_status": 0,                          // 可选，0/1/2
+    "is_published": false,                          // 可选
+    "member_ids": ["member_1", "member_2"],     // 可选：仅返回包含这些成员分配记录的项目
+    "time_start": 1690000000,                       // 可选：Unix 秒，返回创建时间 >= 该时间的项目
+    "page": 1,
+    "limit": 10
 }
 ```
+
+说明：
+
+- `proj_ids`：若提供且非空，接口会短路为按 ID 批量查询（功能等同于旧的 batch 接口）。
+- `fuzzy_proj_name`：对 `f_proj_name` 做 ILIKE 模糊匹配。
+- 各 `*_status` 字段使用 `ProjStatus` 枚举值（`0/1/2`）。
+- `time_start`：Unix 时间戳（秒），用于筛选 `f_created_at >= to_timestamp(time_start)` 的项目。
+- 分页：`page` 从 1 开始，`limit` 默认 10。
 
 成功响应示例：
 
@@ -388,7 +487,7 @@ curl -X POST https://api.poprako.example/api/v1/projs \
 | 场景          | code | 说明                     |
 | ------------- | ---- | ------------------------ |
 | 未认证        | 401  | 缺失或非法 JWT           |
-| JSON 解析失败 | 422  | 请求体格式错误或缺失 ids |
+| JSON 解析失败 | 422  | 请求体格式错误或必填字段缺失 |
 | 内部错误      | 500  | 数据库或服务异常         |
 
 ### 7. 更新项目流程状态
@@ -535,6 +634,8 @@ curl -X POST https://api.poprako.example/api/v1/projs \
 - `1`：`InProgress`（进行中）
 - `2`：`Completed`（已完成）
 
+注意：该枚举在本服务的 HTTP API（请求/响应 JSON）中以整数（`0`/`1`/`2`）表示和传输。
+
 ### MtrAllowApplyType（允许申请方式）
 
 用于创建 Proj 时的 `allow_apply_type` 字段（`ProjCreatePayload` / `MtrProjectCreatePayload`）：
@@ -543,12 +644,22 @@ curl -X POST https://api.poprako.example/api/v1/projs \
 - `1`：`AnyApply` — 任何人都可以申请
 - `2`：`MemberOnly` — 仅组内成员可以申请
 
+说明：
+
+- 对外 API（本服务接收的 `ProjCreatePayload`）使用整数值 `0/1/2`。客户端在向本服务发送创建项目请求时请传入整数。
+- 与尨译（Moetran）平台对接时，本仓库中 `model/moetran.rs` 对应的枚举在发给外部 Moetran 的 JSON 中序列化为 snake_case 字符串（例如：`"no_apply"`、`"any_apply"`、`"member_only"`）。这是服务内部与外部系统交互时的实现细节，客户端无须使用字符串形式。
+
 ### MtrAppliCheckType（申请审核方式）
 
 用于创建 Proj 时的 `application_check_type` 字段：
 
 - `0`：`NonCheck` — 申请自动通过，无需审核
 - `1`：`AdminCheck` — 需要管理员/负责人审核
+
+说明：
+
+- 对外 API（本服务接收的 `ProjCreatePayload`）使用整数值 `0/1`。
+- 在与尨译（Moetran）外部接口交互时，`model/moetran.rs` 中的 `MtrAppliCheckType` 枚举在序列化为 JSON 时采用 snake_case 字符串（例如：`"non_check"`、`"admin_check"`）。
 
 ### MtrRole（默认角色 & 角色常量）
 
@@ -561,7 +672,7 @@ curl -X POST https://api.poprako.example/api/v1/projs \
 - `"63d87c24b8bebd75ff934268"`：`TYPESETTER`   — 嵌字 / 排版
 - `"63d87c24b8bebd75ff934269"`：`INTERN`       — 实习 / 预备成员
 
-客户端在请求体中填写 `default_role` 时必须使用上述字符串之一，否则会在反序列化阶段被直接判为非法请求。
+客户端在请求体中填写 `default_role` 时必须使用上述字符串之一（如 `"63d87c24b8bebd75ff934267"` 对应 `TRANSLATOR`），否则会在反序列化阶段被直接判为非法请求。服务端会严格校验该字符串并在需要时将其转为内部 `MtrRole` 类型并用于对接尨译。
 
 ### 语言代码（mtr_lang）
 

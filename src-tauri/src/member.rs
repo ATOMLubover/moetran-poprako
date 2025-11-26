@@ -2,8 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use tracing::info;
 
-use crate::{http::poprako_get, defer::WarnDefer};
-use std::collections::HashMap;
+use crate::{defer::WarnDefer, http::poprako_post_opt};
 
 #[derive(Debug, Deserialize)]
 pub struct PoprakoEnvelope<T> {
@@ -18,6 +17,7 @@ pub struct PoprakoMemberBrief {
     pub username: String,
 }
 
+// 与 PopRaKo 文档中的 PickMemberPayload 对应
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReqMembers {
     pub team_id: String,
@@ -45,31 +45,13 @@ pub async fn get_members(payload: ReqMembers) -> Result<MembersReply, String> {
         fuzzy_name = ?payload.fuzzy_name,
         page = ?payload.page,
         limit = ?payload.limit,
-        "Calling PopRaKo /api/v1/members via IPC",
+        "Calling PopRaKo /api/v1/members/search via IPC",
     );
 
     let mut defer = WarnDefer::new("poprako.members.request");
 
-    // 构造查询参数 Map，由 http::poprako_get 负责编码到 URL
-    let mut params: HashMap<&str, String> = HashMap::new();
-
-    params.insert("team_id", payload.team_id.clone());
-
-    if let Some(pos) = payload.position.clone() {
-        params.insert("position", pos);
-    }
-    if let Some(name) = payload.fuzzy_name.clone() {
-        params.insert("fuzzy_name", name);
-    }
-    if let Some(page) = payload.page {
-        params.insert("page", page.to_string());
-    }
-    if let Some(limit) = payload.limit {
-        params.insert("limit", limit.to_string());
-    }
-
     let reply: PoprakoEnvelope<Vec<PoprakoMemberBrief>> =
-        poprako_get("/api/v1/members", Some(&params))
+        poprako_post_opt("members/search", Some(&payload))
             .await
             .map_err(|err| format!("Failed to fetch members: {}", err))?;
 

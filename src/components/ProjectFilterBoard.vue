@@ -29,9 +29,10 @@ function handleMemberSelectorConfirm() {
   };
   for (const m of advancedPickedMembers.value) {
     const key = `member-${m.position}`;
+    // use member id as the filter value (PopRaKo expects member_ids as IDs)
     const label = `成员(${labelMap[m.position]})：${m.name}`;
-    if (!filterOptions.value.find(o => o.key === key && o.value === m.name)) {
-      filterOptions.value.push({ label, key, value: m.name });
+    if (!filterOptions.value.find(o => o.key === key && o.value === m.id)) {
+      filterOptions.value.push({ label, key, value: m.id });
     }
   }
 }
@@ -63,9 +64,9 @@ function laborToStringKey(labor: string): string {
     case '嵌字状态':
       return 'typesetting-status';
     case '监修状态':
-      return 'supervision-status';
+      return 'reviewing-status';
     case '发布状态':
-      return 'release-status';
+      return 'publish-status';
     default:
       return '';
   }
@@ -79,7 +80,7 @@ function statusTypeToStringValue(statusType: string): string {
     case '已完成':
       return '2';
     default:
-      return '3';
+      return '';
   }
 }
 function getOptionalValues(selectedLabor: string): string[] {
@@ -147,7 +148,7 @@ function onConfirm() {
 <template>
   <div class="filter-board" :class="{ 'fb--disabled': !filterEnabled }">
     <div class="fb-header">
-      <h3 class="fb-title">筛选控制板</h3>
+      <h3 class="fb-title">PopRaKo 筛选控制板</h3>
       <!-- <RoundSwitch v-model="filterEnabled" /> -->
     </div>
 

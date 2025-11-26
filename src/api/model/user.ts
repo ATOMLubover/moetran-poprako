@@ -1,9 +1,10 @@
-export interface ReqLogin {
+export interface ReqSync {
+  user_id: string;
   email: string;
   password: string;
 }
 
-export interface ResLogin {
+export interface ResSync {
   token: string;
 }
 

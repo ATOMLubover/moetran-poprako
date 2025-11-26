@@ -1,43 +1,21 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { computed, ref, watch } from 'vue';
+import { storeToRefs } from 'pinia';
 import { useToastStore } from '../stores/toast';
+import { useTokenStore } from '../stores/token';
+import { useProjsetStore } from '../stores/projset';
+import type { ResMemberBrief, MemberPosition } from '../ipc/member';
+import { searchMembersByName } from '../ipc/member';
+import { assignMemberToProj, createProj } from '../ipc/project';
 
-// Mock: 通过名称模糊搜索成员列表（真实实现应调用后端 IPC）
-type MockMember = {
-  id: string;
-  name: string;
-  position: 'translator' | 'proofreader' | 'typesetter';
-};
+// props：由 PanelView 传入当前团队 ID
+// Props: 从父组件（PanelView）注入当前选中的团队 ID
+const props = defineProps<{ teamId?: string | null }>();
 
 // 邀请后保存的成员信息（仅保留 id 与 name，不含 position）
 interface MemberInfo {
   id: string;
   name: string;
-}
-
-// Mock 成员数据，模拟 Rust 端 get_member(team, position)
-const __MOCK_MEMBERS: MockMember[] = [
-  { id: 'u-1001', name: '电容', position: 'translator' },
-  { id: 'u-1002', name: 'debu', position: 'translator' },
-  { id: 'u-1003', name: '小明', position: 'proofreader' },
-  { id: 'u-1004', name: '小红', position: 'proofreader' },
-  { id: 'u-1005', name: 'Alice', position: 'typesetter' },
-  { id: 'u-1006', name: 'Bob', position: 'typesetter' },
-];
-
-// Mock: 通过名称模糊搜索成员列表（真实实现应调用后端 IPC get_member(team, position)）
-async function __mockSearchMembersByName(
-  keyword: string,
-  position: 'translator' | 'proofreader' | 'typesetter'
-): Promise<MockMember[]> {
-  const lower = keyword.toLowerCase();
-  return new Promise(resolve => {
-    setTimeout(() => {
-      resolve(
-        __MOCK_MEMBERS.filter(m => m.position === position && m.name.toLowerCase().includes(lower))
-      );
-    }, 220);
-  });
 }
 
 const emit = defineEmits<{ (e: 'close'): void }>();
@@ -75,7 +53,7 @@ const messageClass = computed(() => {
   return message.value.includes('成功') ? 'creator-message--success' : 'creator-message--error';
 });
 
-// 最终标题预览
+// 最终标题预览（组装 [author]title）
 const finalTitlePreview = computed(() => {
   if (!authorName.value || !projectInfo.value.title) {
     return '';
@@ -84,7 +62,33 @@ const finalTitlePreview = computed(() => {
   return `[${authorName.value}]${projectInfo.value.title}`;
 });
 
+// Stores: token 与 projset 缓存
 const toastStore = useToastStore();
+const tokenStore = useTokenStore();
+const projsetStore = useProjsetStore();
+const { moetranToken } = storeToRefs(tokenStore);
+
+// 当前团队下的项目集列表与选择
+const selectedProjsetId = ref<string>('');
+
+// 计算属性：当前 props.teamId 对应的项目集列表
+const currentProjsets = computed(() => {
+  const teamId = props.teamId ?? '';
+  return teamId ? projsetStore.getForTeam(teamId) : [];
+});
+
+// 监听 teamId 变化，触发项目集加载
+watch(
+  () => props.teamId,
+  teamId => {
+    selectedProjsetId.value = '';
+
+    if (teamId) {
+      void projsetStore.loadForTeam(teamId);
+    }
+  },
+  { immediate: true }
+);
 
 // 统一：每个角色一个数组，存储 MemberInfo { id, name }
 const invitedTranslators = ref<MemberInfo[]>([]);
@@ -97,10 +101,11 @@ const selectorOpen = ref(false);
 const selectorRole = ref<InviteRole>(null);
 const selectorKeyword = ref('');
 const selectorLoading = ref(false);
-const selectorResults = ref<MockMember[]>([]);
+const selectorResults = ref<ResMemberBrief[]>([]);
 // 本次打开选择器前的原始已选集合，用于取消时回滚（深拷贝）
 let selectorInitialPicked: MemberInfo[] = [];
 
+// 打开成员选择器：记录初始选择并展示已选成员
 function openSelector(role: InviteRole): void {
   selectorRole.value = role;
   selectorKeyword.value = '';
@@ -120,16 +125,17 @@ function openSelector(role: InviteRole): void {
 
   // 初次打开时立即展示当前已选成员（无须搜索）
   if (role) {
-    const pickedIds =
+    const picked =
       role === 'translator'
-        ? invitedTranslators.value.map(m => m.id)
+        ? invitedTranslators.value
         : role === 'proofreader'
-          ? invitedProofreaders.value.map(m => m.id)
-          : invitedTypesetters.value.map(m => m.id);
-    const pickedMembers = __MOCK_MEMBERS.filter(
-      m => m.position === role && pickedIds.includes(m.id)
-    );
-    selectorResults.value = pickedMembers;
+          ? invitedProofreaders.value
+          : invitedTypesetters.value;
+
+    selectorResults.value = picked.map(m => ({
+      member_id: m.id,
+      username: m.name,
+    }));
   }
 }
 
@@ -141,11 +147,22 @@ function closeSelector(): void {
   selectorInitialPicked = [];
 }
 
+// 搜索成员（调用后端），避免重复 id 并合并已选成员
 async function handleSearchMembers(): Promise<void> {
   selectorLoading.value = true;
+
+  console.log(
+    'Searching members for role:',
+    selectorRole.value,
+    'with keyword:',
+    selectorKeyword.value
+  );
+
   try {
-    if (!selectorRole.value) {
+    if (!selectorRole.value || !props.teamId) {
       selectorResults.value = [];
+
+      console.warn('Member search aborted: role or teamId is missing');
     } else {
       // 当前角色已选成员
       const pickedIds: string[] =
@@ -154,20 +171,31 @@ async function handleSearchMembers(): Promise<void> {
           : selectorRole.value === 'proofreader'
             ? invitedProofreaders.value.map(m => m.id)
             : invitedTypesetters.value.map(m => m.id);
-      const pickedMembers: MockMember[] = __MOCK_MEMBERS.filter(
-        m => m.position === selectorRole.value && pickedIds.includes(m.id)
+
+      const pickedMembers: ResMemberBrief[] = selectorResults.value.filter(m =>
+        pickedIds.includes(m.member_id)
       );
 
       const keyword = selectorKeyword.value.trim();
+
       if (!keyword) {
         // 无关键词：只显示已选成员
         selectorResults.value = pickedMembers;
         return;
       }
 
-      const results = await __mockSearchMembersByName(keyword, selectorRole.value);
-      const pickedIdSet = new Set(pickedMembers.map(m => m.id));
-      const filteredResults = results.filter(m => !pickedIdSet.has(m.id));
+      const results = await searchMembersByName({
+        team_id: props.teamId,
+        position: selectorRole.value as MemberPosition,
+        fuzzy_name: keyword,
+        page: 1,
+        limit: 20,
+      });
+
+      const pickedIdSet = new Set(pickedMembers.map(m => m.member_id));
+
+      const filteredResults = results.filter(m => !pickedIdSet.has(m.member_id));
+
       selectorResults.value = [...pickedMembers, ...filteredResults];
     }
   } finally {
@@ -176,7 +204,7 @@ async function handleSearchMembers(): Promise<void> {
 }
 
 function handleSelectMember(memberId: string): void {
-  const member = __MOCK_MEMBERS.find(m => m.id === memberId);
+  const member = selectorResults.value.find(m => m.member_id === memberId);
   if (!member) return;
 
   const targetArr =
@@ -186,8 +214,8 @@ function handleSelectMember(memberId: string): void {
         ? invitedProofreaders
         : invitedTypesetters;
 
-  if (!targetArr.value.some(m => m.id === member.id)) {
-    targetArr.value.push({ id: member.id, name: member.name });
+  if (!targetArr.value.some(m => m.id === member.member_id)) {
+    targetArr.value.push({ id: member.member_id, name: member.username });
   }
 
   // 无关键词时实时刷新展示已选成员
@@ -255,6 +283,7 @@ function handleClose(): void {
 }
 
 // 表单提交：创建项目
+// 提交表单：创建项目（包含前端必要校验）
 async function handleCreateProject(): Promise<void> {
   if (!authorName.value || !projectInfo.value.title || !projectInfo.value.description) {
     toastStore.show('请完整填写作者、标题和描述');
@@ -262,27 +291,82 @@ async function handleCreateProject(): Promise<void> {
     return;
   }
 
+  if (!props.teamId) {
+    toastStore.show('请先在左侧选择一个汉化组');
+
+    return;
+  }
+
+  if (!selectedProjsetId.value) {
+    toastStore.show('请选择一个项目集');
+
+    return;
+  }
+
+  if (!moetranToken.value) {
+    toastStore.show('缺少 Moetran Token，请先登录');
+
+    return;
+  }
+
   loading.value = true;
   message.value = '';
-  // 使用 mock 行为模拟提交到 tauri rust 后端 IPC
-  const payload = {
-    author: authorName.value,
-    info: { ...projectInfo.value },
-    invitedTranslators: invitedTranslators.value.map(m => m.id),
-    invitedProofreaders: invitedProofreaders.value.map(m => m.id),
-    invitedTypesetters: invitedTypesetters.value.map(m => m.id),
-  };
 
-  await new Promise(resolve => setTimeout(resolve, 420));
-  console.debug('mock submit createProject:', payload);
+  try {
+    const projName = finalTitlePreview.value || projectInfo.value.title;
 
-  message.value = '项目创建成功（mock）';
-  toastStore.show('项目创建成功（mock）');
+    const created = await createProj({
+      proj_name: projName,
+      proj_description: projectInfo.value.description,
+      team_id: props.teamId,
+      projset_id: selectedProjsetId.value,
+      mtr_auth: moetranToken.value,
+      workset_index: projectInfo.value.worksetId,
+      source_language: 'ja',
+      target_languages: ['zh-CN'],
+      allow_apply_type: projectInfo.value.allowAutoJoin ? 1 : 0,
+      application_check_type: 0,
+      default_role: '63d87c24b8bebd75ff934267',
+    });
 
-  loading.value = false;
+    const projId = created.proj_id;
+
+    const allInvites: { id: string; role: 'translator' | 'proofreader' | 'typesetter' }[] = [
+      ...invitedTranslators.value.map(m => ({ id: m.id, role: 'translator' as const })),
+      ...invitedProofreaders.value.map(m => ({ id: m.id, role: 'proofreader' as const })),
+      ...invitedTypesetters.value.map(m => ({ id: m.id, role: 'typesetter' as const })),
+    ];
+
+    const assignPromises = allInvites.map(invite =>
+      assignMemberToProj({
+        proj_id: projId,
+        member_id: invite.id,
+        is_translator: invite.role === 'translator',
+        is_proofreader: invite.role === 'proofreader',
+        is_typesetter: invite.role === 'typesetter',
+        is_principal: false,
+      })
+    );
+
+    const settleResults = await Promise.allSettled(assignPromises);
+    const assignFailed = settleResults.filter(r => r.status === 'rejected').length;
+
+    if (assignFailed > 0) {
+      message.value = `项目创建成功，但有 ${assignFailed} 个成员指派失败`;
+      toastStore.show(message.value);
+    } else {
+      message.value = '项目创建成功，并已指派预邀请成员';
+      toastStore.show('项目创建成功');
+    }
+  } catch (err) {
+    console.error('Create project failed', err);
+    message.value = `项目创建失败：${String(err)}`;
+    toastStore.show('项目创建失败，请稍后重试');
+  } finally {
+    loading.value = false;
+  }
 }
 </script>
-
 <template>
   <section class="creator-root">
     <header class="creator-header">
@@ -326,6 +410,20 @@ async function handleCreateProject(): Promise<void> {
         </div>
 
         <div class="creator-field">
+          <label class="creator-label">所属项目集</label>
+          <select
+            v-model="selectedProjsetId"
+            class="creator-input"
+            :disabled="!currentProjsets.length"
+          >
+            <option value="" disabled>请选择项目集</option>
+            <option v-for="ps in currentProjsets" :key="ps.projset_id" :value="ps.projset_id">
+              {{ ps.projset_name }}
+            </option>
+          </select>
+        </div>
+
+        <div class="creator-field">
           <label for="creator-desc" class="creator-label">描述</label>
           <textarea
             id="creator-desc"
@@ -334,7 +432,7 @@ async function handleCreateProject(): Promise<void> {
             required
             placeholder="项目描述不超过 4 行"
             class="creator-textarea"
-          />
+          ></textarea>
         </div>
 
         <div class="creator-field">
@@ -419,7 +517,7 @@ async function handleCreateProject(): Promise<void> {
         </div>
       </div>
 
-      <!-- MemberSelector 悬浮窗（mock 版） -->
+      <!-- MemberSelector 悬浮窗（示例） -->
       <div v-if="selectorOpen" class="selector-overlay">
         <div class="selector-panel">
           <header class="selector-header">
@@ -440,7 +538,7 @@ async function handleCreateProject(): Promise<void> {
                 v-model="selectorKeyword"
                 type="text"
                 class="selector-input"
-                placeholder="输入成员名称进行搜索（mock）"
+                placeholder="输入成员名称进行搜索"
                 @keyup.enter="handleSearchMembers"
               />
               <button
@@ -455,31 +553,31 @@ async function handleCreateProject(): Promise<void> {
             <ul class="selector-list" v-if="selectorResults.length">
               <li
                 v-for="item in selectorResults"
-                :key="item.id"
+                :key="item.member_id"
                 class="selector-item"
                 :class="{
                   'selector-item--picked':
                     (selectorRole === 'translator' &&
-                      invitedTranslators.some(m => m.id === item.id)) ||
+                      invitedTranslators.some(m => m.id === item.member_id)) ||
                     (selectorRole === 'proofreader' &&
-                      invitedProofreaders.some(m => m.id === item.id)) ||
+                      invitedProofreaders.some(m => m.id === item.member_id)) ||
                     (selectorRole === 'typesetter' &&
-                      invitedTypesetters.some(m => m.id === item.id)),
+                      invitedTypesetters.some(m => m.id === item.member_id)),
                 }"
               >
-                <span class="selector-item__name">{{ item.name }}</span>
+                <span class="selector-item__name">{{ item.username }}</span>
                 <button
                   v-if="
                     (selectorRole === 'translator' &&
-                      invitedTranslators.some(m => m.id === item.id)) ||
+                      invitedTranslators.some(m => m.id === item.member_id)) ||
                     (selectorRole === 'proofreader' &&
-                      invitedProofreaders.some(m => m.id === item.id)) ||
+                      invitedProofreaders.some(m => m.id === item.member_id)) ||
                     (selectorRole === 'typesetter' &&
-                      invitedTypesetters.some(m => m.id === item.id))
+                      invitedTypesetters.some(m => m.id === item.member_id))
                   "
                   type="button"
                   class="selector-icon-btn selector-icon-btn--remove"
-                  @click.stop="handleRemoveMember(item.id)"
+                  @click.stop="handleRemoveMember(item.member_id)"
                   title="移除该成员"
                 >
                   <svg
@@ -501,7 +599,7 @@ async function handleCreateProject(): Promise<void> {
                   v-else
                   type="button"
                   class="selector-icon-btn selector-icon-btn--add"
-                  @click.stop="handleSelectMember(item.id)"
+                  @click.stop="handleSelectMember(item.member_id)"
                   title="加入该成员"
                 >
                   <svg
@@ -863,7 +961,7 @@ async function handleCreateProject(): Promise<void> {
   box-shadow: 0 10px 24px rgba(110, 170, 235, 0.65);
 }
 
-/* MemberSelector 悬浮窗样式（mock） */
+/* MemberSelector 悬浮窗样式（示例） */
 .selector-overlay {
   position: fixed;
   inset: 0;

@@ -168,7 +168,6 @@ async function handleLogin(): Promise<void> {
           user_id: userInfo.id,
           username: userInfo.name,
           email: email.value,
-          password: password.value,
         })
       ).token;
 

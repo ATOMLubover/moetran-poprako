@@ -1,25 +1,43 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useToastStore } from '../stores/toast';
 import type { ProjectBasicInfo, PhaseStatus, PhaseChip } from '../api/model/displayProject';
+import {
+  getUserProjectsEnriched,
+  searchUserProjectsEnriched,
+  searchTeamProjectsEnriched,
+  getTeamProjectsEnriched,
+} from '../ipc/project';
+import type { ProjectSearchFilters } from '../ipc/project';
+import type { ResProjectEnriched } from '../api/model/project';
 
 // 使用共享类型定义（见 src/api/model/displayProject.ts）
 
 // 组件事件：打开详情 / 创建项目
 const emit = defineEmits<{
-  (e: 'open-detail', projectId: number): void;
+  (e: 'open-detail', projectId: string): void;
   (e: 'create'): void;
 }>();
 
-// 目前列表组件不直接调用后端，仅通过 props 接收数据
+const props = defineProps<{
+  // 当前激活的汉化组 id，null/undefined 表示“仅看我自己的项目”
+  teamId?: string | null;
+  // 来自 PanelView 的筛选条件；空对象或 undefined 表示不启用筛选
+  filters?: ProjectSearchFilters | undefined;
+}>();
 
-// 接收外部传入的项目数据（用于仪表盘过滤后的结果展示）
-const props = defineProps<{ projects?: ProjectBasicInfo[] }>();
-
-// 是否正在加载标记（由父组件控制项目数据加载，这里仅负责列表交互）
+// 内部项目列表与加载状态
+const innerProjects = ref<(ProjectBasicInfo & { hasPoprako?: boolean })[]>([]);
 const isLoading = ref(false);
+const listContainerRef = ref<HTMLElement | null>(null);
+// resize debounce timer and listener ref
+const resizeTimer = ref<ReturnType<typeof setTimeout> | null>(null);
+const resizeListener = ref<((this: Window, ev: UIEvent) => any) | null>(null);
+// 服务端一次最多拉取多少条，之后前端再根据高度裁剪
+const serverLimit = 10;
 
 // 点击详情
-function handleOpenDetail(projectId: number): void {
+function handleOpenDetail(projectId: string): void {
   emit('open-detail', projectId);
 }
 
@@ -42,21 +60,214 @@ function chipClass(phase: PhaseChip): string {
   return `${base} ${map[phase.status]}`;
 }
 
-// 最终展示数据：完全依赖父组件传入的 projects
-const displayProjects = computed<ProjectBasicInfo[]>(() => props.projects ?? []);
+// 最终展示数据：始终使用内部拉取的 innerProjects
+const displayProjects = computed<(ProjectBasicInfo & { hasPoprako?: boolean })[]>(
+  () => innerProjects.value
+);
 
-const isEmpty = computed(() => !isLoading.value && displayProjects.value.length === 0);
+// 将 ResProjectEnriched 转为列表展示 DTO
+function mapEnrichedToBasic(
+  apiRes: ResProjectEnriched[]
+): (ProjectBasicInfo & { hasPoprako?: boolean })[] {
+  return apiRes.map(p => {
+    const seed = p.translating_status ?? p.proofreading_status ?? 0;
 
-// 当外部 projects 变化时重新计算空状态
+    const phaseOrder: Array<PhaseChip['phase']> = [
+      'translate',
+      'proof',
+      'typeset',
+      'review',
+      'publish',
+    ];
+
+    const labelMap: Record<PhaseChip['phase'], string> = {
+      translate: '翻译',
+      proof: '校对',
+      typeset: '嵌字',
+      review: '监修',
+      publish: '发布',
+    };
+
+    const phases: PhaseChip[] = phaseOrder.map((phase, i) => {
+      const rotate = (seed + i) % 5;
+      let status: PhaseStatus = 'unset';
+      if (rotate === 1) status = 'pending';
+      else if (rotate === 2) status = 'wip';
+      else if (rotate === 3) status = 'completed';
+
+      return { phase, status, label: labelMap[phase] } as PhaseChip;
+    });
+
+    return {
+      // 后端 id 是 UUID，保持为字符串
+      id: p.id,
+      title: p.name,
+      projectSetId: p.project_set?.id,
+      projectSetSerial: p.projset_serial,
+      projectSetIndex: p.projset_index,
+      hasPoprako: p.has_poprako,
+      phases,
+    } satisfies ProjectBasicInfo & { hasPoprako?: boolean };
+  });
+}
+
+// 根据当前 props.teamId / props.filters 决定调用哪种 IPC
+async function fetchAndClamp(): Promise<void> {
+  isLoading.value = true;
+  try {
+    console.log(
+      '[ProjectList] fetchAndClamp: requesting',
+      serverLimit,
+      'items, teamId =',
+      props.teamId,
+      'filters =',
+      props.filters
+    );
+
+    let apiRes: ResProjectEnriched[] = [];
+
+    const hasFilters = !!(props.filters && Object.keys(props.filters).length > 0);
+
+    if (props.teamId) {
+      // 团队视角：有筛选时走 team search，暂无筛选时使用团队 enriched 列表
+      if (hasFilters) {
+        apiRes = await searchTeamProjectsEnriched({
+          teamId: props.teamId as string,
+          ...props.filters,
+          page: 1,
+          limit: serverLimit,
+        });
+      } else {
+        apiRes = await getTeamProjectsEnriched({
+          teamId: props.teamId as string,
+          page: 1,
+          limit: serverLimit,
+        });
+      }
+    } else {
+      // 用户视角
+      if (hasFilters) {
+        apiRes = await searchUserProjectsEnriched({
+          ...props.filters,
+          page: 1,
+          limit: serverLimit,
+        });
+      } else {
+        apiRes = await getUserProjectsEnriched({ page: 1, limit: serverLimit });
+      }
+    }
+    const all = mapEnrichedToBasic(apiRes);
+    innerProjects.value = all;
+
+    // 下一帧再测量，确保 DOM 已更新；如果此时 DOM 未挂载，跳过裁剪但保留数据
+    requestAnimationFrame(() => {
+      const container = listContainerRef.value;
+      if (!container) {
+        console.log('[ProjectList] fetchAndClamp: container not mounted yet, skip clamp');
+        return;
+      }
+
+      const scroll = container.closest('.projects-scroll') as HTMLElement | null;
+      const host = scroll ?? container;
+      const hostRect = host.getBoundingClientRect();
+      const items = host.querySelectorAll('.project-list__item');
+      if (!items.length) {
+        console.log('[ProjectList] fetchAndClamp: no items rendered');
+        return;
+      }
+
+      const firstItemRect = (items[0] as HTMLElement).getBoundingClientRect();
+      const itemHeight = firstItemRect.height;
+      const verticalGap = 16; // 来自 .project-list__items 的 gap
+
+      const totalItemBlock = itemHeight + verticalGap;
+      const safePadding = 8;
+      const usableHeight = hostRect.height - safePadding;
+      const maxItems = Math.max(1, Math.floor(usableHeight / totalItemBlock));
+
+      console.log(
+        '[ProjectList] clamp: hostHeight=',
+        hostRect.height,
+        'itemHeight=',
+        itemHeight,
+        'gap=',
+        verticalGap,
+        'maxItems=',
+        maxItems
+      );
+
+      if (innerProjects.value.length > maxItems) {
+        innerProjects.value = innerProjects.value.slice(0, maxItems);
+      }
+    });
+  } catch (err) {
+    console.error('[ProjectList] 获取用户项目失败:', err);
+    innerProjects.value = [];
+    try {
+      const toastStore = useToastStore();
+      // 给用户友好的提示（网络或后端服务不可用）
+      toastStore.show(`获取项目失败：${String(err)}`);
+    } catch (e) {
+      // 如果 toast 无法使用，继续静默处理
+      console.debug('ProjectList toast failed', e);
+    }
+  } finally {
+    isLoading.value = false;
+  }
+}
+
+onMounted(() => {
+  requestAnimationFrame(() => {
+    void fetchAndClamp();
+  });
+  // 当窗口尺寸变化时，debounce 后重新裁剪以适配空间
+  const onResize = () => {
+    if (resizeTimer.value) clearTimeout(resizeTimer.value);
+    resizeTimer.value = setTimeout(() => {
+      requestAnimationFrame(() => {
+        void fetchAndClamp();
+      });
+    }, 150);
+  };
+
+  window.addEventListener('resize', onResize);
+  // store listener so we can remove it on unmount
+  resizeListener.value = onResize;
+});
+
+// 当 filters 变化时，重新拉取并裁剪
 watch(
-  () => props.projects,
+  () => props.filters,
   () => {
-    // 若外部传入空数组且未在加载中则显示为空
+    requestAnimationFrame(() => {
+      void fetchAndClamp();
+    });
   },
   { deep: true }
 );
 
-// 数据由父组件负责加载，这里无需在挂载时自行拉取 mock
+// 当 teamId 变化时也需重新拉取
+watch(
+  () => props.teamId,
+  (newVal, oldVal) => {
+    console.log('[ProjectList] teamId changed:', oldVal, '->', newVal);
+    requestAnimationFrame(() => {
+      void fetchAndClamp();
+    });
+  }
+);
+
+onBeforeUnmount(() => {
+  // 清理 resize 监听器
+  if (resizeListener.value) {
+    window.removeEventListener('resize', resizeListener.value);
+    resizeListener.value = null;
+  }
+  if (resizeTimer.value) {
+    clearTimeout(resizeTimer.value);
+    resizeTimer.value = null;
+  }
+});
 </script>
 
 <template>
@@ -73,12 +284,18 @@ watch(
       </button>
     </header>
 
-    <div class="project-list__content" v-if="!isEmpty">
+    <div class="project-list__content" ref="listContainerRef">
       <ul class="project-list__items" v-if="displayProjects.length > 0">
-        <li v-for="item in displayProjects" :key="item.id" class="project-list__item">
+        <li
+          v-for="item in displayProjects"
+          :key="String(item.id)"
+          class="project-list__item"
+          :class="{ 'project-list__item--poprako': item.hasPoprako }"
+        >
           <div class="project-list__item-main">
             <h3 class="project-list__item-title">
-              【 {{ item.id }} - {{ item.index }} 】[{{ item.author }}] {{ item.title }}
+              <span v-if="item.hasPoprako" class="project-list__tag-poprako">PopRaKo</span>
+              {{ item.title }}
             </h3>
             <div class="project-list__chips">
               <span v-for="phase in item.phases" :key="phase.phase" :class="chipClass(phase)">
@@ -97,9 +314,9 @@ watch(
           </div>
         </li>
       </ul>
-      <div v-if="isLoading" class="project-list__loading">加载中...</div>
+      <div v-else-if="isLoading" class="project-list__loading">加载中...</div>
+      <div v-else class="project-list__empty">暂无项目</div>
     </div>
-    <div v-else class="project-list__empty">暂无项目</div>
   </section>
 </template>
 
@@ -141,7 +358,7 @@ watch(
   background: linear-gradient(135deg, rgba(177, 207, 239, 0.95), rgba(160, 206, 255, 0.9));
   color: #10395d;
   cursor: pointer;
-  box-shadow: 0 10px 22px rgba(120, 170, 230, 0.32);
+  box-shadow: 0 1px 2px rgba(120, 170, 230, 0.32);
   transition:
     box-shadow 0.18s ease,
     transform 0.18s ease;
@@ -190,6 +407,11 @@ watch(
     border-color 0.18s ease;
 }
 
+.project-list__item--poprako {
+  border-color: rgba(140, 205, 170, 0.9);
+  box-shadow: 0 12px 26px rgba(120, 190, 160, 0.26);
+}
+
 .project-list__item:hover {
   box-shadow: 0 16px 32px rgba(132, 166, 212, 0.22);
   border-color: rgba(118, 184, 255, 0.85);
@@ -202,6 +424,19 @@ watch(
   font-weight: 600;
   color: #294061;
   letter-spacing: 0.4px;
+}
+
+.project-list__tag-poprako {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(210, 244, 225, 0.96);
+  color: #1e6042;
+  border: 1px solid rgba(140, 205, 170, 0.9);
+  vertical-align: middle;
 }
 
 .project-list__chips {

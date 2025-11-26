@@ -13,6 +13,8 @@ export interface GetMembersParams {
   fuzzy_name?: string;
   page?: number;
   limit?: number;
+  // 允许附加任意字段以便与 Tauri invoke 的 Record<string, unknown> 兼容
+  [key: string]: unknown;
 }
 
 interface MembersReply {

@@ -10,8 +10,8 @@ import ProjectDetailView from './views/ProjectDetailView.vue';
 // 视图名称枚举：新增 projectDetail
 type ViewName = 'login' | 'translator' | 'projectDetail' | 'panel';
 
-// 项目详情使用数字 ID；翻译视图仍沿用字符串 ID
-const projectDetailId = ref(1);
+// 项目详情使用字符串 ID（已统一为 uuid/string）
+const projectDetailId = ref('1');
 const projectId = ref('demo-project');
 
 const pageIndex = ref(0);

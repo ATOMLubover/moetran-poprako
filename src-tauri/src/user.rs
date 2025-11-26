@@ -1,6 +1,6 @@
 use crate::{
-    http::{moetran_get, poprako_post_opt},
     defer::WarnDefer,
+    http::{moetran_get, poprako_post_opt},
 };
 use serde::{Deserialize, Serialize};
 
@@ -10,7 +10,6 @@ pub struct ReqSync {
     pub user_id: String,
     pub username: String,
     pub email: String,
-    pub password: String,
 }
 
 // PopRaKo 通用返回包裹

@@ -28,7 +28,7 @@ type ProjectStatus = 'pending' | 'in_progress' | 'completed';
 
 // TODO: 项目详情字段未来可能会增加 Poprako 相关统计 / 团队角色等
 interface ProjectDetail {
-  id: number;
+  id: string;
   title: string;
   authorName: string;
   uploader: string;
@@ -52,7 +52,7 @@ interface ProjectDetail {
   pageMarkers: PageMarkerData[];
 }
 
-const props = defineProps<{ projectId: number }>();
+const props = defineProps<{ projectId: string }>();
 
 const emit = defineEmits<{ (e: 'close'): void; (e: 'open-translator', enabled: boolean): void }>();
 
