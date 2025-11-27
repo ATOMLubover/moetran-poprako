@@ -2,8 +2,10 @@
 import { ref, onMounted, computed } from 'vue';
 import type { ProjectSearchFilters } from '../ipc/project';
 import { useToastStore } from '../stores/toast';
+import { useUserStore } from '../stores/user';
 import { getUserInfo } from '../ipc/user';
 import { getUserTeams } from '../ipc/team';
+import { getMemberInfo } from '../ipc/member';
 import type { ResUser } from '../api/model/user';
 import type { ResTeam } from '../api/model/team';
 import ProjectList from '../components/ProjectList.vue';
@@ -12,8 +14,9 @@ import ProjectFilterBoard from '../components/ProjectFilterBoard.vue';
 import ProjectDetailView from '../views/ProjectDetailView.vue';
 import ProjectCreatorView from '../views/ProjectCreatorView.vue';
 
-// 用户信息
+// 用户信息 (local ref kept for template compatibility)
 const user = ref<ResUser | null>(null);
+const userStore = useUserStore();
 
 // 汉化组列表
 const teams = ref<ResTeam[]>([]);
@@ -47,12 +50,12 @@ const toastStore = useToastStore();
 
 // Avatar error handlers: 当图片加载失败时，将对应实体的 `has_avatar` 置为 false，以触发回退 UI（首字母）
 function onUserAvatarError(): void {
-  if (user.value) user.value.has_avatar = false;
+  if (user.value) user.value.hasAvatar = false;
 }
 
 function onTeamAvatarError(teamId: string): void {
   const t = teams.value.find(x => x.id === teamId);
-  if (t) t.has_avatar = false;
+  if (t) t.hasAvatar = false;
 }
 
 // 载入用户信息
@@ -62,6 +65,8 @@ async function loadUser(): Promise<void> {
   try {
     user.value = await getUserInfo();
     console.log('用户信息加载成功:', user.value);
+    // persist to Pinia store for other components to consult
+    userStore.setUser(user.value);
   } catch (err) {
     console.error('获取用户信息失败:', err);
     toastStore.show('获取用户信息失败', 'error');
@@ -78,6 +83,18 @@ async function loadTeams(): Promise<void> {
     const list = await getUserTeams({ page: 1, limit: 100 });
     teams.value = list;
     console.log('汉化组列表加载成功:', teams.value);
+
+    // If backend includes is_admin in the team objects, record it into userStore
+    try {
+      (list as any[]).forEach(t => {
+        if (t && typeof t.id === 'string' && Object.prototype.hasOwnProperty.call(t, 'isAdmin')) {
+          // note: API model may not include this field in TS types, so we defensive-check at runtime
+          userStore.setAdminForTeam(t.id, Boolean((t as any).isAdmin));
+        }
+      });
+    } catch (e) {
+      // ignore
+    }
   } catch (err) {
     console.error('获取汉化组列表失败:', err);
     teams.value = [];
@@ -93,6 +110,22 @@ async function loadTeams(): Promise<void> {
 function selectUserProjects(): void {
   activeTeamId.value = null;
   // 留空：由 ProjectList 内部负责加载；这里仅标记 activeTeamId
+}
+
+// 选择某个汉化组：同时刷新当前用户在该组的成员信息（含 is_admin）
+async function onSelectTeam(teamId: string): Promise<void> {
+  activeTeamId.value = teamId;
+
+  try {
+    const info = await getMemberInfo(teamId);
+    // eslint-disable-next-line no-console
+    console.log('[PanelView] member info for team', teamId, info);
+    userStore.setAdminForTeam(teamId, info.isAdmin === true);
+  } catch (err) {
+    // 若获取失败（例如 404 或 PopRaKo 未启动），仅记录日志并保持默认非管理员
+    // eslint-disable-next-line no-console
+    console.warn('[PanelView] failed to load member info for team', teamId, err);
+  }
 }
 
 // 打开项目详情
@@ -147,7 +180,7 @@ const currentFilterOptions = ref<FilterOption[]>([]);
 // fuzzy_proj_name, translating_status, proofreading_status, typesetting_status, reviewing_status,
 // is_published, member_ids, (扩展) project_set_id
 interface PanelProjectSearchFilters extends ProjectSearchFilters {
-  project_set_id?: string;
+  projectSetId?: string;
 }
 
 function mapPhaseTextToNumber(text: string): number | undefined {
@@ -185,13 +218,13 @@ const currentSearchFilters = computed<PanelProjectSearchFilters | undefined>(() 
 
     // 项目名称模糊匹配
     if (key === 'project') {
-      filters.fuzzy_proj_name = val;
+      filters.fuzzyProjName = val;
       continue;
     }
 
     // 项目集筛选（若后端支持，使用 project_set_id 字段）
     if (key === 'project-set') {
-      filters.project_set_id = val;
+      filters.projectSetId = val;
       continue;
     }
 
@@ -209,9 +242,9 @@ const currentSearchFilters = computed<PanelProjectSearchFilters | undefined>(() 
       if (phaseBase === 'publish') {
         // 发布状态特殊：支持数字或文本输入 -> 2/"已完成"/"已发布" 视为已发布
         if (/^[0-2]$/.test(val)) {
-          filters.is_published = Number(val) === 2;
+          filters.isPublished = Number(val) === 2;
         } else {
-          filters.is_published = ['已发布', 'true', 'yes', 'published', '完成', '已完成'].includes(
+          filters.isPublished = ['已发布', 'true', 'yes', 'published', '完成', '已完成'].includes(
             val.toLowerCase()
           );
         }
@@ -219,10 +252,10 @@ const currentSearchFilters = computed<PanelProjectSearchFilters | undefined>(() 
       }
 
       const mapField: Record<string, keyof PanelProjectSearchFilters> = {
-        translation: 'translating_status',
-        proofreading: 'proofreading_status',
-        typesetting: 'typesetting_status',
-        reviewing: 'reviewing_status',
+        translation: 'translatingStatus',
+        proofreading: 'proofreadingStatus',
+        typesetting: 'typesettingStatus',
+        reviewing: 'reviewingStatus',
       };
 
       const targetField = mapField[phaseBase];
@@ -234,7 +267,7 @@ const currentSearchFilters = computed<PanelProjectSearchFilters | undefined>(() 
     }
   }
 
-  if (memberIds.length) filters.member_ids = memberIds;
+  if (memberIds.length) filters.memberIds = memberIds;
 
   return filters;
 });
@@ -242,6 +275,14 @@ const currentSearchFilters = computed<PanelProjectSearchFilters | undefined>(() 
 function handleConfirmOptions(options: FilterOption[]) {
   currentFilterOptions.value = options;
   // 由 ProjectList 根据 currentSearchFilters 调用 IPC 搜索，无需本地过滤
+  // diagnostic logs to help trace unexpected member_ids injection
+  // eslint-disable-next-line no-console
+  console.log('[PanelView] confirmOptions received:', JSON.parse(JSON.stringify(options)));
+  // eslint-disable-next-line no-console
+  console.log(
+    '[PanelView] computed currentSearchFilters:',
+    JSON.parse(JSON.stringify(currentSearchFilters.value))
+  );
 }
 
 // 最终传递给 ProjectList 的项目已由其内部管理；此处预留接口以备未来需要
@@ -312,7 +353,7 @@ function handleOpenCreator(): void {
       <aside class="teams-sidebar">
         <ul class="teams-list">
           <li class="team-item team-item--user" @click="selectUserProjects">
-            <template v-if="user?.has_avatar && user?.avatar">
+            <template v-if="user?.hasAvatar && user?.avatar">
               <img
                 class="team-item__avatar-img"
                 :src="user.avatar"
@@ -327,13 +368,8 @@ function handleOpenCreator(): void {
             </template>
             <span class="team-item__name">{{ user?.name || '我' }} 的项目</span>
           </li>
-          <li
-            v-for="team in teams"
-            :key="team.id"
-            class="team-item"
-            @click="activeTeamId = team.id"
-          >
-            <template v-if="team.has_avatar && team.avatar">
+          <li v-for="team in teams" :key="team.id" class="team-item" @click="onSelectTeam(team.id)">
+            <template v-if="team.hasAvatar && team.avatar">
               <img
                 class="team-item__avatar-img"
                 :src="team.avatar"

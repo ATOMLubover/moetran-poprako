@@ -142,6 +142,13 @@ function clearAllOptions() {
 }
 const emit = defineEmits<{ (e: 'confirmOptions', options: FilterOption[]): void }>();
 function onConfirm() {
+  // diagnostic log: print the options being emitted so we can debug unexpected member_ids
+  // (will be visible in renderer devtools console)
+  // eslint-disable-next-line no-console
+  console.log(
+    '[ProjectFilterBoard] confirmOptions ->',
+    JSON.parse(JSON.stringify(filterOptions.value))
+  );
   emit('confirmOptions', filterOptions.value);
 }
 </script>

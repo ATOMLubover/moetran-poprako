@@ -2,18 +2,28 @@ import { invoke } from '@tauri-apps/api/core';
 import { ReqToken, ResCaptcha, ResToken } from '../api/model/auth';
 
 export async function getCaptcha(): Promise<ResCaptcha> {
-  return await invoke<ResCaptcha>('get_captcha');
+  interface RawResCaptcha {
+    image: string;
+    info: string;
+  }
+
+  const raw = await invoke<RawResCaptcha>('get_captcha');
+  return { image: raw.image, info: raw.info };
 }
 
 export async function aquireMoetranToken(payload: ReqToken): Promise<ResToken> {
-  return await invoke<ResToken>('aquire_token', {
-    payload: {
-      email: payload.email,
-      password: payload.password,
-      captcha: payload.captcha,
-      captcha_info: payload.info,
-    },
-  });
+  const body = {
+    email: payload.email,
+    password: payload.password,
+    captcha: payload.captcha,
+    captcha_info: payload.info,
+  };
+  interface RawResToken {
+    token: string;
+  }
+
+  const raw = await invoke<RawResToken>('aquire_token', { payload: body });
+  return { token: raw.token };
 }
 
 // 获取 Moetran token

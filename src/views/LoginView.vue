@@ -165,7 +165,7 @@ async function handleLogin(): Promise<void> {
     if (userInfo) {
       let poprakoToken = (
         await syncUser({
-          user_id: userInfo.id,
+          userId: userInfo.id,
           username: userInfo.name,
           email: email.value,
         })

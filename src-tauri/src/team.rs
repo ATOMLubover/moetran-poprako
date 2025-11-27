@@ -1,4 +1,4 @@
-use crate::{http::moetran_get, defer::WarnDefer};
+use crate::{defer::WarnDefer, http::moetran_get};
 use serde::{Deserialize, Serialize};
 
 // 汉化组 DTO
@@ -11,13 +11,19 @@ pub struct ResTeam {
 }
 
 // 获取当前用户的汉化组列表
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GetUserTeamsReq {
+    pub page: u32,
+    pub limit: u32,
+}
+
 #[tauri::command]
-pub async fn get_user_teams(page: u32, limit: u32) -> Result<Vec<ResTeam>, String> {
-    tracing::info!(page = page, limit = limit, "user.teams.request.start");
+pub async fn get_user_teams(payload: GetUserTeamsReq) -> Result<Vec<ResTeam>, String> {
+    tracing::info!(page = payload.page, limit = payload.limit, "user.teams.request.start");
 
     let mut defer = WarnDefer::new("user.teams.request");
 
-    let path = format!("user/teams?page={page}&limit={limit}");
+    let path = format!("user/teams?page={}&limit={}", payload.page, payload.limit);
 
     let list: Vec<ResTeam> = moetran_get(&path, None)
         .await

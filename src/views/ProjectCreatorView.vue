@@ -3,10 +3,15 @@ import { computed, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useToastStore } from '../stores/toast';
 import { useTokenStore } from '../stores/token';
-import { useProjsetStore } from '../stores/projset';
 import type { ResMemberBrief, MemberPosition } from '../ipc/member';
 import { searchMembersByName } from '../ipc/member';
-import { assignMemberToProj, createProj } from '../ipc/project';
+import {
+  assignMemberToProj,
+  createProj,
+  getTeamPoprakoProjsets,
+  type PoprakoProjsetInfo,
+} from '../ipc/project';
+import CircularProgress from '../components/CircularProgress.vue';
 
 // props：由 PanelView 传入当前团队 ID
 // Props: 从父组件（PanelView）注入当前选中的团队 ID
@@ -62,33 +67,47 @@ const finalTitlePreview = computed(() => {
   return `[${authorName.value}]${projectInfo.value.title}`;
 });
 
-// Stores: token 与 projset 缓存
+// Stores: token
 const toastStore = useToastStore();
 const tokenStore = useTokenStore();
-const projsetStore = useProjsetStore();
 const { moetranToken } = storeToRefs(tokenStore);
 
 // 当前团队下的项目集列表与选择
 const selectedProjsetId = ref<string>('');
+const currentProjsets = ref<PoprakoProjsetInfo[]>([]);
+const projsetLoading = ref(false);
 
-// 计算属性：当前 props.teamId 对应的项目集列表
-const currentProjsets = computed(() => {
-  const teamId = props.teamId ?? '';
-  return teamId ? projsetStore.getForTeam(teamId) : [];
-});
-
-// 监听 teamId 变化，触发项目集加载
+// 监听 teamId 变化，重置本地 projset 列表并自动拉取
 watch(
   () => props.teamId,
-  teamId => {
+  () => {
     selectedProjsetId.value = '';
-
-    if (teamId) {
-      void projsetStore.loadForTeam(teamId);
-    }
+    currentProjsets.value = [];
+    projsetLoading.value = false;
+    void loadProjsetsForCurrentTeam();
   },
   { immediate: true }
 );
+
+// Creator 打开后，由外层传入 teamId，此时加载一次 projset 列表
+async function loadProjsetsForCurrentTeam(): Promise<void> {
+  const teamId = props.teamId ?? '';
+  if (!teamId || projsetLoading.value) return;
+
+  projsetLoading.value = true;
+  try {
+    const list = await getTeamPoprakoProjsets(teamId);
+
+    console.log('Loaded projsets for team', teamId, list);
+
+    currentProjsets.value = list;
+  } catch (e) {
+    console.error('Failed to load projsets for team', teamId, e);
+    toastStore.show('加载项目集失败，请稍后重试');
+  } finally {
+    projsetLoading.value = false;
+  }
+}
 
 // 统一：每个角色一个数组，存储 MemberInfo { id, name }
 const invitedTranslators = ref<MemberInfo[]>([]);
@@ -133,7 +152,7 @@ function openSelector(role: InviteRole): void {
           : invitedTypesetters.value;
 
     selectorResults.value = picked.map(m => ({
-      member_id: m.id,
+      memberId: m.id,
       username: m.name,
     }));
   }
@@ -155,14 +174,21 @@ async function handleSearchMembers(): Promise<void> {
     'Searching members for role:',
     selectorRole.value,
     'with keyword:',
-    selectorKeyword.value
+    selectorKeyword.value,
+    'teamId:',
+    props.teamId
   );
 
   try {
     if (!selectorRole.value || !props.teamId) {
       selectorResults.value = [];
 
-      console.warn('Member search aborted: role or teamId is missing');
+      // Provide a user-visible hint instead of only logging
+      if (!props.teamId) {
+        toastStore.show('请先在左侧选择一个汉化组以搜索成员');
+      }
+
+      return;
     } else {
       // 当前角色已选成员
       const pickedIds: string[] =
@@ -173,7 +199,7 @@ async function handleSearchMembers(): Promise<void> {
             : invitedTypesetters.value.map(m => m.id);
 
       const pickedMembers: ResMemberBrief[] = selectorResults.value.filter(m =>
-        pickedIds.includes(m.member_id)
+        pickedIds.includes(m.memberId)
       );
 
       const keyword = selectorKeyword.value.trim();
@@ -185,16 +211,16 @@ async function handleSearchMembers(): Promise<void> {
       }
 
       const results = await searchMembersByName({
-        team_id: props.teamId,
+        teamId: props.teamId,
         position: selectorRole.value as MemberPosition,
-        fuzzy_name: keyword,
+        fuzzyName: keyword,
         page: 1,
         limit: 20,
       });
 
-      const pickedIdSet = new Set(pickedMembers.map(m => m.member_id));
+      const pickedIdSet = new Set(pickedMembers.map(m => m.memberId));
 
-      const filteredResults = results.filter(m => !pickedIdSet.has(m.member_id));
+      const filteredResults = results.filter(m => !pickedIdSet.has(m.memberId));
 
       selectorResults.value = [...pickedMembers, ...filteredResults];
     }
@@ -204,7 +230,7 @@ async function handleSearchMembers(): Promise<void> {
 }
 
 function handleSelectMember(memberId: string): void {
-  const member = selectorResults.value.find(m => m.member_id === memberId);
+  const member = selectorResults.value.find(m => m.memberId === memberId);
   if (!member) return;
 
   const targetArr =
@@ -214,8 +240,8 @@ function handleSelectMember(memberId: string): void {
         ? invitedProofreaders
         : invitedTypesetters;
 
-  if (!targetArr.value.some(m => m.id === member.member_id)) {
-    targetArr.value.push({ id: member.member_id, name: member.username });
+  if (!targetArr.value.some(m => m.id === member.memberId)) {
+    targetArr.value.push({ id: member.memberId, name: member.username });
   }
 
   // 无关键词时实时刷新展示已选成员
@@ -285,6 +311,10 @@ function handleClose(): void {
 // 表单提交：创建项目
 // 提交表单：创建项目（包含前端必要校验）
 async function handleCreateProject(): Promise<void> {
+  console.log('handleCreateProject invoked', {
+    teamId: props.teamId,
+    title: projectInfo.value.title,
+  });
   if (!authorName.value || !projectInfo.value.title || !projectInfo.value.description) {
     toastStore.show('请完整填写作者、标题和描述');
 
@@ -316,20 +346,20 @@ async function handleCreateProject(): Promise<void> {
     const projName = finalTitlePreview.value || projectInfo.value.title;
 
     const created = await createProj({
-      proj_name: projName,
-      proj_description: projectInfo.value.description,
-      team_id: props.teamId,
-      projset_id: selectedProjsetId.value,
-      mtr_auth: moetranToken.value,
-      workset_index: projectInfo.value.worksetId,
-      source_language: 'ja',
-      target_languages: ['zh-CN'],
-      allow_apply_type: projectInfo.value.allowAutoJoin ? 1 : 0,
-      application_check_type: 0,
-      default_role: '63d87c24b8bebd75ff934267',
+      projName: projName,
+      projDescription: projectInfo.value.description,
+      teamId: props.teamId,
+      projsetId: selectedProjsetId.value,
+      mtrAuth: moetranToken.value,
+      worksetIndex: projectInfo.value.worksetId,
+      sourceLanguage: 'ja',
+      targetLanguages: ['zh-CN'],
+      allowApplyType: projectInfo.value.allowAutoJoin ? 1 : 0,
+      applicationCheckType: 0,
+      defaultRole: '63d87c24b8bebd75ff934267',
     });
 
-    const projId = created.proj_id;
+    const projId = created.projId;
 
     const allInvites: { id: string; role: 'translator' | 'proofreader' | 'typesetter' }[] = [
       ...invitedTranslators.value.map(m => ({ id: m.id, role: 'translator' as const })),
@@ -337,22 +367,38 @@ async function handleCreateProject(): Promise<void> {
       ...invitedTypesetters.value.map(m => ({ id: m.id, role: 'typesetter' as const })),
     ];
 
-    const assignPromises = allInvites.map(invite =>
-      assignMemberToProj({
-        proj_id: projId,
-        member_id: invite.id,
-        is_translator: invite.role === 'translator',
-        is_proofreader: invite.role === 'proofreader',
-        is_typesetter: invite.role === 'typesetter',
-        is_principal: false,
+    // 按照异常（reject）来检测每个指派操作的失败，并收集失败明细以便展示或重试
+    const assignResults = await Promise.all(
+      allInvites.map(async invite => {
+        try {
+          await assignMemberToProj({
+            projId: projId,
+            memberId: invite.id,
+            isTranslator: invite.role === 'translator',
+            isProofreader: invite.role === 'proofreader',
+            isTypesetter: invite.role === 'typesetter',
+            isPrincipal: false,
+          });
+
+          return { invite, ok: true } as const;
+        } catch (err) {
+          return { invite, ok: false, error: err } as const;
+        }
       })
     );
 
-    const settleResults = await Promise.allSettled(assignPromises);
-    const assignFailed = settleResults.filter(r => r.status === 'rejected').length;
+    const failedDetails = assignResults.filter(r => !r.ok) as Array<{
+      invite: { id: string; role: 'translator' | 'proofreader' | 'typesetter' };
+      ok: false;
+      error: any;
+    }>;
 
-    if (assignFailed > 0) {
-      message.value = `项目创建成功，但有 ${assignFailed} 个成员指派失败`;
+    if (failedDetails.length > 0) {
+      const brief = failedDetails
+        .map(f => `${f.invite.id}(${f.invite.role}): ${String(f.error)}`)
+        .join('；');
+
+      message.value = `项目创建成功，但 ${failedDetails.length} 个成员指派失败：${brief}`;
       toastStore.show(message.value);
     } else {
       message.value = '项目创建成功，并已指派预邀请成员';
@@ -380,6 +426,9 @@ async function handleCreateProject(): Promise<void> {
     </header>
 
     <div class="creator-body">
+      <div v-if="!props.teamId" class="creator-no-team">
+        请先在左侧选择一个汉化组（团队），以加载项目集并启用成员搜索。
+      </div>
       <form class="creator-form" @submit.prevent="handleCreateProject">
         <div class="creator-field">
           <label for="creator-author" class="creator-label">作者</label>
@@ -388,7 +437,7 @@ async function handleCreateProject(): Promise<void> {
             v-model="authorName"
             type="text"
             required
-            placeholder="请输入作者名称"
+            placeholder="作者名称"
             class="creator-input"
           />
         </div>
@@ -400,7 +449,7 @@ async function handleCreateProject(): Promise<void> {
             v-model="projectInfo.title"
             type="text"
             required
-            placeholder="无须输入序号，其会由服务器自动生成"
+            placeholder="无须输入序号"
             class="creator-input"
           />
           <div v-if="finalTitlePreview" class="creator-title-preview">
@@ -414,13 +463,19 @@ async function handleCreateProject(): Promise<void> {
           <select
             v-model="selectedProjsetId"
             class="creator-input"
-            :disabled="!currentProjsets.length"
+            :disabled="!props.teamId"
+            @focus="loadProjsetsForCurrentTeam"
+            @click="loadProjsetsForCurrentTeam"
           >
             <option value="" disabled>请选择项目集</option>
-            <option v-for="ps in currentProjsets" :key="ps.projset_id" :value="ps.projset_id">
-              {{ ps.projset_name }}
+            <option v-for="ps in currentProjsets" :key="ps.projsetId" :value="ps.projsetId">
+              {{ ps.projsetName }}
             </option>
           </select>
+          <div v-if="projsetLoading" class="creator-projset-loading">
+            <CircularProgress :progress="50" :size="16" />
+            <span class="creator-projset-loading__text">正在加载项目集...</span>
+          </div>
         </div>
 
         <div class="creator-field">
@@ -428,9 +483,9 @@ async function handleCreateProject(): Promise<void> {
           <textarea
             id="creator-desc"
             v-model="projectInfo.description"
-            rows="4"
+            rows="1"
             required
-            placeholder="项目描述不超过 4 行"
+            placeholder="项目描述"
             class="creator-textarea"
           ></textarea>
         </div>
@@ -456,17 +511,16 @@ async function handleCreateProject(): Promise<void> {
             </button>
           </div>
         </div>
+        <div v-if="message" :class="['creator-message', messageClass]">
+          {{ message }}
+        </div>
+
+        <div class="creator-actions">
+          <button type="submit" class="creator-submit" :disabled="loading">
+            {{ loading ? '正在创建...' : '确认创建' }}
+          </button>
+        </div>
       </form>
-
-      <div v-if="message" :class="['creator-message', messageClass]">
-        {{ message }}
-      </div>
-
-      <div class="creator-actions">
-        <button type="submit" class="creator-submit" :disabled="loading">
-          {{ loading ? '正在创建...' : '确认创建' }}
-        </button>
-      </div>
 
       <!-- 预邀请成员展示与邀请入口 -->
       <div class="creator-invite-block">
@@ -553,31 +607,31 @@ async function handleCreateProject(): Promise<void> {
             <ul class="selector-list" v-if="selectorResults.length">
               <li
                 v-for="item in selectorResults"
-                :key="item.member_id"
+                :key="item.memberId"
                 class="selector-item"
                 :class="{
                   'selector-item--picked':
                     (selectorRole === 'translator' &&
-                      invitedTranslators.some(m => m.id === item.member_id)) ||
+                      invitedTranslators.some(m => m.id === item.memberId)) ||
                     (selectorRole === 'proofreader' &&
-                      invitedProofreaders.some(m => m.id === item.member_id)) ||
+                      invitedProofreaders.some(m => m.id === item.memberId)) ||
                     (selectorRole === 'typesetter' &&
-                      invitedTypesetters.some(m => m.id === item.member_id)),
+                      invitedTypesetters.some(m => m.id === item.memberId)),
                 }"
               >
                 <span class="selector-item__name">{{ item.username }}</span>
                 <button
                   v-if="
                     (selectorRole === 'translator' &&
-                      invitedTranslators.some(m => m.id === item.member_id)) ||
+                      invitedTranslators.some(m => m.id === item.memberId)) ||
                     (selectorRole === 'proofreader' &&
-                      invitedProofreaders.some(m => m.id === item.member_id)) ||
+                      invitedProofreaders.some(m => m.id === item.memberId)) ||
                     (selectorRole === 'typesetter' &&
-                      invitedTypesetters.some(m => m.id === item.member_id))
+                      invitedTypesetters.some(m => m.id === item.memberId))
                   "
                   type="button"
                   class="selector-icon-btn selector-icon-btn--remove"
-                  @click.stop="handleRemoveMember(item.member_id)"
+                  @click.stop="handleRemoveMember(item.memberId)"
                   title="移除该成员"
                 >
                   <svg
@@ -599,7 +653,7 @@ async function handleCreateProject(): Promise<void> {
                   v-else
                   type="button"
                   class="selector-icon-btn selector-icon-btn--add"
-                  @click.stop="handleSelectMember(item.member_id)"
+                  @click.stop="handleSelectMember(item.memberId)"
                   title="加入该成员"
                 >
                   <svg
@@ -737,6 +791,15 @@ async function handleCreateProject(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.creator-no-team {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fff6e6;
+  color: #6b4a00;
+  border: 1px solid rgba(220, 180, 110, 0.6);
+  font-size: 13px;
 }
 
 .creator-form {

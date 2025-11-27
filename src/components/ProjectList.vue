@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useToastStore } from '../stores/toast';
+import { useUserStore } from '../stores/user';
 import type { ProjectBasicInfo, PhaseStatus, PhaseChip } from '../api/model/displayProject';
 import {
   getUserProjectsEnriched,
@@ -25,6 +26,13 @@ const props = defineProps<{
   // 来自 PanelView 的筛选条件；空对象或 undefined 表示不启用筛选
   filters?: ProjectSearchFilters | undefined;
 }>();
+
+const userStore = useUserStore();
+
+const canCreate = computed(() => {
+  // allow create only when a team is selected and the user is admin for that team
+  return !!props.teamId && userStore.isAdminFor(props.teamId);
+});
 
 // 内部项目列表与加载状态
 const innerProjects = ref<(ProjectBasicInfo & { hasPoprako?: boolean })[]>([]);
@@ -70,7 +78,7 @@ function mapEnrichedToBasic(
   apiRes: ResProjectEnriched[]
 ): (ProjectBasicInfo & { hasPoprako?: boolean })[] {
   return apiRes.map(p => {
-    const seed = p.translating_status ?? p.proofreading_status ?? 0;
+    const seed = p.translatingStatus ?? p.proofreadingStatus ?? 0;
 
     const phaseOrder: Array<PhaseChip['phase']> = [
       'translate',
@@ -102,10 +110,10 @@ function mapEnrichedToBasic(
       // 后端 id 是 UUID，保持为字符串
       id: p.id,
       title: p.name,
-      projectSetId: p.project_set?.id,
-      projectSetSerial: p.projset_serial,
-      projectSetIndex: p.projset_index,
-      hasPoprako: p.has_poprako,
+      projectSetId: p.projectSet?.id,
+      projectSetSerial: p.projsetSerial,
+      projectSetIndex: p.projsetIndex,
+      hasPoprako: p.hasPoprako,
       phases,
     } satisfies ProjectBasicInfo & { hasPoprako?: boolean };
   });
@@ -275,6 +283,7 @@ onBeforeUnmount(() => {
     <header class="project-list__header">
       <h3 class="project-list__title">当前项目</h3>
       <button
+        v-if="canCreate"
         type="button"
         class="project-list__create"
         @click="handleCreateProject"
@@ -351,12 +360,12 @@ onBeforeUnmount(() => {
 
 .project-list__create {
   border: none;
-  border-radius: 999px;
-  padding: 10px 22px;
+  border-radius: 99px;
+  padding: 10px 12px;
   font-size: 14px;
   font-weight: 600;
-  background: linear-gradient(135deg, rgba(177, 207, 239, 0.95), rgba(160, 206, 255, 0.9));
-  color: #10395d;
+  background: #62a6ff;
+  color: #ffffff;
   cursor: pointer;
   box-shadow: 0 1px 2px rgba(120, 170, 230, 0.32);
   transition:

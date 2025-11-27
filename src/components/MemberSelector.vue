@@ -52,24 +52,23 @@ async function defaultFetchMembers(
   }
 
   const params = {
-    team_id: teamId,
+    teamId: teamId,
     position: role as MemberPosition,
-    fuzzy_name: kw.trim() || undefined,
+    fuzzyName: kw.trim() || undefined,
     page: 1,
     limit: 20,
   } satisfies {
-    team_id: string;
+    teamId: string;
     position: MemberPosition;
-    fuzzy_name?: string;
+    fuzzyName?: string;
     page?: number;
     limit?: number;
   };
 
   const { searchMembersByName } = await import('../ipc/member');
   const list = await searchMembersByName(params);
-
   return list.map((m: ResMemberBrief) => ({
-    id: m.member_id,
+    id: m.memberId,
     name: m.username,
     position: role,
   }));

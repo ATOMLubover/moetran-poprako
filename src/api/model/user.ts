@@ -1,5 +1,5 @@
 export interface ReqSync {
-  user_id: string;
+  userId: string;
   email: string;
   password: string;
 }
@@ -11,6 +11,6 @@ export interface ResSync {
 export interface ResUser {
   id: string;
   name: string;
-  has_avatar: boolean;
+  hasAvatar: boolean;
   avatar: string;
 }

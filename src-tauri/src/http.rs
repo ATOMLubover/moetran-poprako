@@ -72,10 +72,21 @@ impl ApiClient {
             .error_for_status()
             .map_err(|err| format!("http error: {}", err))?;
 
-        let parsed = resp
-            .json::<R>()
+        // 读取为文本后再解析，这样可以优雅处理空响应体或 204 No Content 的情况
+        let text = resp
+            .text()
             .await
-            .map_err(|err| format!("json parse error: {}", err))?;
+            .map_err(|err| format!("response body read error: {}", err))?;
+
+        if text.trim().is_empty() {
+            // 当响应体为空时，尝试将 JSON "null" 解析为目标类型（对 `()` / `Option` 等友好）
+            let parsed = serde_json::from_str::<R>("null")
+                .map_err(|err| format!("json parse error: {}", err))?;
+            return Ok(parsed);
+        }
+
+        let parsed =
+            serde_json::from_str::<R>(&text).map_err(|err| format!("json parse error: {}", err))?;
 
         Ok(parsed)
     }
@@ -125,10 +136,20 @@ impl ApiClient {
             .error_for_status()
             .map_err(|err| format!("http error: {}", err))?;
 
-        let parsed = resp
-            .json::<R>()
+        // 读取为文本后再解析，这样可以优雅处理空响应体或 204 No Content 的情况
+        let text = resp
+            .text()
             .await
-            .map_err(|err| format!("json parse error: {}", err))?;
+            .map_err(|err| format!("response body read error: {}", err))?;
+
+        if text.trim().is_empty() {
+            let parsed = serde_json::from_str::<R>("null")
+                .map_err(|err| format!("json parse error: {}", err))?;
+            return Ok(parsed);
+        }
+
+        let parsed =
+            serde_json::from_str::<R>(&text).map_err(|err| format!("json parse error: {}", err))?;
 
         Ok(parsed)
     }

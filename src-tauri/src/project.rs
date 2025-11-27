@@ -1,6 +1,7 @@
 use crate::{
     defer::WarnDefer,
     http::{moetran_get, poprako_get, poprako_post_opt},
+    token::get_moetran_token,
 };
 use serde::{Deserialize, Serialize};
 
@@ -12,17 +13,25 @@ pub struct ResProjectSet {
 }
 
 // 获取指定汉化组的项目集列表
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GetTeamProjectSetsReq {
+    pub team_id: String,
+    pub page: u32,
+    pub limit: u32,
+}
+
 #[tauri::command]
 pub async fn get_team_project_sets(
-    team_id: String,
-    page: u32,
-    limit: u32,
+    payload: GetTeamProjectSetsReq,
 ) -> Result<Vec<ResProjectSet>, String> {
-    tracing::info!(team_id = %team_id, page = page, limit = limit, "team.project_sets.request.start");
+    tracing::info!(team_id = %payload.team_id, page = payload.page, limit = payload.limit, "team.project_sets.request.start");
 
     let mut defer = WarnDefer::new("team.project_sets.request");
 
-    let path = format!("teams/{team_id}/project-sets?page={page}&limit={limit}");
+    let path = format!(
+        "teams/{}/project-sets?page={}&limit={}",
+        payload.team_id, payload.page, payload.limit
+    );
 
     let list: Vec<ResProjectSet> = moetran_get(&path, None)
         .await
@@ -48,19 +57,24 @@ pub struct ResProject {
 }
 
 // 获取指定汉化组下某项目集的项目列表
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GetTeamProjectsReq {
+    pub team_id: String,
+    pub project_set: String,
+    pub page: u32,
+    pub limit: u32,
+}
+
 #[tauri::command]
-pub async fn get_team_projects(
-    team_id: String,
-    project_set: String,
-    page: u32,
-    limit: u32,
-) -> Result<Vec<ResProject>, String> {
-    tracing::info!(team_id = %team_id, project_set = %project_set, page = page, limit = limit, "team.projects.request.start");
+pub async fn get_team_projects(payload: GetTeamProjectsReq) -> Result<Vec<ResProject>, String> {
+    tracing::info!(team_id = %payload.team_id, project_set = %payload.project_set, page = payload.page, limit = payload.limit, "team.projects.request.start");
 
     let mut defer = WarnDefer::new("team.projects.request");
 
-    let path =
-        format!("teams/{team_id}/projects?project_set={project_set}&page={page}&limit={limit}");
+    let path = format!(
+        "teams/{}/projects?project_set={}&page={}&limit={}",
+        payload.team_id, payload.project_set, payload.page, payload.limit
+    );
 
     let list: Vec<ResProject> = moetran_get(&path, None)
         .await
@@ -74,13 +88,26 @@ pub async fn get_team_projects(
 }
 
 // 获取当前用户的项目列表
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GetUserProjectsReq {
+    pub page: u32,
+    pub limit: u32,
+}
+
 #[tauri::command]
-pub async fn get_user_projects(page: u32, limit: u32) -> Result<Vec<ResProject>, String> {
-    tracing::info!(page = page, limit = limit, "user.projects.request.start");
+pub async fn get_user_projects(payload: GetUserProjectsReq) -> Result<Vec<ResProject>, String> {
+    tracing::info!(
+        page = payload.page,
+        limit = payload.limit,
+        "user.projects.request.start"
+    );
 
     let mut defer = WarnDefer::new("user.projects.request");
 
-    let path = format!("user/projects?page={page}&limit={limit}");
+    let path = format!(
+        "user/projects?page={}&limit={}",
+        payload.page, payload.limit
+    );
 
     let list: Vec<ResProject> = moetran_get(&path, None)
         .await
@@ -174,10 +201,10 @@ pub struct PoprakoProjCreateData {
 pub struct PoprakoAssignReq {
     pub proj_id: String,
     pub member_id: String,
+    pub mtr_auth: String,
     pub is_translator: bool,
     pub is_proofreader: bool,
     pub is_typesetter: bool,
-    pub is_principal: bool,
 }
 
 // enriched 项目 DTO（Moetran + PopRaKo）
@@ -244,32 +271,35 @@ pub struct PoprakoProjFilterReq {
 }
 
 // 在指定团队下创建项目集（调用 PopRaKo /projset/create）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CreateProjsetReq {
+    pub projset_name: String,
+    pub projset_description: String,
+    pub team_id: String,
+    pub mtr_token: String,
+}
+
 #[tauri::command]
-pub async fn create_projset(
-    projset_name: String,
-    projset_description: String,
-    team_id: String,
-    mtr_token: String,
-) -> Result<PoprakoProjSetCreateData, String> {
+pub async fn create_projset(payload: CreateProjsetReq) -> Result<PoprakoProjSetCreateData, String> {
     tracing::info!(
-        team_id = %team_id,
-        projset_name = %projset_name,
+        team_id = %payload.team_id,
+        projset_name = %payload.projset_name,
         "poprako.projset.create.request.start"
     );
 
     let mut defer = WarnDefer::new("poprako.projset.create");
 
     let body = PoprakoProjSetCreateReq {
-        projset_name,
-        projset_description,
-        team_id,
-        mtr_token,
+        projset_name: payload.projset_name,
+        projset_description: payload.projset_description,
+        team_id: payload.team_id,
+        mtr_token: payload.mtr_token,
     };
 
     let reply = poprako_post_opt::<
         PoprakoProjSetCreateReq,
         PoprakoEnvelope<PoprakoProjSetCreateData>,
-    >("projset/create", Some(body))
+    >("projsets", Some(body))
     .await
     .map_err(|err| format!("创建项目集失败: {}", err))?;
 
@@ -298,14 +328,21 @@ pub async fn create_projset(
 }
 
 // 列出 PopRaKo 中指定团队下的项目集（调用 PopRaKo GET /projsets?team_id=）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GetTeamPoprakoProjsetsReq {
+    pub team_id: String,
+}
+
 #[tauri::command]
-pub async fn get_team_poprako_projsets(team_id: String) -> Result<Vec<PoprakoProjSetInfo>, String> {
-    tracing::info!(team_id = %team_id, "poprako.projsets.list.request.start");
+pub async fn get_team_poprako_projsets(
+    payload: GetTeamPoprakoProjsetsReq,
+) -> Result<Vec<PoprakoProjSetInfo>, String> {
+    tracing::info!(team_id = %payload.team_id, "poprako.projsets.list.request.start");
 
     let mut defer = WarnDefer::new("poprako.projsets.list");
 
     let mut query = std::collections::HashMap::new();
-    query.insert("team_id", team_id.clone());
+    query.insert("team_id", payload.team_id.clone());
 
     let reply = poprako_get::<PoprakoEnvelope<PoprakoProjSetListData>>("projsets", Some(&query))
         .await
@@ -326,7 +363,7 @@ pub async fn get_team_poprako_projsets(team_id: String) -> Result<Vec<PoprakoPro
         .ok_or_else(|| "PopRaKo 获取项目集列表返回空数据".to_string())?;
 
     let count = data.projsets.len();
-    tracing::info!(team_id = %team_id, count = count, "poprako.projsets.list.ok");
+    tracing::info!(team_id = %payload.team_id, count = count, "poprako.projsets.list.ok");
 
     defer.success();
 
@@ -334,45 +371,48 @@ pub async fn get_team_poprako_projsets(team_id: String) -> Result<Vec<PoprakoPro
 }
 
 // 在已有项目集中创建项目（调用 PopRaKo /proj/create）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CreateProjReq {
+    pub proj_name: String,
+    pub proj_description: String,
+    pub team_id: String,
+    pub projset_id: String,
+    pub mtr_auth: String,
+    pub workset_index: i32,
+    pub source_language: String,
+    pub target_languages: Vec<String>,
+    pub allow_apply_type: i32,
+    pub application_check_type: i32,
+    pub default_role: String,
+}
+
 #[tauri::command]
-pub async fn create_proj(
-    proj_name: String,
-    proj_description: String,
-    team_id: String,
-    projset_id: String,
-    mtr_auth: String,
-    workset_index: i32,
-    source_language: String,
-    target_languages: Vec<String>,
-    allow_apply_type: i32,
-    application_check_type: i32,
-    default_role: String,
-) -> Result<PoprakoProjCreateData, String> {
+pub async fn create_proj(payload: CreateProjReq) -> Result<PoprakoProjCreateData, String> {
     tracing::info!(
-        team_id = %team_id,
-        proj_name = %proj_name,
-        projset_id = %projset_id,
+        team_id = %payload.team_id,
+        proj_name = %payload.proj_name,
+        projset_id = %payload.projset_id,
         "poprako.proj.create.request.start"
     );
 
     let mut defer = WarnDefer::new("poprako.proj.create");
 
     let body = PoprakoProjCreateReq {
-        proj_name,
-        proj_description,
-        team_id,
-        projset_id,
-        mtr_auth,
-        workset_index,
-        source_language,
-        target_languages,
-        allow_apply_type,
-        application_check_type,
-        default_role,
+        proj_name: payload.proj_name,
+        proj_description: payload.proj_description,
+        team_id: payload.team_id,
+        projset_id: payload.projset_id,
+        mtr_auth: payload.mtr_auth,
+        workset_index: payload.workset_index,
+        source_language: payload.source_language,
+        target_languages: payload.target_languages,
+        allow_apply_type: payload.allow_apply_type,
+        application_check_type: payload.application_check_type,
+        default_role: payload.default_role,
     };
 
     let reply = poprako_post_opt::<PoprakoProjCreateReq, PoprakoEnvelope<PoprakoProjCreateData>>(
-        "proj/create",
+        "projs",
         Some(body),
     )
     .await
@@ -405,47 +445,43 @@ pub async fn create_proj(
 }
 
 // 为项目指派成员角色（调用 PopRaKo POST /projs/{proj_id}/assign）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AssignMemberReq {
+    pub proj_id: String,
+    pub member_id: String,
+    pub is_translator: bool,
+    pub is_proofreader: bool,
+    pub is_typesetter: bool,
+}
+
 #[tauri::command]
-pub async fn assign_member_to_proj(
-    proj_id: String,
-    member_id: String,
-    is_translator: bool,
-    is_proofreader: bool,
-    is_typesetter: bool,
-    is_principal: bool,
-) -> Result<(), String> {
+pub async fn assign_member_to_proj(payload: AssignMemberReq) -> Result<(), String> {
     tracing::info!(
-        proj_id = %proj_id,
-        member_id = %member_id,
+        proj_id = %payload.proj_id,
+        member_id = %payload.member_id,
         "poprako.proj.assign.request.start"
     );
 
     let mut defer = WarnDefer::new("poprako.proj.assign");
 
+    let moetran_token = get_moetran_token()
+        .await?
+        .ok_or_else(|| "无法获取 Moetran Token".to_string())?;
+
     let body = PoprakoAssignReq {
-        proj_id: proj_id.clone(),
-        member_id,
-        is_translator,
-        is_proofreader,
-        is_typesetter,
-        is_principal,
+        proj_id: payload.proj_id.clone(),
+        member_id: payload.member_id.clone(),
+        mtr_auth: moetran_token,
+        is_translator: payload.is_translator,
+        is_proofreader: payload.is_proofreader,
+        is_typesetter: payload.is_typesetter,
     };
 
-    let path = format!("projs/{}/assign", proj_id);
+    let path = format!("projs/{}/assign", payload.proj_id);
 
-    let reply = poprako_post_opt::<PoprakoAssignReq, PoprakoEnvelope<()>>(&path, Some(body))
+    poprako_post_opt::<PoprakoAssignReq, ()>(&path, Some(body))
         .await
         .map_err(|err| format!("指派成员到项目失败: {}", err))?;
-
-    if reply.code != 204 {
-        let msg = reply
-            .message
-            .unwrap_or_else(|| "PopRaKo 指派成员失败".to_string());
-
-        tracing::info!(message = %msg, code = reply.code, "poprako.proj.assign.failed");
-
-        return Err(msg);
-    }
 
     tracing::info!("poprako.proj.assign.ok");
 
@@ -455,19 +491,27 @@ pub async fn assign_member_to_proj(
 }
 
 // 获取当前用户的 enriched 项目列表（Moetran 列表 + PopRaKo /projs/search 补充）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GetUserProjectsEnrichedReq {
+    pub page: u32,
+    pub limit: u32,
+}
+
 #[tauri::command]
 #[tracing::instrument]
 pub async fn get_user_projects_enriched(
-    page: u32,
-    limit: u32,
+    payload: GetUserProjectsEnrichedReq,
 ) -> Result<Vec<ResProjectEnriched>, String> {
     tracing::info!(
-        page = page,
-        limit = limit,
+        page = payload.page,
+        limit = payload.limit,
         "user.projects_enriched.request.start"
     );
 
-    let path = format!("user/projects?page={page}&limit={limit}");
+    let path = format!(
+        "user/projects?page={}&limit={}",
+        payload.page, payload.limit
+    );
 
     let base_list: Vec<ResProject> = moetran_get(&path, None)
         .await
@@ -483,8 +527,8 @@ pub async fn get_user_projects_enriched(
 
     let search_body = PoprakoProjSearchReq {
         proj_ids: ids,
-        page,
-        limit,
+        page: payload.page,
+        limit: payload.limit,
     };
 
     let reply = poprako_post_opt::<PoprakoProjSearchReq, PoprakoEnvelope<Vec<PoprakoProjInfo>>>(
@@ -559,22 +603,30 @@ pub async fn get_user_projects_enriched(
 }
 
 // 获取指定汉化组的 enriched 项目列表（Moetran 列表 + PopRaKo /projs/search 补充）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GetTeamProjectsEnrichedReq {
+    pub team_id: String,
+    pub page: u32,
+    pub limit: u32,
+}
+
 #[tauri::command]
 pub async fn get_team_projects_enriched(
-    team_id: String,
-    page: u32,
-    limit: u32,
+    payload: GetTeamProjectsEnrichedReq,
 ) -> Result<Vec<ResProjectEnriched>, String> {
-    tracing::info!(team_id = %team_id, page = page, limit = limit, "team.projects_enriched.request.start");
+    tracing::info!(team_id = %payload.team_id, page = payload.page, limit = payload.limit, "team.projects_enriched.request.start");
 
-    let path = format!("teams/{team_id}/projects?page={page}&limit={limit}");
+    let path = format!(
+        "teams/{}/projects?page={}&limit={}",
+        payload.team_id, payload.page, payload.limit
+    );
 
     let base_list: Vec<ResProject> = moetran_get(&path, None)
         .await
         .map_err(|err| format!("获取团队项目列表失败: {}", err))?;
 
     if base_list.is_empty() {
-        tracing::info!(team_id = %team_id, "team.projects_enriched.empty");
+        tracing::info!(team_id = %payload.team_id, "team.projects_enriched.empty");
         return Ok(vec![]);
     }
 
@@ -582,8 +634,8 @@ pub async fn get_team_projects_enriched(
 
     let search_body = PoprakoProjSearchReq {
         proj_ids: ids,
-        page,
-        limit,
+        page: payload.page,
+        limit: payload.limit,
     };
 
     let reply = poprako_post_opt::<PoprakoProjSearchReq, PoprakoEnvelope<Vec<PoprakoProjInfo>>>(
@@ -649,7 +701,7 @@ pub async fn get_team_projects_enriched(
         }
     }
 
-    tracing::info!(team_id = %team_id, count = enriched_list.len(), "team.projects_enriched.request.ok");
+    tracing::info!(team_id = %payload.team_id, count = enriched_list.len(), "team.projects_enriched.request.ok");
 
     Ok(enriched_list)
 }

@@ -7,26 +7,29 @@ export async function getTeamProjectSets(params: {
   page: number;
   limit: number;
 }): Promise<ResProjectSet[]> {
-  // Tauri maps snake_case Rust args to camelCase in JS; send camelCase keys
   return await invoke<ResProjectSet[]>('get_team_project_sets', {
-    teamId: params.teamId,
-    page: params.page,
-    limit: params.limit,
+    payload: {
+      team_id: params.teamId,
+      page: params.page,
+      limit: params.limit,
+    },
   });
 }
 
 // 获取指定汉化组下某项目集的项目列表
 export async function getTeamProjects(params: {
   teamId: string;
-  project_set: string;
+  projectSet: string;
   page: number;
   limit: number;
 }): Promise<ResProject[]> {
   return await invoke<ResProject[]>('get_team_projects', {
-    teamId: params.teamId,
-    project_set: params.project_set,
-    page: params.page,
-    limit: params.limit,
+    payload: {
+      team_id: params.teamId,
+      project_set: params.projectSet,
+      page: params.page,
+      limit: params.limit,
+    },
   });
 }
 
@@ -35,7 +38,12 @@ export async function getUserProjects(params: {
   page: number;
   limit: number;
 }): Promise<ResProject[]> {
-  return await invoke<ResProject[]>('get_user_projects', params);
+  return await invoke<ResProject[]>('get_user_projects', {
+    payload: {
+      page: params.page,
+      limit: params.limit,
+    },
+  });
 }
 
 // 获取当前用户的 enriched 项目列表
@@ -43,19 +51,24 @@ export async function getUserProjectsEnriched(params: {
   page: number;
   limit: number;
 }): Promise<ResProjectEnriched[]> {
-  return await invoke<ResProjectEnriched[]>('get_user_projects_enriched', params);
+  return await invoke<ResProjectEnriched[]>('get_user_projects_enriched', {
+    payload: {
+      page: params.page,
+      limit: params.limit,
+    },
+  });
 }
 
 // PopRaKo 主导的项目搜索参数（与 PoprakoProjFilterReq 对应的前端版本）
 export interface ProjectSearchFilters {
-  fuzzy_proj_name?: string;
-  translating_status?: number;
-  proofreading_status?: number;
-  typesetting_status?: number;
-  reviewing_status?: number;
-  is_published?: boolean;
-  member_ids?: string[];
-  time_start?: number;
+  fuzzyProjName?: string;
+  translatingStatus?: number;
+  proofreadingStatus?: number;
+  typesettingStatus?: number;
+  reviewingStatus?: number;
+  isPublished?: boolean;
+  memberIds?: string[];
+  timeStart?: number;
   page?: number;
   limit?: number;
   [key: string]: unknown;
@@ -65,7 +78,19 @@ export interface ProjectSearchFilters {
 export async function searchUserProjectsEnriched(
   filters: ProjectSearchFilters
 ): Promise<ResProjectEnriched[]> {
-  return await invoke<ResProjectEnriched[]>('search_user_projects_enriched', filters);
+  const payload = {
+    fuzzy_proj_name: filters.fuzzyProjName,
+    translating_status: filters.translatingStatus,
+    proofreading_status: filters.proofreadingStatus,
+    typesetting_status: filters.typesettingStatus,
+    reviewing_status: filters.reviewingStatus,
+    is_published: filters.isPublished,
+    member_ids: filters.memberIds,
+    time_start: filters.timeStart,
+    page: filters.page,
+    limit: filters.limit,
+  };
+  return await invoke<ResProjectEnriched[]>('search_user_projects_enriched', { payload });
 }
 
 // 基于 PopRaKo /projs/search + Moetran /teams/:team_id/projects?word= 的团队项目搜索
@@ -74,11 +99,32 @@ export async function searchTeamProjectsEnriched(
     teamId: string;
   } & ProjectSearchFilters
 ): Promise<ResProjectEnriched[]> {
-  // send camelCase keys to match Tauri's expected arg names
-  const { teamId, ...rest } = params as any;
+  const payload = {
+    fuzzy_proj_name: params.fuzzyProjName,
+    translating_status: params.translatingStatus,
+    proofreading_status: params.proofreadingStatus,
+    typesetting_status: params.typesettingStatus,
+    reviewing_status: params.reviewingStatus,
+    is_published: params.isPublished,
+    member_ids: params.memberIds,
+    time_start: params.timeStart,
+    page: params.page,
+    limit: params.limit,
+  };
   return await invoke<ResProjectEnriched[]>('search_team_projects_enriched', {
-    teamId,
-    ...rest,
+    payload: {
+      team_id: params.teamId,
+      fuzzy_proj_name: payload.fuzzy_proj_name,
+      translating_status: payload.translating_status,
+      proofreading_status: payload.proofreading_status,
+      typesetting_status: payload.typesetting_status,
+      reviewing_status: payload.reviewing_status,
+      is_published: payload.is_published,
+      member_ids: payload.member_ids,
+      time_start: payload.time_start,
+      page: payload.page,
+      limit: payload.limit,
+    },
   });
 }
 
@@ -89,64 +135,108 @@ export async function getTeamProjectsEnriched(params: {
   limit: number;
 }): Promise<ResProjectEnriched[]> {
   return await invoke<ResProjectEnriched[]>('get_team_projects_enriched', {
-    teamId: params.teamId,
-    page: params.page,
-    limit: params.limit,
+    payload: {
+      team_id: params.teamId,
+      page: params.page,
+      limit: params.limit,
+    },
   });
 }
 
 // PopRaKo 创建项目集请求参数
 export interface CreateProjsetPayload {
-  projset_name: string;
-  projset_description: string;
-  team_id: string;
-  mtr_token: string;
+  projsetName: string;
+  projsetDescription: string;
+  teamId: string;
+  mtrToken: string;
 }
 
 export interface CreateProjsetResult {
-  projset_serial: number;
+  projsetSerial: number;
 }
 
 // 调用 PopRaKo /projset/create 的 IPC 封装
-export async function createProjset(payload: CreateProjsetPayload): Promise<CreateProjsetResult> {
-  const { projset_name, projset_description, team_id, mtr_token } = payload;
+// Raw shape from Rust (snake_case)
+interface RawCreateProjsetResult {
+  projset_serial: number;
+}
 
-  return await invoke<CreateProjsetResult>('create_projset', {
-    projset_name,
-    projset_description,
-    team_id,
-    mtr_token,
+export async function createProjset(payload: CreateProjsetPayload): Promise<CreateProjsetResult> {
+  const raw = await invoke<RawCreateProjsetResult>('create_projset', {
+    payload: {
+      projset_name: payload.projsetName,
+      projset_description: payload.projsetDescription,
+      team_id: payload.teamId,
+      mtr_token: payload.mtrToken,
+    },
   });
+
+  return { projsetSerial: raw.projset_serial };
 }
 
 // PopRaKo 创建项目请求参数
 export interface CreateProjPayload {
-  proj_name: string;
-  proj_description: string;
-  team_id: string;
-  projset_id: string;
-  mtr_auth: string;
-  workset_index: number;
-  source_language: string;
-  target_languages: string[];
-  allow_apply_type: number;
-  application_check_type: number;
-  default_role: string;
+  projName: string;
+  projDescription: string;
+  teamId: string;
+  projsetId: string;
+  mtrAuth: string;
+  worksetIndex: number;
+  sourceLanguage: string;
+  targetLanguages: string[];
+  allowApplyType: number;
+  applicationCheckType: number;
+  defaultRole: string;
 }
 
 export interface CreateProjResult {
+  projId: string;
+  projSerial: number;
+  projsetIndex: number;
+}
+
+// 调用 PopRaKo /proj/create 的 IPC 封装
+interface RawCreateProjResult {
   proj_id: string;
   proj_serial: number;
   projset_index: number;
 }
 
-// 调用 PopRaKo /proj/create 的 IPC 封装
 export async function createProj(payload: CreateProjPayload): Promise<CreateProjResult> {
-  return await invoke<CreateProjResult>('create_proj', payload as any);
+  const raw = await invoke<RawCreateProjResult>('create_proj', {
+    payload: {
+      proj_name: payload.projName,
+      proj_description: payload.projDescription,
+      team_id: payload.teamId,
+      projset_id: payload.projsetId,
+      mtr_auth: payload.mtrAuth,
+      workset_index: payload.worksetIndex,
+      source_language: payload.sourceLanguage,
+      target_languages: payload.targetLanguages,
+      allow_apply_type: payload.allowApplyType,
+      application_check_type: payload.applicationCheckType,
+      default_role: payload.defaultRole,
+    },
+  });
+
+  return {
+    projId: raw.proj_id,
+    projSerial: raw.proj_serial,
+    projsetIndex: raw.projset_index,
+  };
 }
 
 // PopRaKo 项目集 DTO（简化版，只保留 Creator 需要的字段）
 export interface PoprakoProjsetInfo {
+  projsetId: string;
+  projsetName: string;
+  projsetDescription?: string | null;
+  projsetSerial: number;
+  teamId: string;
+}
+
+// 获取 PopRaKo 中指定团队下的项目集列表
+interface RawPoprakoProjsetInfo {
   projset_id: string;
   projset_name: string;
   projset_description?: string | null;
@@ -154,21 +244,39 @@ export interface PoprakoProjsetInfo {
   team_id: string;
 }
 
-// 获取 PopRaKo 中指定团队下的项目集列表
 export async function getTeamPoprakoProjsets(teamId: string): Promise<PoprakoProjsetInfo[]> {
-  return await invoke<PoprakoProjsetInfo[]>('get_team_poprako_projsets', { teamId });
+  const raw = await invoke<RawPoprakoProjsetInfo[]>('get_team_poprako_projsets', {
+    payload: { team_id: teamId },
+  });
+
+  return (raw || []).map(r => ({
+    projsetId: r.projset_id,
+    projsetName: r.projset_name,
+    projsetDescription: r.projset_description ?? null,
+    projsetSerial: r.projset_serial,
+    teamId: r.team_id,
+  }));
 }
 
 // 指派成员到 PopRaKo 项目
 export interface AssignMemberPayload {
-  proj_id: string;
-  member_id: string;
-  is_translator: boolean;
-  is_proofreader: boolean;
-  is_typesetter: boolean;
-  is_principal: boolean;
+  projId: string;
+  memberId: string;
+  isTranslator: boolean;
+  isProofreader: boolean;
+  isTypesetter: boolean;
+  isPrincipal: boolean;
 }
 
 export async function assignMemberToProj(payload: AssignMemberPayload): Promise<void> {
-  await invoke<void>('assign_member_to_proj', payload as any);
+  await invoke<void>('assign_member_to_proj', {
+    payload: {
+      proj_id: payload.projId,
+      member_id: payload.memberId,
+      is_translator: payload.isTranslator,
+      is_proofreader: payload.isProofreader,
+      is_typesetter: payload.isTypesetter,
+      is_principal: payload.isPrincipal,
+    },
+  });
 }

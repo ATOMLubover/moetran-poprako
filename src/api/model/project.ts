@@ -9,22 +9,22 @@ export interface ResProject {
   id: string;
   name: string;
 
-  source_count: number;
-  translated_source_count: number;
-  checked_source_count: number;
+  sourceCount: number;
+  translatedSourceCount: number;
+  checkedSourceCount: number;
 
   team: ResTeam;
-  project_set: ResProjectSet;
+  projectSet: ResProjectSet;
 }
 
 // enriched 项目 DTO（Moetran + PopRaKo）
 export interface ResProjectEnriched extends ResProject {
-  has_poprako: boolean;
-  projset_index?: number;
-  projset_serial?: number;
-  translating_status?: number;
-  proofreading_status?: number;
-  typesetting_status?: number;
-  reviewing_status?: number;
-  is_published?: boolean;
+  hasPoprako: boolean;
+  projsetIndex?: number;
+  projsetSerial?: number;
+  translatingStatus?: number;
+  proofreadingStatus?: number;
+  typesettingStatus?: number;
+  reviewingStatus?: number;
+  isPublished?: boolean;
 }

@@ -3,6 +3,7 @@ mod defer;
 mod http;
 mod member; // 成员搜索等相关
 mod project; // 项目与项目集相关
+mod result_ex;
 mod storage; // 本地存储与数据目录管理
 mod team; // 汉化组相关
 mod token; // Token 缓存与存取
@@ -35,7 +36,7 @@ const DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
 pub fn run() {
     // 初始化 tracing（一次性），添加 EnvFilter 方便用户通过环境变量调整日志等级：
     // 示例：RUST_LOG=debug,reqwest=warn
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     tracing_subscriber::fmt()
         .with_target(false)
@@ -93,6 +94,7 @@ pub fn run() {
             crate::project::get_team_projects_enriched,
             // member search
             crate::member::get_members,
+            crate::member::get_member_info,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running tauri application");
