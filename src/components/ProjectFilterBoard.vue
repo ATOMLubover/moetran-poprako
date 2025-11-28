@@ -15,13 +15,14 @@ interface FilterOption {
 }
 
 const filterOptions = ref<FilterOption[]>([]);
+
 // 高级成员选择（职位+多选）
 const advancedPickedMembers = ref<MemberInfo[]>([]);
 const memberSelectorOpen = ref(false);
-function openMemberSelector() {
+function openMemberSelector(): void {
   memberSelectorOpen.value = true;
 }
-function handleMemberSelectorConfirm() {
+function handleMemberSelectorConfirm(): void {
   const labelMap: Record<MemberInfo['position'], string> = {
     translator: '翻译',
     proofreader: '校对',
@@ -29,21 +30,20 @@ function handleMemberSelectorConfirm() {
   };
   for (const m of advancedPickedMembers.value) {
     const key = `member-${m.position}`;
-    // use member id as the filter value (PopRaKo expects member_ids as IDs)
     const label = `成员(${labelMap[m.position]})：${m.name}`;
     if (!filterOptions.value.find(o => o.key === key && o.value === m.id)) {
       filterOptions.value.push({ label, key, value: m.id });
     }
   }
 }
-function handleMemberSelectorCancel() {
+function handleMemberSelectorCancel(): void {
   // 取消不做合并
 }
-function handleMemberSelectorClose() {
+function handleMemberSelectorClose(): void {
   memberSelectorOpen.value = false;
 }
 
-// 控制筛选板是否启用的开关（由 RoundSwitch v-model 绑定）
+// 控制筛选板是否启用的开关
 const filterEnabled = ref<boolean>(true);
 
 // 输入状态
@@ -444,18 +444,29 @@ function onConfirm() {
   background: #ff9b9b;
 }
 .fb-confirm-btn {
-  padding: 6px 14px;
-  border: none;
-  background: #62a6ff;
-  color: #fff;
+  padding: 8px 18px;
+  border-radius: 10px; /* 方正却圆滑 */
+  border: 1px solid rgba(118, 184, 255, 0.35);
+  background: #f4f9ff; /* 轻色背景，去掉渐变 */
+  color: #2f5a8f;
   font-size: 13px;
   font-weight: 600;
-  border-radius: 10px;
   cursor: pointer;
-  box-shadow: 0 6px 16px rgba(118, 184, 255, 0.34);
+  box-shadow: 0 6px 18px rgba(118, 184, 255, 0.06);
+  transition:
+    transform 0.16s ease,
+    box-shadow 0.16s ease,
+    background 0.12s ease;
 }
 .fb-confirm-btn:hover {
-  background: #4d97fc;
+  transform: translateY(-2px);
+  box-shadow: 0 10px 26px rgba(118, 184, 255, 0.12);
+  background: #eef6ff;
+}
+.fb-confirm-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 .fb-adv-btn {
   padding: 6px 14px;

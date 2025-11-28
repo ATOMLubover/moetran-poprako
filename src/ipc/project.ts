@@ -96,7 +96,7 @@ export async function searchUserProjectsEnriched(
 // 基于 PopRaKo /projs/search + Moetran /teams/:team_id/projects?word= 的团队项目搜索
 export async function searchTeamProjectsEnriched(
   params: {
-    teamId: string;
+    team_id: string;
   } & ProjectSearchFilters
 ): Promise<ResProjectEnriched[]> {
   const payload = {
@@ -111,19 +111,22 @@ export async function searchTeamProjectsEnriched(
     page: params.page,
     limit: params.limit,
   };
+  // Pass a single `payload` object with `team_id` and nested `filter` (snake_case).
   return await invoke<ResProjectEnriched[]>('search_team_projects_enriched', {
     payload: {
-      team_id: params.teamId,
-      fuzzy_proj_name: payload.fuzzy_proj_name,
-      translating_status: payload.translating_status,
-      proofreading_status: payload.proofreading_status,
-      typesetting_status: payload.typesetting_status,
-      reviewing_status: payload.reviewing_status,
-      is_published: payload.is_published,
-      member_ids: payload.member_ids,
-      time_start: payload.time_start,
-      page: payload.page,
-      limit: payload.limit,
+      team_id: params.team_id,
+      filter: {
+        fuzzy_proj_name: payload.fuzzy_proj_name,
+        translating_status: payload.translating_status,
+        proofreading_status: payload.proofreading_status,
+        typesetting_status: payload.typesetting_status,
+        reviewing_status: payload.reviewing_status,
+        is_published: payload.is_published,
+        member_ids: payload.member_ids,
+        time_start: payload.time_start,
+        page: payload.page,
+        limit: payload.limit,
+      },
     },
   });
 }

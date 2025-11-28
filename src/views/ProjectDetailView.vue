@@ -54,15 +54,18 @@ interface ProjectDetail {
 
 const props = defineProps<{ projectId: string }>();
 
-const emit = defineEmits<{ (e: 'close'): void; (e: 'open-translator', enabled: boolean): void }>();
+const emit = defineEmits<{
+  (e: 'close'): void;
+  (e: 'open-translator', enabled: boolean): void;
+  (e: 'open-creator'): void;
+}>();
 
 const toastStore = useToastStore();
 
 // 项目详情数据
 const project = ref<ProjectDetail | null>(null);
 
-// 修改面板显隐（后续可拆分成独立子组件）
-const showModifier = ref(false);
+// NOTE: 修改按钮现在将触发打开创建/修改面板（由父组件处理）
 
 // 详细标记数据加载状态
 const loadingMarkers = ref(false);
@@ -269,8 +272,8 @@ async function loadProject(): Promise<void> {
 
 // 切换修改面板显隐
 function handleToggleModifier(): void {
-  // 切换修改面板
-  showModifier.value = !showModifier.value;
+  // 请求父组件打开创建/修改面板（父组件负责切换 detail/create）
+  emit('open-creator');
 }
 
 // 加入或退出项目（后续需要真实接口）
@@ -340,7 +343,7 @@ onBeforeUnmount(() => {
           class="pd-btn pd-btn--primary"
           @click="handleToggleModifier"
         >
-          {{ showModifier ? '取消修改' : '修改项目' }}
+          修改项目
         </button>
         <button v-else type="button" class="pd-btn pd-btn--primary" @click="handleJoinOrLeave">
           {{ isMeInProject ? '退出项目' : '加入项目' }}
@@ -473,15 +476,17 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* 详情视图整体采用视口高度，并通过内部 flex 避免出现外部滚动条 */
 .project-detail {
   display: flex;
   flex-direction: column;
-  padding: 28px 38px 80px;
   box-sizing: border-box;
-  min-height: 100vh;
+  height: 100vh;
+  padding: 16px 22px 18px;
   background: linear-gradient(180deg, #f5f9ff 0%, #ffffff 65%);
   font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   color: #1f2e43;
+  gap: 10px;
 }
 
 .pd-header {
@@ -534,10 +539,9 @@ onBeforeUnmount(() => {
 }
 
 .pd-topbar {
-  margin-top: 24px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 .pd-tags {
   display: flex;
@@ -603,7 +607,7 @@ onBeforeUnmount(() => {
 }
 
 .pd-description {
-  margin-top: 22px;
+  margin-top: 4px;
 }
 .pd-subtitle {
   margin: 0 0 10px;
@@ -776,12 +780,11 @@ onBeforeUnmount(() => {
 
 /* === 新增：卡片与二维布局样式，修复重叠与无分割问题 === */
 .pd-card {
-  margin-top: 28px;
   background: #ffffff;
   border: 1px solid rgba(150, 180, 210, 0.45);
   border-radius: 18px;
-  padding: 26px 30px;
-  box-shadow: 0 14px 42px rgba(140, 180, 230, 0.22);
+  padding: 14px 18px;
+  box-shadow: 0 10px 32px rgba(140, 180, 230, 0.18);
 }
 .pd-card__inner {
   display: flex;
@@ -789,12 +792,12 @@ onBeforeUnmount(() => {
   gap: 32px;
 }
 .pd-card__left {
-  flex: 0 0 170px;
+  flex: 0 0 150px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 34px;
-  padding: 4px 0 8px;
+  gap: 22px;
+  padding: 0 0 4px;
   border-right: 1px solid rgba(150, 180, 210, 0.35);
   box-sizing: border-box;
 }
@@ -802,7 +805,7 @@ onBeforeUnmount(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 14px;
   min-width: 0;
 }
 .pd-block-title {
@@ -816,7 +819,7 @@ onBeforeUnmount(() => {
 .pd-status-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-  gap: 14px;
+  gap: 10px;
 }
 .pd-status-card {
   background: #f8fbff;
@@ -840,7 +843,7 @@ onBeforeUnmount(() => {
 .pd-members-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px;
 }
 .pd-member-chip {
   display: flex;
@@ -865,7 +868,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: row;
   align-items: stretch;
-  gap: 18px;
+  gap: 10px;
 }
 .pd-metric-box {
   flex: 1 1 0;
@@ -899,13 +902,13 @@ onBeforeUnmount(() => {
 
 /* Chart block adjustments */
 .pd-chart-block {
-  margin-top: 34px;
+  margin-top: 8px;
 }
 .pd-chart-canvas {
   background: #ffffff;
   border: 1px solid rgba(150, 180, 210, 0.45);
   border-radius: 18px;
-  padding: 20px 24px;
+  padding: 16px 20px;
   box-shadow: 0 12px 36px rgba(140, 180, 230, 0.18);
   box-sizing: border-box;
   position: relative;
@@ -963,7 +966,7 @@ onBeforeUnmount(() => {
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   }
   .project-detail {
-    padding: 24px 24px 72px;
+    padding: 16px 16px 18px;
   }
 }
 </style>

@@ -49,14 +49,14 @@ const projectInfo = ref<{
 const loading = ref<boolean>(false);
 const message = ref<string>('');
 
-// 根据提示内容调整样式（成功 / 失败）
-const messageClass = computed(() => {
-  if (!message.value) {
-    return '';
-  }
+// // 根据提示内容调整样式（成功 / 失败）
+// const messageClass = computed(() => {
+//   if (!message.value) {
+//     return '';
+//   }
 
-  return message.value.includes('成功') ? 'creator-message--success' : 'creator-message--error';
-});
+//   return message.value.includes('成功') ? 'creator-message--success' : 'creator-message--error';
+// });
 
 // 最终标题预览（组装 [author]title）
 const finalTitlePreview = computed(() => {
@@ -285,23 +285,7 @@ function handleCancelSelector(): void {
   closeSelector();
 }
 
-// 权限字段联动：允许自动加入时，不能是隐藏项目
-function handleToggleAllowAutoJoin(): void {
-  projectInfo.value.allowAutoJoin = !projectInfo.value.allowAutoJoin;
-
-  if (projectInfo.value.allowAutoJoin) {
-    projectInfo.value.isHidden = false;
-  }
-}
-
-// 权限字段联动：隐藏项目时，不能允许自动加入
-function handleToggleHidden(): void {
-  projectInfo.value.isHidden = !projectInfo.value.isHidden;
-
-  if (projectInfo.value.isHidden) {
-    projectInfo.value.allowAutoJoin = false;
-  }
-}
+// Note: permission toggles UI was removed; keep fields in projectInfo for future use
 
 // 关闭当前创建视图
 function handleClose(): void {
@@ -418,7 +402,6 @@ async function handleCreateProject(): Promise<void> {
     <header class="creator-header">
       <div class="creator-header__left">
         <h1 class="creator-title">创建新项目</h1>
-        <p class="creator-subtitle">填写基础信息并配置权限</p>
       </div>
       <div class="creator-header__right">
         <button type="button" class="creator-close" @click="handleClose" title="关闭">×</button>
@@ -430,31 +413,33 @@ async function handleCreateProject(): Promise<void> {
         请先在左侧选择一个汉化组（团队），以加载项目集并启用成员搜索。
       </div>
       <form class="creator-form" @submit.prevent="handleCreateProject">
-        <div class="creator-field">
-          <label for="creator-author" class="creator-label">作者</label>
-          <input
-            id="creator-author"
-            v-model="authorName"
-            type="text"
-            required
-            placeholder="作者名称"
-            class="creator-input"
-          />
-        </div>
+        <div class="creator-row">
+          <div class="creator-field">
+            <label for="creator-author" class="creator-label">作者</label>
+            <input
+              id="creator-author"
+              v-model="authorName"
+              type="text"
+              required
+              placeholder="作者名称"
+              class="creator-input"
+            />
+          </div>
 
-        <div class="creator-field">
-          <label for="creator-title" class="creator-label">标题</label>
-          <input
-            id="creator-title"
-            v-model="projectInfo.title"
-            type="text"
-            required
-            placeholder="无须输入序号"
-            class="creator-input"
-          />
-          <div v-if="finalTitlePreview" class="creator-title-preview">
-            <span class="creator-title-preview__label">最终标题预览：</span>
-            <span class="creator-title-preview__text">{{ finalTitlePreview }}</span>
+          <div class="creator-field">
+            <label for="creator-title" class="creator-label">标题</label>
+            <input
+              id="creator-title"
+              v-model="projectInfo.title"
+              type="text"
+              required
+              placeholder="无须输入序号"
+              class="creator-input"
+            />
+            <div v-if="finalTitlePreview" class="creator-title-preview">
+              <span class="creator-title-preview__label">最终标题预览：</span>
+              <span class="creator-title-preview__text">{{ finalTitlePreview }}</span>
+            </div>
           </div>
         </div>
 
@@ -490,7 +475,7 @@ async function handleCreateProject(): Promise<void> {
           ></textarea>
         </div>
 
-        <div class="creator-field">
+        <!-- <div class="creator-field">
           <div class="creator-label">权限控制</div>
           <div class="creator-perms">
             <button
@@ -513,13 +498,10 @@ async function handleCreateProject(): Promise<void> {
         </div>
         <div v-if="message" :class="['creator-message', messageClass]">
           {{ message }}
-        </div>
+        </div> -->
 
-        <div class="creator-actions">
-          <button type="submit" class="creator-submit" :disabled="loading">
-            {{ loading ? '正在创建...' : '确认创建' }}
-          </button>
-        </div>
+        <!-- 隐藏提交按钮以支持回车提交表单 -->
+        <button type="submit" style="display: none" aria-hidden="true"></button>
       </form>
 
       <!-- 预邀请成员展示与邀请入口 -->
@@ -718,6 +700,17 @@ async function handleCreateProject(): Promise<void> {
         </div>
       </div>
     </div>
+    <!-- 底部固定提交区域 -->
+    <div class="creator-footer">
+      <button
+        type="button"
+        class="creator-submit fb-confirm-btn"
+        :disabled="loading"
+        @click="handleCreateProject"
+      >
+        {{ loading ? '正在创建...' : '确认创建' }}
+      </button>
+    </div>
   </section>
 </template>
 
@@ -808,6 +801,26 @@ async function handleCreateProject(): Promise<void> {
   gap: 16px;
 }
 
+.creator-row {
+  display: flex;
+  gap: 12px;
+}
+.creator-row .creator-field {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.creator-footer {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 28px 18px;
+  border-top: 1px solid rgba(170, 190, 215, 0.6);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(250, 250, 250, 0.03));
+}
+
 .creator-field {
   display: flex;
   flex-direction: column;
@@ -840,37 +853,64 @@ async function handleCreateProject(): Promise<void> {
 }
 
 .creator-textarea {
-  width: 100%;
-  padding: 8px 11px;
+  min-width: 130px;
+  padding: 10px 18px;
   border-radius: 10px;
-  border: 1px solid rgba(170, 190, 215, 0.9);
+  border: 1px solid rgba(118, 184, 255, 0.35);
+  background: #f4f9ff;
+  color: #2f5a8f;
   font-size: 14px;
-  box-sizing: border-box;
-  resize: none;
-  outline: none;
-  background: #ffffff;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(118, 184, 255, 0.06);
   transition:
-    border-color 0.18s ease,
-    box-shadow 0.18s ease;
+    transform 0.16s ease,
+    box-shadow 0.16s ease,
+    background 0.12s ease;
 }
 
-.creator-textarea:focus {
+/* Submit and invite button styles - unified light, non-gradient look */
+.creator-submit {
+  min-width: 130px;
+  padding: 10px 18px;
+  border-radius: 10px;
+  border: 1px solid rgba(118, 184, 255, 0.35);
+  background: #f4f9ff;
+  color: #2f5a8f;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(118, 184, 255, 0.06);
+  transition:
+    transform 0.16s ease,
+    box-shadow 0.16s ease,
+    background 0.12s ease;
+}
+
+.creator-submit:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 26px rgba(118, 184, 255, 0.12);
+  background: #eef6ff;
+}
+
+.creator-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.creator-perm-btn--active {
+  background: #e8f5ff;
   border-color: rgba(118, 184, 255, 0.9);
-  box-shadow: 0 0 0 1px rgba(118, 184, 255, 0.55);
+  box-shadow: 0 8px 20px rgba(136, 190, 247, 0.35);
 }
 
-.creator-title-preview {
-  margin-top: 4px;
-  display: inline-flex;
-  align-items: center;
-  max-width: 100%;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: #e6f6ec;
-  border: 1px solid rgba(110, 190, 150, 0.7);
-  font-size: 12px;
-  color: #24563b;
-  box-shadow: 0 4px 12px rgba(140, 200, 170, 0.25);
+.creator-actions {
+  margin-top: 6px;
+  display: flex;
+  justify-content: flex-end;
 }
 
 .creator-title-preview__label {
@@ -891,92 +931,6 @@ async function handleCreateProject(): Promise<void> {
   gap: 10px;
 }
 
-.creator-perm-btn {
-  flex: 1;
-  padding: 8px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(170, 190, 215, 0.9);
-  background: #ffffff;
-  font-size: 13px;
-  font-weight: 500;
-  color: #23415b;
-  cursor: pointer;
-  transition:
-    background 0.18s ease,
-    box-shadow 0.18s ease,
-    border-color 0.18s ease,
-    transform 0.18s ease;
-}
-
-.creator-perm-btn:hover {
-  background: #f4f7fb;
-  box-shadow: 0 6px 16px rgba(150, 190, 235, 0.25);
-  transform: translateY(-1px);
-}
-
-.creator-perm-btn--active {
-  background: #e8f5ff;
-  border-color: rgba(118, 184, 255, 0.9);
-  box-shadow: 0 8px 20px rgba(136, 190, 247, 0.35);
-}
-
-.creator-actions {
-  margin-top: 6px;
-  display: flex;
-  justify-content: flex-end;
-}
-
-.creator-submit {
-  min-width: 130px;
-  padding: 12px 22px;
-  border-radius: 999px;
-  border: none;
-  background: linear-gradient(135deg, #6bb4ff, #4b8fe8);
-  color: #ffffff;
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 0.4px;
-  cursor: pointer;
-  box-shadow: 0 10px 24px rgba(110, 170, 235, 0.5);
-  transition:
-    transform 0.18s ease,
-    box-shadow 0.18s ease,
-    opacity 0.18s ease;
-}
-
-.creator-submit:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 0 14px 32px rgba(110, 170, 235, 0.65);
-}
-
-.creator-submit:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-  box-shadow: none;
-}
-
-.creator-message {
-  margin-top: 8px;
-  padding: 8px 10px;
-  border-radius: 10px;
-  font-size: 13px;
-  text-align: center;
-}
-
-.creator-message--success {
-  background: #e6f6ec;
-  color: #24563b;
-  border: 1px solid rgba(110, 190, 150, 0.8);
-}
-
-.creator-message--error {
-  background: #ffecec;
-  color: #7d3434;
-  border: 1px solid rgba(220, 140, 140, 0.85);
-}
-
-/* 邀请按钮行 */
-/* 预邀请成员块 */
 .creator-invite-block {
   margin-top: 14px;
   display: flex;
@@ -1005,23 +959,25 @@ async function handleCreateProject(): Promise<void> {
 }
 
 .creator-invite-btn {
-  padding: 7px 14px;
-  border-radius: 999px;
-  border: none;
-  background: linear-gradient(135deg, #6bb4ff, #4b8fe8);
-  color: #ffffff;
+  padding: 7px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(118, 184, 255, 0.28);
+  background: #f4f9ff;
+  color: #2f5a8f;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 6px 16px rgba(110, 170, 235, 0.5);
+  box-shadow: 0 6px 14px rgba(118, 184, 255, 0.05);
   transition:
-    transform 0.16s ease,
-    box-shadow 0.16s ease;
+    transform 0.14s ease,
+    box-shadow 0.14s ease,
+    background 0.1s ease;
 }
 
 .creator-invite-btn:hover {
   transform: translateY(-1px);
-  box-shadow: 0 10px 24px rgba(110, 170, 235, 0.65);
+  box-shadow: 0 8px 20px rgba(118, 184, 255, 0.08);
+  background: #eef6ff;
 }
 
 /* MemberSelector 悬浮窗样式（示例） */
@@ -1217,6 +1173,31 @@ async function handleCreateProject(): Promise<void> {
 @media (max-width: 960px) {
   .creator-root {
     padding: 20px 18px 28px;
+  }
+}
+
+/* 针对低高度屏幕进行适配，减小间距和字号 */
+@media (max-height: 760px) {
+  .creator-root {
+    padding: 12px 14px 12px;
+  }
+  .creator-title {
+    font-size: 18px;
+  }
+  .creator-label {
+    font-size: 13px;
+  }
+  .creator-input,
+  .creator-textarea {
+    padding: 6px 8px;
+    font-size: 13px;
+  }
+  .creator-submit {
+    padding: 8px 14px;
+    font-size: 13px;
+  }
+  .creator-body {
+    gap: 8px;
   }
 }
 </style>

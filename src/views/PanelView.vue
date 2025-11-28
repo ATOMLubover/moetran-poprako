@@ -334,19 +334,7 @@ function handleOpenCreator(): void {
 
 <template>
   <div class="dashboard-root">
-    <!-- 顶部栏 -->
-    <header class="top-bar">
-      <div class="top-bar__user" v-if="user">
-        <span class="top-bar__name">{{ user.name }}</span>
-        <span v-if="(user as any).signature" class="top-bar__signature">
-          {{ (user as any).signature }}
-        </span>
-      </div>
-      <div v-else class="top-bar__user top-bar__user--loading">
-        <span v-if="loadingUser">载入用户...</span>
-        <span v-else>未登录</span>
-      </div>
-    </header>
+    <!-- 顶部栏 已移除（按要求） -->
 
     <div class="content-layout">
       <!-- 侧边栏：始终是头像+名字纵向列表，收起靠裁剪隐藏名字 -->
@@ -447,6 +435,7 @@ function handleOpenCreator(): void {
           :project-id="selectedProjectId"
           @close="handleCloseDetail"
           @open-translator="() => {}"
+          @open-creator="handleOpenCreator"
         />
         <ProjectCreatorView
           v-else-if="detailMode === 'create'"

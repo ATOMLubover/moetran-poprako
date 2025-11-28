@@ -270,6 +270,13 @@ pub struct PoprakoProjFilterReq {
     pub limit: Option<u32>,
 }
 
+// 单一 payload: 包含 team_id 与 filter（用于 Tauri IPC）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SearchTeamProjectsEnrichedReq {
+    pub team_id: String,
+    pub filter: PoprakoProjFilterReq,
+}
+
 // 在指定团队下创建项目集（调用 PopRaKo /projset/create）
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CreateProjsetReq {
@@ -785,16 +792,15 @@ pub async fn search_user_projects_enriched(
 // team 维度：基于 PopRaKo /projs/search + Moetran /teams/:team_id/projects?word= 进行组合搜索
 #[tauri::command]
 pub async fn search_team_projects_enriched(
-    team_id: String,
-    filter: PoprakoProjFilterReq,
+    payload: SearchTeamProjectsEnrichedReq,
 ) -> Result<Vec<ResProjectEnriched>, String> {
-    tracing::info!(team_id = %team_id, "team.projects_enriched.search.start");
+    tracing::info!(team_id = %payload.team_id, "team.projects_enriched.search.start");
 
     let mut defer = WarnDefer::new("team.projects_enriched.search");
 
     let reply = poprako_post_opt::<PoprakoProjFilterReq, PoprakoEnvelope<Vec<PoprakoProjInfo>>>(
         "projs/search",
-        Some(filter),
+        Some(payload.filter.clone()),
     )
     .await
     .map_err(|err| format!("PopRaKo 项目搜索失败: {}", err))?;
@@ -812,7 +818,7 @@ pub async fn search_team_projects_enriched(
     let items = match reply.data {
         Some(v) => v,
         None => {
-            tracing::info!(team_id = %team_id, "team.projects_enriched.search.empty");
+            tracing::info!(team_id = %payload.team_id, "team.projects_enriched.search.empty");
             defer.success();
             return Ok(vec![]);
         }
@@ -824,7 +830,7 @@ pub async fn search_team_projects_enriched(
         let mut query = std::collections::HashMap::new();
         query.insert("word", extra.proj_name.clone());
 
-        let path = format!("teams/{}/projects", team_id);
+        let path = format!("teams/{}/projects", payload.team_id);
 
         let list: Vec<ResProject> = moetran_get(&path, Some(&query))
             .await
@@ -851,7 +857,7 @@ pub async fn search_team_projects_enriched(
     }
 
     tracing::info!(
-        team_id = %team_id,
+        team_id = %payload.team_id,
         count = enriched_list.len(),
         "team.projects_enriched.search.ok"
     );

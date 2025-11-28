@@ -140,7 +140,7 @@ async function fetchAndClamp(): Promise<void> {
       // 团队视角：有筛选时走 team search，暂无筛选时使用团队 enriched 列表
       if (hasFilters) {
         apiRes = await searchTeamProjectsEnriched({
-          teamId: props.teamId as string,
+          team_id: props.teamId as string,
           ...props.filters,
           page: 1,
           limit: serverLimit,
@@ -282,15 +282,32 @@ onBeforeUnmount(() => {
   <section class="project-list">
     <header class="project-list__header">
       <h3 class="project-list__title">当前项目</h3>
-      <button
-        v-if="canCreate"
-        type="button"
-        class="project-list__create"
-        @click="handleCreateProject"
-        :disabled="isLoading"
+      <div
+        class="project-list__header-actions"
+        :class="{ 'project-list__header-actions--locked': !canCreate }"
       >
-        创建新项目
-      </button>
+        <button
+          type="button"
+          class="project-list__publish"
+          @click="
+            () => {
+              /* TODO: 发布项目回调 */
+            }
+          "
+          :disabled="isLoading || !canCreate"
+        >
+          发布项目
+        </button>
+        <button
+          type="button"
+          class="project-list__create"
+          @click="handleCreateProject"
+          :disabled="isLoading || !canCreate"
+        >
+          创建新项目
+        </button>
+        <!-- <span v-if="!canCreate" class="project-list__locked-note">🔒 仅团队管理员可创建</span> -->
+      </div>
     </header>
 
     <div class="project-list__content" ref="listContainerRef">
@@ -350,6 +367,35 @@ onBeforeUnmount(() => {
   gap: 16px;
 }
 
+.project-list__header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* When the current user cannot create projects for the selected team,
+   show the actions area with a muted/locked appearance while keeping layout. */
+.project-list__header-actions--locked {
+  opacity: 0.95;
+}
+
+.project-list__header-actions--locked .project-list__create,
+.project-list__header-actions--locked .project-list__publish {
+  background: linear-gradient(135deg, #f6f8fa, #fbfdff);
+  color: #7a8796;
+  border-color: rgba(200, 208, 218, 0.6);
+  box-shadow: none;
+}
+
+.project-list__locked-note {
+  margin-left: 6px;
+  font-size: 13px;
+  color: #6d7a8a;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .project-list__title {
   margin: 0;
   font-size: 22px;
@@ -358,30 +404,45 @@ onBeforeUnmount(() => {
   color: #1f2e43;
 }
 
-.project-list__create {
-  border: none;
-  border-radius: 99px;
-  padding: 10px 12px;
+.project-list__create,
+.project-list__publish {
+  border-radius: 10px;
+  padding: 8px 12px;
   font-size: 14px;
   font-weight: 600;
-  background: #62a6ff;
-  color: #ffffff;
+  border: 1px solid rgba(118, 184, 255, 0.35);
+  background: #f4f9ff;
+  color: #2f5a8f;
   cursor: pointer;
-  box-shadow: 0 1px 2px rgba(120, 170, 230, 0.32);
+  box-shadow: 0 6px 16px rgba(118, 184, 255, 0.06);
   transition:
-    box-shadow 0.18s ease,
-    transform 0.18s ease;
+    transform 0.14s ease,
+    box-shadow 0.14s ease,
+    background 0.12s ease;
 }
 
-.project-list__create:disabled {
-  opacity: 0.5;
+.project-list__create:hover:not(:disabled),
+.project-list__publish:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 26px rgba(118, 184, 255, 0.12);
+  background: #eef6ff;
+}
+
+.project-list__create:disabled,
+.project-list__publish:disabled {
+  opacity: 0.6;
   cursor: not-allowed;
   box-shadow: none;
 }
 
-.project-list__create:not(:disabled):hover {
+.project-list__create:not(:disabled):hover,
+.project-list__publish:not(:disabled):hover {
   transform: translateY(-2px);
   box-shadow: 0 14px 30px rgba(118, 184, 255, 0.42);
+}
+
+.project-list__publish {
+  padding-inline: 14px;
 }
 
 .project-list__content {
@@ -499,19 +560,25 @@ onBeforeUnmount(() => {
 }
 
 .project-list__detail-btn {
-  border: none;
+  border: 1px solid rgba(124, 205, 182, 0.25);
   border-radius: 12px;
   padding: 8px 18px;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  background: linear-gradient(135deg, rgba(124, 205, 182, 0.95), rgba(146, 214, 222, 0.9));
-  color: #1c3f56;
-  transition: transform 0.18s ease;
+  background: linear-gradient(135deg, rgba(124, 205, 182, 0.14), rgba(146, 214, 222, 0.06));
+  color: #114f45;
+  box-shadow: none;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.12s ease,
+    background 0.12s ease;
 }
 
 .project-list__detail-btn:hover {
   transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(124, 205, 182, 0.08);
+  background: #eafaf6;
 }
 
 .project-list__loading,
