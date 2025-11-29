@@ -78,16 +78,6 @@ function mapEnrichedToBasic(
   apiRes: ResProjectEnriched[]
 ): (ProjectBasicInfo & { hasPoprako?: boolean })[] {
   return apiRes.map(p => {
-    const seed = p.translatingStatus ?? p.proofreadingStatus ?? 0;
-
-    const phaseOrder: Array<PhaseChip['phase']> = [
-      'translate',
-      'proof',
-      'typeset',
-      'review',
-      'publish',
-    ];
-
     const labelMap: Record<PhaseChip['phase'], string> = {
       translate: '翻译',
       proof: '校对',
@@ -96,15 +86,56 @@ function mapEnrichedToBasic(
       publish: '发布',
     };
 
-    const phases: PhaseChip[] = phaseOrder.map((phase, i) => {
-      const rotate = (seed + i) % 5;
-      let status: PhaseStatus = 'unset';
-      if (rotate === 1) status = 'pending';
-      else if (rotate === 2) status = 'wip';
-      else if (rotate === 3) status = 'completed';
+    // Helper: map numeric status (0/1/2) to PhaseStatus
+    const numToPhaseStatus = (n: number | undefined): PhaseStatus => {
+      if (n === 1) return 'wip';
+      if (n === 2) return 'completed';
+      // treat undefined or 0 as unset
+      return 'unset';
+    };
 
-      return { phase, status, label: labelMap[phase] } as PhaseChip;
-    });
+    let phases: PhaseChip[] = [];
+
+    if (!p.hasPoprako) {
+      // Native projects (no PopRaKo): show a single gray tag
+      phases = [
+        {
+          phase: 'translate',
+          status: 'unset',
+          label: '尨译原生项目',
+        } as PhaseChip,
+      ];
+    } else {
+      // PopRaKo-backed project: show PopRaKo tag (template already renders a small green "PopRaKo" tag),
+      // and display real phase statuses from the enriched DTO.
+      phases = [
+        {
+          phase: 'translate',
+          status: numToPhaseStatus(p.translatingStatus),
+          label: labelMap.translate,
+        } as PhaseChip,
+        {
+          phase: 'proof',
+          status: numToPhaseStatus(p.proofreadingStatus),
+          label: labelMap.proof,
+        } as PhaseChip,
+        {
+          phase: 'typeset',
+          status: numToPhaseStatus(p.typesettingStatus),
+          label: labelMap.typeset,
+        } as PhaseChip,
+        {
+          phase: 'review',
+          status: numToPhaseStatus(p.reviewingStatus),
+          label: labelMap.review,
+        } as PhaseChip,
+        {
+          phase: 'publish',
+          status: p.isPublished ? 'completed' : 'unset',
+          label: labelMap.publish,
+        } as PhaseChip,
+      ];
+    }
 
     return {
       // 后端 id 是 UUID，保持为字符串
@@ -320,8 +351,8 @@ onBeforeUnmount(() => {
         >
           <div class="project-list__item-main">
             <h3 class="project-list__item-title">
-              <span v-if="item.hasPoprako" class="project-list__tag-poprako">PopRaKo</span>
               {{ item.title }}
+              <span v-if="item.hasPoprako" class="project-list__tag-poprako">PopRaKo</span>
             </h3>
             <div class="project-list__chips">
               <span v-for="phase in item.phases" :key="phase.phase" :class="chipClass(phase)">
@@ -351,7 +382,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 18px;
-  padding: 24px 30px 28px;
+  padding: 16px 30px 20px;
   border-radius: 24px;
   background: rgba(255, 255, 255, 0.92);
   color: #28405c;

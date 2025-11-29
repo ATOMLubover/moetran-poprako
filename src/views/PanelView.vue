@@ -390,10 +390,12 @@ function handleOpenCreator(): void {
               <h3 class="ann-title">公告</h3>
             </div>
             <ul class="ann-list">
-              <li v-for="a in announcements" :key="a.id" class="ann-item">
-                <div class="ann-item__title">{{ a.title }}</div>
+              <li v-for="a in announcements.slice(0, 3)" :key="a.id" class="ann-item">
+                <div class="ann-item__head">
+                  <div class="ann-item__title">{{ a.title }}</div>
+                  <div class="ann-item__date">{{ a.date }}</div>
+                </div>
                 <div class="ann-item__content">{{ a.content }}</div>
-                <div class="ann-item__date">{{ a.date }}</div>
               </li>
               <li v-if="!announcements.length" class="ann-empty">暂无公告</li>
             </ul>
@@ -698,25 +700,45 @@ function handleOpenCreator(): void {
   gap: 8px;
 }
 .ann-item {
-  padding: 8px;
+  padding: 6px 8px;
   border-radius: 8px;
   background: #fbfdff;
   border: 1px solid rgba(230, 240, 250, 0.9);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ann-item__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 .ann-item__title {
   font-weight: 600;
   font-size: 13px;
   color: #214b66;
-}
-.ann-item__content {
-  font-size: 13px;
-  color: #48657a;
-  margin-top: 4px;
+  /* do not allow the title to push the date out; truncate if too long */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
 }
 .ann-item__date {
   font-size: 12px;
   color: #7a8b99;
-  margin-top: 6px;
+  flex: 0 0 auto;
+  margin-left: 12px;
+  white-space: nowrap;
+}
+.ann-item__content {
+  font-size: 13px;
+  color: #48657a;
+  /* single-line truncation to compress vertical space */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
 }
 .ann-empty {
   text-align: center;
@@ -810,7 +832,7 @@ function handleOpenCreator(): void {
   opacity: 1;
 }
 .projects-content {
-  margin-top: 16px;
+  margin-top: 5px;
   flex: 1;
   display: flex;
   flex-direction: column;

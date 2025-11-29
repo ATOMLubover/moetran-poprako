@@ -51,12 +51,32 @@ export async function getUserProjectsEnriched(params: {
   page: number;
   limit: number;
 }): Promise<ResProjectEnriched[]> {
-  return await invoke<ResProjectEnriched[]>('get_user_projects_enriched', {
+  const raw = await invoke<any[]>('get_user_projects_enriched', {
     payload: {
       page: params.page,
       limit: params.limit,
     },
   });
+
+  return (raw || []).map(
+    r =>
+      ({
+        id: r.id,
+        name: r.name,
+        sourceCount: r.source_count,
+        translatedSourceCount: r.translated_source_count,
+        checkedSourceCount: r.checked_source_count,
+        team: r.team,
+        projectSet: r.project_set ? { id: r.project_set.id, name: r.project_set.name } : undefined,
+        hasPoprako: r.has_poprako,
+        projsetIndex: r.projset_index ?? undefined,
+        translatingStatus: r.translating_status ?? undefined,
+        proofreadingStatus: r.proofreading_status ?? undefined,
+        typesettingStatus: r.typesetting_status ?? undefined,
+        reviewingStatus: r.reviewing_status ?? undefined,
+        isPublished: typeof r.is_published === 'boolean' ? r.is_published : undefined,
+      }) as ResProjectEnriched
+  );
 }
 
 // PopRaKo 主导的项目搜索参数（与 PoprakoProjFilterReq 对应的前端版本）
@@ -94,9 +114,29 @@ export async function searchUserProjectsEnriched(
   };
   // Rust expects a single argument named `filter: PoprakoProjFilterReq`,
   // so pass the snake_cased object as the top-level `filter` key.
-  return await invoke<ResProjectEnriched[]>('search_user_projects_enriched', {
+  const raw = await invoke<any[]>('search_user_projects_enriched', {
     filter: payload,
   });
+
+  return (raw || []).map(
+    r =>
+      ({
+        id: r.id,
+        name: r.name,
+        sourceCount: r.source_count,
+        translatedSourceCount: r.translated_source_count,
+        checkedSourceCount: r.checked_source_count,
+        team: r.team,
+        projectSet: r.project_set ? { id: r.project_set.id, name: r.project_set.name } : undefined,
+        hasPoprako: r.has_poprako,
+        projsetIndex: r.projset_index ?? undefined,
+        translatingStatus: r.translating_status ?? undefined,
+        proofreadingStatus: r.proofreading_status ?? undefined,
+        typesettingStatus: r.typesetting_status ?? undefined,
+        reviewingStatus: r.reviewing_status ?? undefined,
+        isPublished: typeof r.is_published === 'boolean' ? r.is_published : undefined,
+      }) as ResProjectEnriched
+  );
 }
 
 // 基于 PopRaKo /projs/search + Moetran /teams/:team_id/projects?word= 的团队项目搜索
@@ -119,7 +159,7 @@ export async function searchTeamProjectsEnriched(
     limit: params.limit,
   };
   // Pass a single `payload` object with `team_id` and nested `filter` (snake_case).
-  return await invoke<ResProjectEnriched[]>('search_team_projects_enriched', {
+  const raw = await invoke<any[]>('search_team_projects_enriched', {
     payload: {
       team_id: params.team_id,
       filter: {
@@ -136,6 +176,26 @@ export async function searchTeamProjectsEnriched(
       },
     },
   });
+
+  return (raw || []).map(
+    r =>
+      ({
+        id: r.id,
+        name: r.name,
+        sourceCount: r.source_count,
+        translatedSourceCount: r.translated_source_count,
+        checkedSourceCount: r.checked_source_count,
+        team: r.team,
+        projectSet: r.project_set ? { id: r.project_set.id, name: r.project_set.name } : undefined,
+        hasPoprako: r.has_poprako,
+        projsetIndex: r.projset_index ?? undefined,
+        translatingStatus: r.translating_status ?? undefined,
+        proofreadingStatus: r.proofreading_status ?? undefined,
+        typesettingStatus: r.typesetting_status ?? undefined,
+        reviewingStatus: r.reviewing_status ?? undefined,
+        isPublished: typeof r.is_published === 'boolean' ? r.is_published : undefined,
+      }) as ResProjectEnriched
+  );
 }
 
 // 获取团队的 enriched 项目列表（无筛选，分页）
@@ -144,13 +204,33 @@ export async function getTeamProjectsEnriched(params: {
   page: number;
   limit: number;
 }): Promise<ResProjectEnriched[]> {
-  return await invoke<ResProjectEnriched[]>('get_team_projects_enriched', {
+  const raw = await invoke<any[]>('get_team_projects_enriched', {
     payload: {
       team_id: params.teamId,
       page: params.page,
       limit: params.limit,
     },
   });
+
+  return (raw || []).map(
+    r =>
+      ({
+        id: r.id,
+        name: r.name,
+        sourceCount: r.source_count,
+        translatedSourceCount: r.translated_source_count,
+        checkedSourceCount: r.checked_source_count,
+        team: r.team,
+        projectSet: r.project_set ? { id: r.project_set.id, name: r.project_set.name } : undefined,
+        hasPoprako: r.has_poprako,
+        projsetIndex: r.projset_index ?? undefined,
+        translatingStatus: r.translating_status ?? undefined,
+        proofreadingStatus: r.proofreading_status ?? undefined,
+        typesettingStatus: r.typesetting_status ?? undefined,
+        reviewingStatus: r.reviewing_status ?? undefined,
+        isPublished: typeof r.is_published === 'boolean' ? r.is_published : undefined,
+      }) as ResProjectEnriched
+  );
 }
 
 // PopRaKo 创建项目集请求参数

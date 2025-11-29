@@ -59,15 +59,26 @@ const filterEnabled = ref<boolean>(true);
 // 项目集列表与加载状态
 const currentProjsets = ref<PoprakoProjsetInfo[]>([]);
 const projsetLoading = ref(false);
-const selectedProjsetIds = ref<string[]>([]);
+// projset 选择弹窗状态与临时选中项
+const projsetSelectorOpen = ref(false);
+const projsetPickedIds = ref<string[]>([]);
 
 // 监听 teamId 变化，重置并重新加载项目集列表
 watch(
   () => props.teamId,
   () => {
+    // reset state when team changes; if no teamId provided, close selector and clear lists
+    if (!props.teamId) {
+      currentProjsets.value = [];
+      projsetLoading.value = false;
+      projsetPickedIds.value = [];
+      projsetSelectorOpen.value = false;
+      return;
+    }
+
     currentProjsets.value = [];
     projsetLoading.value = false;
-    selectedProjsetIds.value = [];
+    projsetPickedIds.value = [];
     void loadProjsetsForCurrentTeam();
   },
   { immediate: true }
@@ -97,19 +108,20 @@ const memberInput = ref('');
 
 // 状态分类选择
 const selectedLabor = ref('');
-const statusList = ['翻译状态', '校对状态', '嵌字状态', '监修状态', '发布状态'];
+// Labels simplified per request
+const statusList = ['翻译', '校对', '嵌字', '监修', '发布'];
 
 function laborToStringKey(labor: string): string {
   switch (labor) {
-    case '翻译状态':
+    case '翻译':
       return 'translation-status';
-    case '校对状态':
+    case '校对':
       return 'proofreading-status';
-    case '嵌字状态':
+    case '嵌字':
       return 'typesetting-status';
-    case '监修状态':
+    case '监修':
       return 'reviewing-status';
-    case '发布状态':
+    case '发布':
       return 'publish-status';
     default:
       return '';
@@ -129,12 +141,12 @@ function statusTypeToStringValue(statusType: string): string {
 }
 function getOptionalValues(selectedLabor: string): string[] {
   switch (selectedLabor) {
-    case '翻译状态':
-    case '校对状态':
-    case '嵌字状态':
-    case '监修状态':
+    case '翻译':
+    case '校对':
+    case '嵌字':
+    case '监修':
       return ['未开始', '进行中', '已完成'];
-    case '发布状态':
+    case '发布':
       return ['未开始', '已完成'];
     default:
       return [];
@@ -152,19 +164,29 @@ function onSelectStatus(statusType: string) {
   }
   selectedLabor.value = '';
 }
-function addSelectedProjsets(): void {
-  const ids = selectedProjsetIds.value || [];
-  if (!ids.length) return;
+function openProjsetSelector(): void {
+  // only open when a teamId is available
+  if (!props.teamId) return;
 
-  for (const id of ids) {
+  // prefill picked ids with any existing project-set options
+  projsetPickedIds.value = filterOptions.value
+    .filter(o => o.key === 'project-set')
+    .map(o => o.value);
+  projsetSelectorOpen.value = true;
+}
+
+function onProjsetConfirm(): void {
+  for (const id of projsetPickedIds.value) {
     const projset = currentProjsets.value.find(p => p.projsetId === id);
     if (!projset) continue;
     const label = `项目集：${projset.projsetName}`;
-    // use key 'project-set' so parent will aggregate into projsetIds
     addOption({ label, key: 'project-set', value: id });
   }
+  projsetSelectorOpen.value = false;
+}
 
-  selectedProjsetIds.value = [];
+function onProjsetCancel(): void {
+  projsetSelectorOpen.value = false;
 }
 
 function onEnterProject() {
@@ -189,11 +211,17 @@ function clearAllOptions() {
   projectInput.value = '';
   memberInput.value = '';
   selectedLabor.value = '';
-  selectedProjsetIds.value = [];
+  projsetPickedIds.value = [];
   advancedPickedMembers.value = [];
 }
 const emit = defineEmits<{ (e: 'confirmOptions', options: FilterOption[]): void }>();
 function onConfirm() {
+  // protect: ignore confirm when no conditions
+  if (!filterOptions.value.length) {
+    toastStore.show('请先添加筛选条件');
+    return;
+  }
+
   // diagnostic log: print the options being emitted so we can debug unexpected member_ids
   // (will be visible in renderer devtools console)
   // eslint-disable-next-line no-console
@@ -211,36 +239,8 @@ function onConfirm() {
       <!-- <RoundSwitch v-model="filterEnabled" /> -->
     </div>
 
-    <!-- 项目集输入 -->
-    <div class="fb-row">
-      <label class="fb-label">筛选项目集</label>
-      <div class="fb-projset-wrapper">
-        <select
-          class="fb-select"
-          v-model="selectedProjsetIds"
-          multiple
-          :disabled="!filterEnabled || projsetLoading"
-        >
-          <option value="" disabled>
-            {{ projsetLoading ? '加载中...' : '选择项目集（可多选）' }}
-          </option>
-          <option v-for="ps in currentProjsets" :key="ps.projsetId" :value="ps.projsetId">
-            {{ ps.projsetName }}
-          </option>
-        </select>
-        <button
-          class="fb-adv-btn"
-          style="margin-left: 8px"
-          @click="addSelectedProjsets"
-          :disabled="!selectedProjsetIds.length"
-        >
-          添加所选
-        </button>
-      </div>
-    </div>
-
-    <!-- 项目输入 -->
-    <div class="fb-row">
+    <!-- 第一行：项目名（模糊搜索） -->
+    <div class="fb-row fb-row--tight">
       <label class="fb-label">筛选项目</label>
       <input
         class="fb-input"
@@ -251,7 +251,55 @@ function onConfirm() {
       />
     </div>
 
-    <div class="fb-status-block">
+    <!-- 第二行：左侧为项目集选择；右侧为成员筛选按钮（右对齐） -->
+    <div class="fb-row fb-row--tight" style="align-items: center">
+      <div style="display: flex; align-items: center; gap: 8px; flex: 1">
+        <label class="fb-label">筛选项目集</label>
+        <button
+          class="fb-adv-btn"
+          @click="openProjsetSelector"
+          :disabled="!props.teamId || projsetLoading"
+        >
+          选择项目集
+        </button>
+        <span v-if="!props.teamId" class="fb-adv-disabled-note">请先选择团队以启用</span>
+        <!-- <div class="fb-adv-summary" style="margin-left: 8px; flex: 1">
+          <span v-if="!filterOptions.find(o => o.key === 'project-set')">未选择项目集</span>
+          <span v-else>
+            <span
+              class="fb-adv-chip"
+              v-for="opt in filterOptions.filter(o => o.key === 'project-set')"
+              :key="opt.value"
+            >
+              {{ opt.label }}
+              <button class="fb-chip__remove" @click="removeOption(opt)">&times;</button>
+            </span>
+          </span>
+        </div> -->
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 8px; margin-left: 12px">
+        <label class="fb-label fb-label--small">筛选成员</label>
+        <div class="fb-member-role-btns">
+          <button type="button" class="fb-role-btn" @click="() => openMemberSelector('translator')">
+            翻译
+          </button>
+          <button
+            type="button"
+            class="fb-role-btn"
+            @click="() => openMemberSelector('proofreader')"
+          >
+            校对
+          </button>
+          <button type="button" class="fb-role-btn" @click="() => openMemberSelector('typesetter')">
+            嵌字
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 第三行：状态选择 -->
+    <div class="fb-status-block fb-row--tight">
       <label class="fb-label">筛选项目状态</label>
       <div v-if="!selectedLabor" class="fb-status-group">
         <button v-for="s in statusList" :key="s" class="fb-status-btn" @click="selectedLabor = s">
@@ -268,22 +316,6 @@ function onConfirm() {
           {{ st }}
         </button>
         <button class="fb-cancel-btn" @click="selectedLabor = ''">取消</button>
-      </div>
-    </div>
-
-    <!-- 高级成员选择（包含职位） -->
-    <div class="fb-row">
-      <label class="fb-label">成员筛选</label>
-      <div class="fb-member-role-btns">
-        <button type="button" class="fb-role-btn" @click="() => openMemberSelector('translator')">
-          翻译
-        </button>
-        <button type="button" class="fb-role-btn" @click="() => openMemberSelector('proofreader')">
-          校对
-        </button>
-        <button type="button" class="fb-role-btn" @click="() => openMemberSelector('typesetter')">
-          嵌字
-        </button>
       </div>
     </div>
 
@@ -305,7 +337,9 @@ function onConfirm() {
       <button v-if="filterOptions.length" class="fb-clear-btn" @click="clearAllOptions">
         清空条件
       </button>
-      <button class="fb-confirm-btn" @click="onConfirm">确认查询</button>
+      <button class="fb-confirm-btn" @click="onConfirm" :disabled="!filterOptions.length">
+        确认查询
+      </button>
     </div>
     <MemberSelector
       :show="memberSelectorOpen"
@@ -316,6 +350,39 @@ function onConfirm() {
       @cancel="handleMemberSelectorCancel"
       @close="handleMemberSelectorClose"
     />
+
+    <!-- 项目集选择弹窗 -->
+    <div v-if="projsetSelectorOpen" class="projset-overlay">
+      <div class="projset-panel">
+        <div class="selector-header">
+          <div class="selector-title">选择项目集</div>
+          <button class="selector-close" @click="onProjsetCancel">✕</button>
+        </div>
+        <div class="selector-body">
+          <div style="max-height: 280px; overflow: auto">
+            <label v-for="ps in currentProjsets" :key="ps.projsetId" class="projset-item">
+              <input type="checkbox" :value="ps.projsetId" v-model="projsetPickedIds" />
+              <span style="margin-left: 8px">{{ ps.projsetName }}</span>
+            </label>
+            <div v-if="!currentProjsets.length" class="selector-empty">暂无项目集</div>
+          </div>
+          <div class="selector-actions">
+            <button
+              class="selector-action-btn selector-action-btn--cancel"
+              @click="onProjsetCancel"
+            >
+              取消
+            </button>
+            <button
+              class="selector-action-btn selector-action-btn--confirm"
+              @click="onProjsetConfirm"
+            >
+              添加所选
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 <style scoped>
@@ -596,22 +663,33 @@ function onConfirm() {
   box-shadow: none;
 }
 .fb-adv-btn {
-  padding: 6px 14px;
-  border: none;
-  background: #e6f1ff;
+  /* Match role button styling for consistent visual alignment */
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(180, 206, 238, 0.7);
+  background: rgba(246, 250, 255, 0.9);
   color: #2b577e;
   font-size: 12px;
-  font-weight: 600;
-  border-radius: 300px;
+  font-weight: 400;
   cursor: pointer;
-  border: 1px solid rgba(219, 226, 238, 0.6);
-  box-shadow: 0 4px 12px rgba(118, 184, 255, 0.28);
   transition:
-    background 0.18s ease,
-    transform 0.18s ease;
+    transform 0.16s ease,
+    background 0.12s ease,
+    box-shadow 0.12s ease;
 }
 .fb-adv-btn:hover {
-  background: #d8e9fc;
+  background: #eaf6ff;
+  box-shadow: 0 6px 18px rgba(118, 184, 255, 0.08);
+  transform: translateY(-2px);
+}
+.fb-adv-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.fb-adv-disabled-note {
+  font-size: 12px;
+  color: #7a8b99;
+  margin-left: 8px;
 }
 .fb-adv-summary {
   display: flex;
@@ -632,5 +710,86 @@ function onConfirm() {
 .fb-adv-role {
   color: #3a6f4d;
   font-weight: 600;
+}
+/* 项目集弹窗样式 */
+.projset-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 20, 40, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+.projset-panel {
+  width: 420px;
+  max-width: calc(100% - 40px);
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 20px 48px rgba(30, 60, 100, 0.35);
+  padding: 12px 14px;
+  box-sizing: border-box;
+}
+.projset-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px;
+}
+.selector-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.selector-title {
+  font-weight: 700;
+  color: #203650;
+}
+.selector-close {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 16px;
+}
+.selector-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+.selector-action-btn {
+  min-width: 86px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.selector-action-btn--cancel {
+  background: #f3f5f9;
+  border: none;
+  color: #4a5f7a;
+}
+.selector-action-btn--confirm {
+  background: linear-gradient(135deg, #6bb4ff, #4b8fe8);
+  color: #fff;
+  border: none;
+}
+.selector-empty {
+  text-align: center;
+  color: #6b7c91;
+  padding: 12px 0;
+}
+.fb-row--tight {
+  gap: 8px;
+}
+.fb-row-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.fb-label--small {
+  min-width: 0;
+  width: auto;
 }
 </style>
