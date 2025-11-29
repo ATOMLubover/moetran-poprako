@@ -68,6 +68,7 @@ export interface ProjectSearchFilters {
   reviewingStatus?: number;
   isPublished?: boolean;
   memberIds?: string[];
+  projsetIds?: string[];
   timeStart?: number;
   page?: number;
   limit?: number;
@@ -86,11 +87,16 @@ export async function searchUserProjectsEnriched(
     reviewing_status: filters.reviewingStatus,
     is_published: filters.isPublished,
     member_ids: filters.memberIds,
+    projset_ids: filters.projsetIds,
     time_start: filters.timeStart,
     page: filters.page,
     limit: filters.limit,
   };
-  return await invoke<ResProjectEnriched[]>('search_user_projects_enriched', { payload });
+  // Rust expects a single argument named `filter: PoprakoProjFilterReq`,
+  // so pass the snake_cased object as the top-level `filter` key.
+  return await invoke<ResProjectEnriched[]>('search_user_projects_enriched', {
+    filter: payload,
+  });
 }
 
 // 基于 PopRaKo /projs/search + Moetran /teams/:team_id/projects?word= 的团队项目搜索
@@ -107,6 +113,7 @@ export async function searchTeamProjectsEnriched(
     reviewing_status: params.reviewingStatus,
     is_published: params.isPublished,
     member_ids: params.memberIds,
+    projset_ids: params.projsetIds,
     time_start: params.timeStart,
     page: params.page,
     limit: params.limit,

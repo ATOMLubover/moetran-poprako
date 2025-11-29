@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import MemberSelector, { MemberInfo } from './MemberSelector.vue';
+import { getTeamPoprakoProjsets, type PoprakoProjsetInfo } from '../ipc/project';
+import { useToastStore } from '../stores/toast';
 // 与示例逻辑对应的筛选面板，实现项目集/项目/成员/状态筛选
 // 发出 confirmOptions 事件供父组件应用过滤
 
 // 父组件传入的上下文：当前选中的团队 ID（用于成员搜索）
 const props = defineProps<{ teamId?: string }>();
+
+const toastStore = useToastStore();
 
 // 过滤条件项
 interface FilterOption {
@@ -19,9 +23,13 @@ const filterOptions = ref<FilterOption[]>([]);
 // 高级成员选择（职位+多选）
 const advancedPickedMembers = ref<MemberInfo[]>([]);
 const memberSelectorOpen = ref(false);
-function openMemberSelector(): void {
+const memberSelectorRole = ref<MemberInfo['position'] | null>(null);
+
+function openMemberSelector(role: MemberInfo['position']): void {
+  memberSelectorRole.value = role;
   memberSelectorOpen.value = true;
 }
+
 function handleMemberSelectorConfirm(): void {
   const labelMap: Record<MemberInfo['position'], string> = {
     translator: '翻译',
@@ -36,9 +44,11 @@ function handleMemberSelectorConfirm(): void {
     }
   }
 }
+
 function handleMemberSelectorCancel(): void {
   // 取消不做合并
 }
+
 function handleMemberSelectorClose(): void {
   memberSelectorOpen.value = false;
 }
@@ -46,8 +56,42 @@ function handleMemberSelectorClose(): void {
 // 控制筛选板是否启用的开关
 const filterEnabled = ref<boolean>(true);
 
+// 项目集列表与加载状态
+const currentProjsets = ref<PoprakoProjsetInfo[]>([]);
+const projsetLoading = ref(false);
+const selectedProjsetIds = ref<string[]>([]);
+
+// 监听 teamId 变化，重置并重新加载项目集列表
+watch(
+  () => props.teamId,
+  () => {
+    currentProjsets.value = [];
+    projsetLoading.value = false;
+    selectedProjsetIds.value = [];
+    void loadProjsetsForCurrentTeam();
+  },
+  { immediate: true }
+);
+
+// 加载当前团队的项目集列表
+async function loadProjsetsForCurrentTeam(): Promise<void> {
+  const teamId = props.teamId ?? '';
+  if (!teamId || projsetLoading.value) return;
+
+  projsetLoading.value = true;
+  try {
+    const list = await getTeamPoprakoProjsets(teamId);
+    console.log('Loaded projsets for filter board', teamId, list);
+    currentProjsets.value = list;
+  } catch (e) {
+    console.error('Failed to load projsets for filter board', teamId, e);
+    toastStore.show('加载项目集失败，请稍后重试');
+  } finally {
+    projsetLoading.value = false;
+  }
+}
+
 // 输入状态
-const projectSetInput = ref('');
 const projectInput = ref('');
 const memberInput = ref('');
 
@@ -108,13 +152,21 @@ function onSelectStatus(statusType: string) {
   }
   selectedLabor.value = '';
 }
-function onEnterProjectSet() {
-  const v = projectSetInput.value.trim();
-  if (v) {
-    addOption({ label: '项目集：' + v, key: 'project-set', value: v });
-    projectSetInput.value = '';
+function addSelectedProjsets(): void {
+  const ids = selectedProjsetIds.value || [];
+  if (!ids.length) return;
+
+  for (const id of ids) {
+    const projset = currentProjsets.value.find(p => p.projsetId === id);
+    if (!projset) continue;
+    const label = `项目集：${projset.projsetName}`;
+    // use key 'project-set' so parent will aggregate into projsetIds
+    addOption({ label, key: 'project-set', value: id });
   }
+
+  selectedProjsetIds.value = [];
 }
+
 function onEnterProject() {
   const v = projectInput.value.trim();
   if (v) {
@@ -134,10 +186,10 @@ function removeOption(opt: FilterOption) {
 }
 function clearAllOptions() {
   filterOptions.value = [];
-  projectSetInput.value = '';
   projectInput.value = '';
   memberInput.value = '';
   selectedLabor.value = '';
+  selectedProjsetIds.value = [];
   advancedPickedMembers.value = [];
 }
 const emit = defineEmits<{ (e: 'confirmOptions', options: FilterOption[]): void }>();
@@ -162,13 +214,29 @@ function onConfirm() {
     <!-- 项目集输入 -->
     <div class="fb-row">
       <label class="fb-label">筛选项目集</label>
-      <input
-        class="fb-input"
-        placeholder="输入项目集 ID 或名称 [Enter]"
-        v-model="projectSetInput"
-        @keyup.enter="onEnterProjectSet"
-        :disabled="!filterEnabled"
-      />
+      <div class="fb-projset-wrapper">
+        <select
+          class="fb-select"
+          v-model="selectedProjsetIds"
+          multiple
+          :disabled="!filterEnabled || projsetLoading"
+        >
+          <option value="" disabled>
+            {{ projsetLoading ? '加载中...' : '选择项目集（可多选）' }}
+          </option>
+          <option v-for="ps in currentProjsets" :key="ps.projsetId" :value="ps.projsetId">
+            {{ ps.projsetName }}
+          </option>
+        </select>
+        <button
+          class="fb-adv-btn"
+          style="margin-left: 8px"
+          @click="addSelectedProjsets"
+          :disabled="!selectedProjsetIds.length"
+        >
+          添加所选
+        </button>
+      </div>
     </div>
 
     <!-- 项目输入 -->
@@ -206,7 +274,17 @@ function onConfirm() {
     <!-- 高级成员选择（包含职位） -->
     <div class="fb-row">
       <label class="fb-label">成员筛选</label>
-      <button type="button" class="fb-adv-btn" @click="openMemberSelector">选择成员</button>
+      <div class="fb-member-role-btns">
+        <button type="button" class="fb-role-btn" @click="() => openMemberSelector('translator')">
+          翻译
+        </button>
+        <button type="button" class="fb-role-btn" @click="() => openMemberSelector('proofreader')">
+          校对
+        </button>
+        <button type="button" class="fb-role-btn" @click="() => openMemberSelector('typesetter')">
+          嵌字
+        </button>
+      </div>
     </div>
 
     <!-- 状态选择（强制单行填充） -->
@@ -233,6 +311,7 @@ function onConfirm() {
       :show="memberSelectorOpen"
       :picked="advancedPickedMembers"
       :team-id="props.teamId"
+      :initial-role="memberSelectorRole ?? undefined"
       @confirm="handleMemberSelectorConfirm"
       @cancel="handleMemberSelectorCancel"
       @close="handleMemberSelectorClose"
@@ -285,6 +364,36 @@ function onConfirm() {
   font-size: 13px;
   background: rgba(248, 252, 255, 0.95);
   color: #203a56;
+}
+.fb-projset-wrapper {
+  flex: 1;
+  display: flex;
+}
+.fb-select {
+  flex: 1;
+  height: 34px;
+  border: 1px solid rgba(170, 200, 232, 0.8);
+  border-radius: 10px;
+  padding: 0 12px;
+  font-size: 13px;
+  background: rgba(248, 252, 255, 0.95);
+  color: #203a56;
+  cursor: pointer;
+  outline: none;
+  transition:
+    border-color 0.14s ease,
+    box-shadow 0.14s ease;
+}
+.fb-select:hover:not(:disabled) {
+  border-color: rgba(118, 184, 255, 0.9);
+}
+.fb-select:focus {
+  border-color: rgba(118, 184, 255, 0.9);
+  box-shadow: 0 0 0 1px rgba(118, 184, 255, 0.55);
+}
+.fb-select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 .fb-member-wrapper {
   flex: 1;
@@ -429,6 +538,24 @@ function onConfirm() {
   justify-content: flex-end;
   gap: 12px;
   margin-top: 4px;
+}
+.fb-member-role-btns {
+  display: inline-flex;
+  gap: 8px;
+}
+.fb-role-btn {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(180, 206, 238, 0.7);
+  background: rgba(246, 250, 255, 0.9);
+  color: #2b577e;
+  font-size: 12px;
+  cursor: pointer;
+}
+.fb-role-btn:hover {
+  background: #eaf6ff;
+  box-shadow: 0 6px 18px rgba(118, 184, 255, 0.08);
+  transform: translateY(-2px);
 }
 .fb-clear-btn {
   padding: 6px 14px;

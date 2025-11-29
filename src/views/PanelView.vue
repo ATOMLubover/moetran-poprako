@@ -180,7 +180,7 @@ const currentFilterOptions = ref<FilterOption[]>([]);
 // fuzzy_proj_name, translating_status, proofreading_status, typesetting_status, reviewing_status,
 // is_published, member_ids, (扩展) project_set_id
 interface PanelProjectSearchFilters extends ProjectSearchFilters {
-  projectSetId?: string;
+  projectSetIds?: string[];
 }
 
 function mapPhaseTextToNumber(text: string): number | undefined {
@@ -222,9 +222,10 @@ const currentSearchFilters = computed<PanelProjectSearchFilters | undefined>(() 
       continue;
     }
 
-    // 项目集筛选（若后端支持，使用 project_set_id 字段）
+    // 项目集筛选（支持多个 project set）
     if (key === 'project-set') {
-      filters.projectSetId = val;
+      if (!filters.projectSetIds) filters.projectSetIds = [];
+      (filters.projectSetIds as string[]).push(val);
       continue;
     }
 

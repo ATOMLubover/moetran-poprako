@@ -23,6 +23,8 @@ const props = defineProps<{
     teamId?: string
   ) => Promise<MemberInfo[]>;
   teamId?: string;
+  // optional initial role to open on (translator|proofreader|typesetter)
+  initialRole?: MemberInfo['position'];
 }>();
 
 const emit = defineEmits<{ (e: 'close'): void; (e: 'confirm'): void; (e: 'cancel'): void }>();
@@ -81,6 +83,10 @@ watch(
     if (show) {
       snapshot.value = props.picked.map(m => ({ ...m }));
       // 初始展示：当前角色已选成员
+      // 如果父组件希望初始打开到某个职位，使用 initialRole
+      if (props.initialRole) {
+        currentRole.value = props.initialRole;
+      }
       refreshResults();
     } else {
       keyword.value = '';

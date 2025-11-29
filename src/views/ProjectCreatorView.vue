@@ -3,8 +3,7 @@ import { computed, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useToastStore } from '../stores/toast';
 import { useTokenStore } from '../stores/token';
-import type { ResMemberBrief, MemberPosition } from '../ipc/member';
-import { searchMembersByName } from '../ipc/member';
+// member search is now handled inside `MemberSelector` component
 import {
   assignMemberToProj,
   createProj,
@@ -12,6 +11,7 @@ import {
   type PoprakoProjsetInfo,
 } from '../ipc/project';
 import CircularProgress from '../components/CircularProgress.vue';
+import MemberSelector from '../components/MemberSelector.vue';
 
 // props：由 PanelView 传入当前团队 ID
 // Props: 从父组件（PanelView）注入当前选中的团队 ID
@@ -114,174 +114,70 @@ const invitedTranslators = ref<MemberInfo[]>([]);
 const invitedProofreaders = ref<MemberInfo[]>([]);
 const invitedTypesetters = ref<MemberInfo[]>([]);
 
-// MemberSelector 悬浮窗状态
-type InviteRole = 'translator' | 'proofreader' | 'typesetter' | null;
+// Use the shared MemberSelector component: maintain a single picked list
+// that includes position so the component can manage picks across roles.
 const selectorOpen = ref(false);
-const selectorRole = ref<InviteRole>(null);
-const selectorKeyword = ref('');
-const selectorLoading = ref(false);
-const selectorResults = ref<ResMemberBrief[]>([]);
-// 本次打开选择器前的原始已选集合，用于取消时回滚（深拷贝）
-let selectorInitialPicked: MemberInfo[] = [];
+const selectorRole = ref<'translator' | 'proofreader' | 'typesetter' | null>(null);
+const pickedAll = ref<
+  { id: string; name: string; position: 'translator' | 'proofreader' | 'typesetter' }[]
+>([]);
 
-// 打开成员选择器：记录初始选择并展示已选成员
-function openSelector(role: InviteRole): void {
+function openSelector(role: 'translator' | 'proofreader' | 'typesetter'): void {
   selectorRole.value = role;
-  selectorKeyword.value = '';
-  selectorResults.value = [];
+  // build pickedAll from existing invited lists
+  pickedAll.value = [
+    ...invitedTranslators.value.map(m => ({
+      id: m.id,
+      name: m.name,
+      position: 'translator' as const,
+    })),
+    ...invitedProofreaders.value.map(m => ({
+      id: m.id,
+      name: m.name,
+      position: 'proofreader' as const,
+    })),
+    ...invitedTypesetters.value.map(m => ({
+      id: m.id,
+      name: m.name,
+      position: 'typesetter' as const,
+    })),
+  ];
   selectorOpen.value = true;
-
-  // 记录打开时的初始选择，用于取消时恢复
-  if (role === 'translator') {
-    selectorInitialPicked = invitedTranslators.value.map(m => ({ ...m }));
-  } else if (role === 'proofreader') {
-    selectorInitialPicked = invitedProofreaders.value.map(m => ({ ...m }));
-  } else if (role === 'typesetter') {
-    selectorInitialPicked = invitedTypesetters.value.map(m => ({ ...m }));
-  } else {
-    selectorInitialPicked = [];
-  }
-
-  // 初次打开时立即展示当前已选成员（无须搜索）
-  if (role) {
-    const picked =
-      role === 'translator'
-        ? invitedTranslators.value
-        : role === 'proofreader'
-          ? invitedProofreaders.value
-          : invitedTypesetters.value;
-
-    selectorResults.value = picked.map(m => ({
-      memberId: m.id,
-      username: m.name,
-    }));
-  }
 }
 
 function closeSelector(): void {
   selectorOpen.value = false;
   selectorRole.value = null;
-  selectorKeyword.value = '';
-  selectorResults.value = [];
-  selectorInitialPicked = [];
+  pickedAll.value = [];
 }
 
-// 搜索成员（调用后端），避免重复 id 并合并已选成员
-async function handleSearchMembers(): Promise<void> {
-  selectorLoading.value = true;
+function onMemberSelectorConfirm(): void {
+  // split pickedAll back into per-role arrays
+  invitedTranslators.value = pickedAll.value
+    .filter(p => p.position === 'translator')
+    .map(p => ({ id: p.id, name: p.name }));
+  invitedProofreaders.value = pickedAll.value
+    .filter(p => p.position === 'proofreader')
+    .map(p => ({ id: p.id, name: p.name }));
+  invitedTypesetters.value = pickedAll.value
+    .filter(p => p.position === 'typesetter')
+    .map(p => ({ id: p.id, name: p.name }));
 
-  console.log(
-    'Searching members for role:',
-    selectorRole.value,
-    'with keyword:',
-    selectorKeyword.value,
-    'teamId:',
-    props.teamId
-  );
-
-  try {
-    if (!selectorRole.value || !props.teamId) {
-      selectorResults.value = [];
-
-      // Provide a user-visible hint instead of only logging
-      if (!props.teamId) {
-        toastStore.show('请先在左侧选择一个汉化组以搜索成员');
-      }
-
-      return;
-    } else {
-      // 当前角色已选成员
-      const pickedIds: string[] =
-        selectorRole.value === 'translator'
-          ? invitedTranslators.value.map(m => m.id)
-          : selectorRole.value === 'proofreader'
-            ? invitedProofreaders.value.map(m => m.id)
-            : invitedTypesetters.value.map(m => m.id);
-
-      const pickedMembers: ResMemberBrief[] = selectorResults.value.filter(m =>
-        pickedIds.includes(m.memberId)
-      );
-
-      const keyword = selectorKeyword.value.trim();
-
-      if (!keyword) {
-        // 无关键词：只显示已选成员
-        selectorResults.value = pickedMembers;
-        return;
-      }
-
-      const results = await searchMembersByName({
-        teamId: props.teamId,
-        position: selectorRole.value as MemberPosition,
-        fuzzyName: keyword,
-        page: 1,
-        limit: 20,
-      });
-
-      const pickedIdSet = new Set(pickedMembers.map(m => m.memberId));
-
-      const filteredResults = results.filter(m => !pickedIdSet.has(m.memberId));
-
-      selectorResults.value = [...pickedMembers, ...filteredResults];
-    }
-  } finally {
-    selectorLoading.value = false;
-  }
+  closeSelector();
 }
 
-function handleSelectMember(memberId: string): void {
-  const member = selectorResults.value.find(m => m.memberId === memberId);
-  if (!member) return;
+function onMemberSelectorCancel(): void {
+  // MemberSelector will have restored pickedAll via props mutation; reflect into invited arrays
+  invitedTranslators.value = pickedAll.value
+    .filter(p => p.position === 'translator')
+    .map(p => ({ id: p.id, name: p.name }));
+  invitedProofreaders.value = pickedAll.value
+    .filter(p => p.position === 'proofreader')
+    .map(p => ({ id: p.id, name: p.name }));
+  invitedTypesetters.value = pickedAll.value
+    .filter(p => p.position === 'typesetter')
+    .map(p => ({ id: p.id, name: p.name }));
 
-  const targetArr =
-    selectorRole.value === 'translator'
-      ? invitedTranslators
-      : selectorRole.value === 'proofreader'
-        ? invitedProofreaders
-        : invitedTypesetters;
-
-  if (!targetArr.value.some(m => m.id === member.memberId)) {
-    targetArr.value.push({ id: member.memberId, name: member.username });
-  }
-
-  // 无关键词时实时刷新展示已选成员
-  if (!selectorKeyword.value.trim()) {
-    void handleSearchMembers();
-  }
-}
-
-function handleRemoveMember(memberId: string): void {
-  const targetArr =
-    selectorRole.value === 'translator'
-      ? invitedTranslators
-      : selectorRole.value === 'proofreader'
-        ? invitedProofreaders
-        : invitedTypesetters;
-  targetArr.value = targetArr.value.filter(m => m.id !== memberId);
-
-  // 无关键词时实时刷新展示已选成员
-  if (!selectorKeyword.value.trim()) {
-    void handleSearchMembers();
-  }
-}
-
-function handleConfirmSelector(): void {
-  selectorOpen.value = false;
-  selectorRole.value = null;
-  selectorKeyword.value = '';
-  selectorResults.value = [];
-  selectorInitialPicked = [];
-}
-
-function handleCancelSelector(): void {
-  // 恢复到打开选择器前的状态
-  if (selectorRole.value === 'translator') {
-    invitedTranslators.value = selectorInitialPicked.map(m => ({ ...m }));
-  } else if (selectorRole.value === 'proofreader') {
-    invitedProofreaders.value = selectorInitialPicked.map(m => ({ ...m }));
-  } else if (selectorRole.value === 'typesetter') {
-    invitedTypesetters.value = selectorInitialPicked.map(m => ({ ...m }));
-  }
   closeSelector();
 }
 
@@ -553,152 +449,16 @@ async function handleCreateProject(): Promise<void> {
         </div>
       </div>
 
-      <!-- MemberSelector 悬浮窗（示例） -->
-      <div v-if="selectorOpen" class="selector-overlay">
-        <div class="selector-panel">
-          <header class="selector-header">
-            <span class="selector-title">
-              {{
-                selectorRole === 'translator'
-                  ? '选择翻译'
-                  : selectorRole === 'proofreader'
-                    ? '选择校对'
-                    : '选择嵌字'
-              }}
-            </span>
-            <!-- 顶部不再使用关闭叉号，由底部按钮控制 -->
-          </header>
-          <div class="selector-body">
-            <div class="selector-search">
-              <input
-                v-model="selectorKeyword"
-                type="text"
-                class="selector-input"
-                placeholder="输入成员名称进行搜索"
-                @keyup.enter="handleSearchMembers"
-              />
-              <button
-                type="button"
-                class="selector-search-btn"
-                @click="handleSearchMembers"
-                :disabled="selectorLoading"
-              >
-                {{ selectorLoading ? '搜索中...' : '搜索' }}
-              </button>
-            </div>
-            <ul class="selector-list" v-if="selectorResults.length">
-              <li
-                v-for="item in selectorResults"
-                :key="item.memberId"
-                class="selector-item"
-                :class="{
-                  'selector-item--picked':
-                    (selectorRole === 'translator' &&
-                      invitedTranslators.some(m => m.id === item.memberId)) ||
-                    (selectorRole === 'proofreader' &&
-                      invitedProofreaders.some(m => m.id === item.memberId)) ||
-                    (selectorRole === 'typesetter' &&
-                      invitedTypesetters.some(m => m.id === item.memberId)),
-                }"
-              >
-                <span class="selector-item__name">{{ item.username }}</span>
-                <button
-                  v-if="
-                    (selectorRole === 'translator' &&
-                      invitedTranslators.some(m => m.id === item.memberId)) ||
-                    (selectorRole === 'proofreader' &&
-                      invitedProofreaders.some(m => m.id === item.memberId)) ||
-                    (selectorRole === 'typesetter' &&
-                      invitedTypesetters.some(m => m.id === item.memberId))
-                  "
-                  type="button"
-                  class="selector-icon-btn selector-icon-btn--remove"
-                  @click.stop="handleRemoveMember(item.memberId)"
-                  title="移除该成员"
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    xmlns="http://www.w3.org/2000/svg"
-                  >
-                    <path
-                      d="M4.2 4.2L11.8 11.8M11.8 4.2L4.2 11.8"
-                      stroke="currentColor"
-                      stroke-width="1.6"
-                      stroke-linecap="round"
-                    />
-                  </svg>
-                </button>
-                <button
-                  v-else
-                  type="button"
-                  class="selector-icon-btn selector-icon-btn--add"
-                  @click.stop="handleSelectMember(item.memberId)"
-                  title="加入该成员"
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    xmlns="http://www.w3.org/2000/svg"
-                  >
-                    <path
-                      d="M8 3V13M3 8H13"
-                      stroke="currentColor"
-                      stroke-width="1.6"
-                      stroke-linecap="round"
-                    />
-                  </svg>
-                </button>
-              </li>
-            </ul>
-            <div v-else class="selector-empty">暂无搜索结果</div>
-
-            <!-- 当前角色已选择成员预览 -->
-            <!-- <div
-              class="selector-picked"
-              v-if="selectorRole === 'translator' && invitedTranslators.length"
-            >
-              <span class="selector-picked-label">已选翻译：</span>
-              <span class="selector-picked-names">{{ invitedTranslators.join('、') }}</span>
-            </div>
-            <div
-              class="selector-picked"
-              v-else-if="selectorRole === 'proofreader' && invitedProofreaders.length"
-            >
-              <span class="selector-picked-label">已选校对：</span>
-              <span class="selector-picked-names">{{ invitedProofreaders.join('、') }}</span>
-            </div>
-            <div
-              class="selector-picked"
-              v-else-if="selectorRole === 'typesetter' && invitedTypesetters.length"
-            >
-              <span class="selector-picked-label">已选嵌字：</span>
-              <span class="selector-picked-names">{{ invitedTypesetters.join('、') }}</span>
-            </div> -->
-
-            <div class="selector-actions">
-              <button
-                type="button"
-                class="selector-action-btn selector-action-btn--cancel"
-                @click="handleCancelSelector"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                class="selector-action-btn selector-action-btn--confirm"
-                @click="handleConfirmSelector"
-              >
-                确认
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
+      <!-- Shared MemberSelector component -->
+      <MemberSelector
+        :show="selectorOpen"
+        :picked="pickedAll"
+        :team-id="props.teamId ?? undefined"
+        :initial-role="selectorRole ?? undefined"
+        @confirm="onMemberSelectorConfirm"
+        @cancel="onMemberSelectorCancel"
+        @close="closeSelector"
+      />
     </div>
     <!-- 底部固定提交区域 -->
     <div class="creator-footer">

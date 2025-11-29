@@ -261,6 +261,9 @@ pub struct PoprakoProjFilterReq {
     pub member_ids: Option<Vec<String>>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub projset_ids: Option<Vec<String>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub time_start: Option<i64>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
