@@ -5,46 +5,14 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-// 项目集 DTO
+// Moetran 项目集 DTO（仅用于 enriched flows）
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ResProjectSet {
     pub id: String,
     pub name: String,
 }
 
-// 获取指定汉化组的项目集列表
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct GetTeamProjectSetsReq {
-    pub team_id: String,
-    pub page: u32,
-    pub limit: u32,
-}
-
-#[tauri::command]
-pub async fn get_team_project_sets(
-    payload: GetTeamProjectSetsReq,
-) -> Result<Vec<ResProjectSet>, String> {
-    tracing::info!(team_id = %payload.team_id, page = payload.page, limit = payload.limit, "team.project_sets.request.start");
-
-    let mut defer = WarnDefer::new("team.project_sets.request");
-
-    let path = format!(
-        "teams/{}/project-sets?page={}&limit={}",
-        payload.team_id, payload.page, payload.limit
-    );
-
-    let list: Vec<ResProjectSet> = moetran_get(&path, None)
-        .await
-        .map_err(|err| format!("获取项目集列表失败: {}", err))?;
-
-    tracing::info!(count = list.len(), "team.project_sets.request.ok");
-
-    defer.success();
-
-    Ok(list)
-}
-
-// 项目 DTO
+// Moetran 项目 DTO（仅用于 enriched flows）
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ResProject {
     pub id: String,
@@ -54,70 +22,6 @@ pub struct ResProject {
     pub checked_source_count: u64,
     pub team: crate::team::ResTeam,
     pub project_set: ResProjectSet,
-}
-
-// 获取指定汉化组下某项目集的项目列表
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct GetTeamProjectsReq {
-    pub team_id: String,
-    pub project_set: String,
-    pub page: u32,
-    pub limit: u32,
-}
-
-#[tauri::command]
-pub async fn get_team_projects(payload: GetTeamProjectsReq) -> Result<Vec<ResProject>, String> {
-    tracing::info!(team_id = %payload.team_id, project_set = %payload.project_set, page = payload.page, limit = payload.limit, "team.projects.request.start");
-
-    let mut defer = WarnDefer::new("team.projects.request");
-
-    let path = format!(
-        "teams/{}/projects?project_set={}&page={}&limit={}",
-        payload.team_id, payload.project_set, payload.page, payload.limit
-    );
-
-    let list: Vec<ResProject> = moetran_get(&path, None)
-        .await
-        .map_err(|err| format!("获取项目列表失败: {}", err))?;
-
-    tracing::info!(count = list.len(), "team.projects.request.ok");
-
-    defer.success();
-
-    Ok(list)
-}
-
-// 获取当前用户的项目列表
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct GetUserProjectsReq {
-    pub page: u32,
-    pub limit: u32,
-}
-
-#[tauri::command]
-pub async fn get_user_projects(payload: GetUserProjectsReq) -> Result<Vec<ResProject>, String> {
-    tracing::info!(
-        page = payload.page,
-        limit = payload.limit,
-        "user.projects.request.start"
-    );
-
-    let mut defer = WarnDefer::new("user.projects.request");
-
-    let path = format!(
-        "user/projects?page={}&limit={}",
-        payload.page, payload.limit
-    );
-
-    let list: Vec<ResProject> = moetran_get(&path, None)
-        .await
-        .map_err(|err| format!("获取用户项目列表失败: {}", err))?;
-
-    tracing::info!(count = list.len(), "user.projects.request.ok");
-
-    defer.success();
-
-    Ok(list)
 }
 
 // PopRaKo 项目搜索返回的精简 DTO（参考 ProjInfoReply）
@@ -131,6 +35,24 @@ pub struct PoprakoProjInfo {
     pub typesetting_status: i32,
     pub reviewing_status: i32,
     pub is_published: bool,
+    #[serde(default)]
+    pub members: Option<Vec<PoprakoMember>>,
+}
+
+// PopRaKo 项目内的成员信息（search 接口会返回）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PoprakoMember {
+    // PopRaKo 返回的用户 id 字段
+    // Accept common upstream variants for robustness
+    #[serde(alias = "userId", alias = "userid")]
+    pub user_id: String,
+    pub member_id: String,
+    pub username: String,
+    pub is_admin: bool,
+    pub is_translator: bool,
+    pub is_proofreader: bool,
+    pub is_typesetter: bool,
+    pub is_principal: bool,
 }
 
 // PopRaKo 通用返回包裹（项目模块）
@@ -225,6 +147,39 @@ pub struct ResProjectEnriched {
     pub typesetting_status: Option<i32>,
     pub reviewing_status: Option<i32>,
     pub is_published: Option<bool>,
+    // PopRaKo 返回的成员列表（可选）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub members: Option<Vec<PoprakoMember>>,
+    // 从 members 中提取的负责人 user id 列表（可选）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub principals: Option<Vec<String>>,
+}
+
+// ========== Moetran 项目 target / files DTO（供 ProjectDetail 使用） ==========
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MoetranProjectTarget {
+    pub id: String,
+    pub translated_source_count: u64,
+    pub checked_source_count: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MoetranProjectFile {
+    pub id: String,
+    pub name: String,
+    pub source_count: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GetProjectTargetsReq {
+    pub project_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GetProjectFilesReq {
+    pub project_id: String,
+    pub target_id: Option<String>,
 }
 
 // PopRaKo 项目搜索请求 DTO（与 PickProjPayload 对齐的子集）
@@ -500,6 +455,124 @@ pub async fn assign_member_to_proj(payload: AssignMemberReq) -> Result<(), Strin
     Ok(())
 }
 
+// ========== Moetran 项目 targets / files 命令（供 ProjectDetail 使用） ==========
+
+#[tauri::command]
+pub async fn get_project_targets(
+    payload: GetProjectTargetsReq,
+) -> Result<Vec<MoetranProjectTarget>, String> {
+    tracing::info!(project_id = %payload.project_id, "moetran.project.targets.request.start");
+
+    let mut defer = WarnDefer::new("moetran.project.targets");
+
+    let mut query = std::collections::HashMap::new();
+    query.insert("page", "1".to_string());
+    query.insert("limit", "100000".to_string());
+    query.insert("word", "".to_string());
+    // 仅请求尨译项目（status=0）
+    query.insert("status", "0".to_string());
+
+    let path = format!("projects/{}/targets", payload.project_id);
+    tracing::debug!(%path, ?query, "moetran.get_project_targets request");
+
+    let raw_list: Vec<serde_json::Value> = match moetran_get(&path, Some(&query)).await {
+        Ok(list) => list,
+        Err(e) => {
+            tracing::error!(project_id = %payload.project_id, %path, ?query, error = %e, "moetran.get_project_targets failed");
+            return Err(format!("获取项目 targets 失败: {}", e));
+        }
+    };
+
+    let result: Vec<MoetranProjectTarget> = raw_list
+        .into_iter()
+        .filter_map(|v| {
+            let id = v.get("id")?.as_str()?.to_string();
+            let translated = v
+                .get("translated_source_count")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(0);
+            let checked = v
+                .get("checked_source_count")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(0);
+
+            Some(MoetranProjectTarget {
+                id,
+                translated_source_count: translated,
+                checked_source_count: checked,
+            })
+        })
+        .collect();
+
+    let count = result.len();
+    tracing::info!(project_id = %payload.project_id, count = count, "moetran.project.targets.ok");
+
+    defer.success();
+
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn get_project_files(
+    payload: GetProjectFilesReq,
+) -> Result<Vec<MoetranProjectFile>, String> {
+    tracing::info!(
+        project_id = %payload.project_id,
+        target_id = ?payload.target_id,
+        "moetran.project.files.request.start"
+    );
+
+    let mut defer = WarnDefer::new("moetran.project.files");
+
+    let mut query = std::collections::HashMap::new();
+    query.insert("page", "1".to_string());
+    query.insert("limit", "100000".to_string());
+    query.insert("word", "".to_string());
+    if let Some(t) = &payload.target_id {
+        query.insert("target", t.clone());
+    }
+    // 仅请求尨译项目（status=0）
+    query.insert("status", "0".to_string());
+
+    let path = format!("projects/{}/files", payload.project_id);
+    tracing::debug!(%path, ?query, "moetran.get_project_files request");
+
+    let raw_list: Vec<serde_json::Value> = match moetran_get(&path, Some(&query)).await {
+        Ok(list) => list,
+        Err(e) => {
+            tracing::error!(project_id = %payload.project_id, target_id = ?payload.target_id, %path, ?query, error = %e, "moetran.get_project_files failed");
+            return Err(format!("获取项目 files 失败: {}", e));
+        }
+    };
+
+    let result: Vec<MoetranProjectFile> = raw_list
+        .into_iter()
+        .filter_map(|v| {
+            let id = v.get("id")?.as_str()?.to_string();
+            let name = v.get("name")?.as_str()?.to_string();
+            let source = v.get("source_count").and_then(|x| x.as_u64()).unwrap_or(0);
+
+            Some(MoetranProjectFile {
+                id,
+                name,
+                source_count: source,
+            })
+        })
+        .collect();
+
+    let count = result.len();
+    tracing::info!(
+        project_id = %payload.project_id,
+        target_id = ?payload.target_id,
+        count = count,
+        "moetran.project.files.ok"
+    );
+
+    defer.success();
+
+    Ok(result)
+}
+
 // 获取当前用户的 enriched 项目列表（Moetran 列表 + PopRaKo /projs/search 补充）
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GetUserProjectsEnrichedReq {
@@ -518,12 +591,13 @@ pub async fn get_user_projects_enriched(
         "user.projects_enriched.request.start"
     );
 
-    let path = format!(
-        "user/projects?page={}&limit={}",
-        payload.page, payload.limit
-    );
+    let path = "user/projects".to_string();
+    let mut query = std::collections::HashMap::new();
+    query.insert("page", payload.page.to_string());
+    query.insert("limit", payload.limit.to_string());
+    query.insert("status", "0".to_string());
 
-    let base_list: Vec<ResProject> = moetran_get(&path, None)
+    let base_list: Vec<ResProject> = moetran_get(&path, Some(&query))
         .await
         .map_err(|err| format!("获取用户项目列表失败: {}", err))?;
 
@@ -583,6 +657,13 @@ pub async fn get_user_projects_enriched(
                 typesetting_status: Some(extra.typesetting_status),
                 reviewing_status: Some(extra.reviewing_status),
                 is_published: Some(extra.is_published),
+                members: extra.members.clone(),
+                principals: extra.members.as_ref().map(|ms| {
+                    ms.iter()
+                        .filter(|m| m.is_principal)
+                        .map(|m| m.user_id.clone())
+                        .collect()
+                }),
             });
         } else {
             enriched_list.push(ResProjectEnriched {
@@ -600,6 +681,8 @@ pub async fn get_user_projects_enriched(
                 typesetting_status: None,
                 reviewing_status: None,
                 is_published: None,
+                members: None,
+                principals: None,
             });
         }
     }
@@ -626,12 +709,13 @@ pub async fn get_team_projects_enriched(
 ) -> Result<Vec<ResProjectEnriched>, String> {
     tracing::info!(team_id = %payload.team_id, page = payload.page, limit = payload.limit, "team.projects_enriched.request.start");
 
-    let path = format!(
-        "teams/{}/projects?page={}&limit={}",
-        payload.team_id, payload.page, payload.limit
-    );
+    let path = format!("teams/{}/projects", payload.team_id);
+    let mut query = std::collections::HashMap::new();
+    query.insert("page", payload.page.to_string());
+    query.insert("limit", payload.limit.to_string());
+    query.insert("status", "0".to_string());
 
-    let base_list: Vec<ResProject> = moetran_get(&path, None)
+    let base_list: Vec<ResProject> = moetran_get(&path, Some(&query))
         .await
         .map_err(|err| format!("获取团队项目列表失败: {}", err))?;
 
@@ -690,6 +774,13 @@ pub async fn get_team_projects_enriched(
                 typesetting_status: Some(extra.typesetting_status),
                 reviewing_status: Some(extra.reviewing_status),
                 is_published: Some(extra.is_published),
+                members: extra.members.clone(),
+                principals: extra.members.as_ref().map(|ms| {
+                    ms.iter()
+                        .filter(|m| m.is_principal)
+                        .map(|m| m.user_id.clone())
+                        .collect()
+                }),
             });
         } else {
             enriched_list.push(ResProjectEnriched {
@@ -707,6 +798,8 @@ pub async fn get_team_projects_enriched(
                 typesetting_status: None,
                 reviewing_status: None,
                 is_published: None,
+                members: None,
+                principals: None,
             });
         }
     }
@@ -757,6 +850,7 @@ pub async fn search_user_projects_enriched(
     for extra in items {
         let mut query = std::collections::HashMap::new();
         query.insert("word", extra.proj_name.clone());
+        query.insert("status", "0".to_string());
 
         let list: Vec<ResProject> = moetran_get("user/projects", Some(&query))
             .await
@@ -778,6 +872,13 @@ pub async fn search_user_projects_enriched(
                 typesetting_status: Some(extra.typesetting_status),
                 reviewing_status: Some(extra.reviewing_status),
                 is_published: Some(extra.is_published),
+                members: extra.members.clone(),
+                principals: extra.members.as_ref().map(|ms| {
+                    ms.iter()
+                        .filter(|m| m.is_principal)
+                        .map(|m| m.user_id.clone())
+                        .collect()
+                }),
             });
         }
     }
@@ -832,6 +933,7 @@ pub async fn search_team_projects_enriched(
     for extra in items {
         let mut query = std::collections::HashMap::new();
         query.insert("word", extra.proj_name.clone());
+        query.insert("status", "0".to_string());
 
         let path = format!("teams/{}/projects", payload.team_id);
 
@@ -855,6 +957,13 @@ pub async fn search_team_projects_enriched(
                 typesetting_status: Some(extra.typesetting_status),
                 reviewing_status: Some(extra.reviewing_status),
                 is_published: Some(extra.is_published),
+                members: extra.members.clone(),
+                principals: extra.members.as_ref().map(|ms| {
+                    ms.iter()
+                        .filter(|m| m.is_principal)
+                        .map(|m| m.user_id.clone())
+                        .collect()
+                }),
             });
         }
     }

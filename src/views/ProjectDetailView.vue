@@ -12,29 +12,27 @@ import {
   CategoryScale,
   Filler,
 } from 'chart.js';
-import CircularProgress from '../components/CircularProgress.vue';
 import { useToastStore } from '../stores/toast';
+import { useUserStore } from '../stores/user';
+import { getProjectTargets, getProjectFiles } from '../ipc/project';
 
 // TODO: 后续接口可能扩展字段（如权限、进度来源），保持结构可扩展
 interface PageMarkerData {
-  // 单页标记统计
+  // 单页标记统计（当前仅使用 source_count）
   pageNumber: number;
-  inBoxMarkers: number;
-  outOfBoxMarkers: number;
+  markerCount: number;
 }
 
 // TODO: 状态枚举可能会增加（如 paused / archived）
 type ProjectStatus = 'pending' | 'in_progress' | 'completed';
 
+import type { ResMember } from '../api/model/member';
 // TODO: 项目详情字段未来可能会增加 Poprako 相关统计 / 团队角色等
 interface ProjectDetail {
   id: string;
   title: string;
-  authorName: string;
-  uploader: string;
-  description: string;
-  worksetId: number;
-  worksetIndex: number;
+  projsetName: string | null;
+  projsetIndex: number | null;
   totalPages: number;
   totalMarkers: number;
   totalTranslatedMarkers: number;
@@ -43,8 +41,6 @@ interface ProjectDetail {
   proofreadingStatus: ProjectStatus;
   letteringStatus: ProjectStatus;
   reviewingStatus: ProjectStatus;
-  allowAutoJoin: boolean;
-  isHidden: boolean;
   translators: string[];
   proofreaders: string[];
   letterers: string[];
@@ -52,7 +48,27 @@ interface ProjectDetail {
   pageMarkers: PageMarkerData[];
 }
 
-const props = defineProps<{ projectId: string }>();
+const props = defineProps<{
+  projectId: string;
+  title: string;
+  projsetName: string | null;
+  projsetIndex: number | null;
+  totalMarkers: number | null;
+  totalTranslated: number | null;
+  totalChecked: number | null;
+  translatingStatus: number | null;
+  proofreadingStatus: number | null;
+  typesettingStatus: number | null;
+  reviewingStatus: number | null;
+  translators: string[];
+  proofreaders: string[];
+  letterers: string[];
+  reviewers: string[];
+  // PopRaKo members with typed ResMember
+  members?: ResMember[];
+  // principals are user ids
+  principals?: string[];
+}>();
 
 const emit = defineEmits<{
   (e: 'close'): void;
@@ -73,21 +89,64 @@ const loadingMarkers = ref(false);
 const cardRef = ref<HTMLElement | null>(null);
 
 // 是否为项目管理员（后续可根据真实用户身份判断）
-const isMeProjectMgr = computed(() => true); // TODO: 替换为真实权限判断
+// (已由 'principal' 角色控制关键编辑权限)
 
-// 是否在项目中（后续根据服务端返回的成员列表判断）
-const isMeInProject = computed(() => true); // TODO: 替换为真实参与判断
+const userStore = useUserStore();
+const isMeInProject = computed(() => {
+  const uid = userStore.user?.id;
+  if (!uid) return false;
+  // Prefer explicit PopRaKo `members` (each member exposes `userId`),
+  // fall back to legacy role arrays which may contain user ids.
+  if (props.members && Array.isArray(props.members) && props.members.length > 0) {
+    return (props.members as ResMember[]).some(
+      m => (m.userId ?? (m as unknown as { user_id?: string }).user_id ?? m.memberId) === uid
+    );
+  }
+
+  const members = [
+    ...(props.translators || []),
+    ...(props.proofreaders || []),
+    ...(props.letterers || []),
+    ...(props.reviewers || []),
+  ];
+  return members.includes(uid);
+});
+
+// whether current user is the project's principal (if principals provided)
+const isMePrincipal = computed(() => {
+  const uid = userStore.user?.id;
+  if (!uid) return false;
+  const principals = props.principals ?? [];
+  return principals.includes(uid);
+});
+
+// whether current user is translator or proofreader
+const isMeTranslatorOrProofreader = computed(() => {
+  const uid = userStore.user?.id;
+  if (!uid) return false;
+
+  console.log('Checking isMeTranslatorOrProofreader for uid', uid, {
+    members: props.members,
+    translators: props.translators,
+    proofreaders: props.proofreaders,
+  });
+
+  // If PopRaKo `members` provided with role flags, prefer that
+  if (props.members && Array.isArray(props.members) && props.members.length > 0) {
+    const m = (props.members as ResMember[]).find(
+      mm => (mm.userId ?? (mm as unknown as { user_id?: string }).user_id ?? mm.memberId) === uid
+    );
+    return !!m && (m.isTranslator === true || m.isProofreader === true);
+  }
+
+  // Fallback to legacy role arrays
+  const translators = props.translators ?? [];
+  const proofreaders = props.proofreaders ?? [];
+  return translators.includes(uid) || proofreaders.includes(uid);
+});
 
 // --- 进度相关计算 ---
-const translationProgress = computed(() => {
-  if (!project.value || project.value.totalMarkers === 0) return 0;
-  return (project.value.totalTranslatedMarkers / project.value.totalMarkers) * 100;
-});
-
-const proofreadProgress = computed(() => {
-  if (!project.value || project.value.totalMarkers === 0) return 0;
-  return (project.value.totalProofreadMarkers / project.value.totalMarkers) * 100;
-});
+// (per-page and totals are displayed as raw numbers; percent progress computations removed)
 
 // 状态文本与配色（简约风格）
 const statusText: Record<ProjectStatus, string> = {
@@ -106,7 +165,27 @@ const statusColorMap: Record<ProjectStatus, string> = {
 const statusBlocks = computed(() => {
   if (!project.value)
     return [] as Array<{ label: string; members: string[]; status: ProjectStatus }>;
+  // If PopRaKo `members` prop is provided, prefer extracting roles from the members' flags.
+  if (props.members && Array.isArray(props.members) && props.members.length > 0) {
+    const members = props.members as ResMember[];
 
+    const pickName = (m: ResMember) => m.username || m.userId || m.memberId;
+
+    const translators = members.filter(m => m.isTranslator).map(pickName);
+    const proofreaders = members.filter(m => m.isProofreader).map(pickName);
+    const letterers = members.filter(m => m.isTypesetter).map(pickName);
+    // Map principals to the "监修"/reviewers slot (PopRaKo exposes isPrincipal)
+    const reviewers = members.filter(m => m.isPrincipal).map(pickName);
+
+    return [
+      { label: '翻译', members: translators, status: project.value.translationStatus },
+      { label: '校对', members: proofreaders, status: project.value.proofreadingStatus },
+      { label: '嵌字', members: letterers, status: project.value.letteringStatus },
+      { label: '监修', members: reviewers, status: project.value.reviewingStatus },
+    ];
+  }
+
+  // Fallback: use legacy arrays on project.value (strings)
   return [
     { label: '翻译', members: project.value.translators, status: project.value.translationStatus },
     {
@@ -156,19 +235,10 @@ const chartData = computed(() => {
     labels: project.value.pageMarkers.map(p => 'P' + p.pageNumber),
     datasets: [
       {
-        label: '框内标记',
-        data: project.value.pageMarkers.map(p => p.inBoxMarkers),
+        label: '标记数',
+        data: project.value.pageMarkers.map(p => p.markerCount),
         borderColor: '#3d79c4',
         backgroundColor: 'rgba(61,121,196,0.25)',
-        tension: 0.28,
-        pointRadius: 3.6,
-        fill: true,
-      },
-      {
-        label: '框外标记',
-        data: project.value.pageMarkers.map(p => p.outOfBoxMarkers),
-        borderColor: '#cc4d7e',
-        backgroundColor: 'rgba(204,77,126,0.25)',
         tension: 0.28,
         pointRadius: 3.6,
         fill: true,
@@ -198,74 +268,120 @@ const chartOptions = computed(() => ({
   },
 }));
 
-// --- Mock 数据获取 ---
-// 模拟获取项目概要（必须以 __mock 开头）
-async function __mockFetchProjectSummary(): Promise<ProjectDetail> {
-  // 获取项目概要
-  await new Promise(r => setTimeout(r, 420));
-
-  return {
-    id: props.projectId,
-    title: '調整記録 ご主人様の元へ届くまで',
-    authorName: 'しぷおる',
-    uploader: '杨声器不成器',
-    description: '',
-    worksetId: 1024,
-    worksetIndex: 5,
-    totalPages: 28,
-    totalMarkers: 410,
-    totalTranslatedMarkers: 180,
-    totalProofreadMarkers: 95,
-    translationStatus: 'completed',
-    proofreadingStatus: 'in_progress',
-    letteringStatus: 'pending',
-    reviewingStatus: 'pending',
-    allowAutoJoin: false,
-    isHidden: true,
-    translators: ['Hatsu1ki', '电容'],
-    proofreaders: ['Parody'],
-    letterers: ['水月', '鸟龙'],
-    reviewers: ['夏目历'],
-    pageMarkers: [],
-  };
-}
-
-// 模拟获取每页标记分布（必须以 __mock 开头）
-async function __mockFetchMarkerDetails(totalPages: number): Promise<PageMarkerData[]> {
-  // 获取标记分布
-  loadingMarkers.value = true;
-
-  await new Promise(r => setTimeout(r, 620));
-
-  const list: PageMarkerData[] = [];
-
-  for (let i = 1; i <= totalPages; i++) {
-    list.push({
-      pageNumber: i,
-      inBoxMarkers: Math.floor(Math.random() * 12) + 1,
-      outOfBoxMarkers: Math.floor(Math.random() * 6),
-    });
-  }
-
-  loadingMarkers.value = false;
-
-  return list;
+// 数字状态映射到 ProjectStatus
+function mapStatusNumberToProjectStatus(n: number | null): ProjectStatus {
+  if (n === 2) return 'completed';
+  if (n === 1) return 'in_progress';
+  return 'pending';
 }
 
 // 加载项目详情与标记分布
 async function loadProject(): Promise<void> {
-  // 加载项目整体数据
   try {
-    const summary = await __mockFetchProjectSummary();
+    const base: ProjectDetail = {
+      id: props.projectId,
+      title: props.title,
+      projsetName: props.projsetName,
+      projsetIndex: props.projsetIndex,
+      totalPages: 0,
+      totalMarkers: props.totalMarkers ?? 0,
+      totalTranslatedMarkers: props.totalTranslated ?? 0,
+      totalProofreadMarkers: props.totalChecked ?? 0,
+      translationStatus: mapStatusNumberToProjectStatus(props.translatingStatus),
+      proofreadingStatus: mapStatusNumberToProjectStatus(props.proofreadingStatus),
+      letteringStatus: mapStatusNumberToProjectStatus(props.typesettingStatus),
+      reviewingStatus: mapStatusNumberToProjectStatus(props.reviewingStatus),
+      translators: props.translators ?? [],
+      proofreaders: props.proofreaders ?? [],
+      letterers: props.letterers ?? [],
+      reviewers: props.reviewers ?? [],
+      pageMarkers: [],
+    };
 
-    project.value = summary;
+    project.value = base;
 
-    const markers = await __mockFetchMarkerDetails(summary.totalPages);
+    // 拉取 targets 和 files，仅用于 totalPages 与每页 source_count
+    loadingMarkers.value = true;
+
+    console.debug('[ProjectDetail] loadProject start', { projectId: props.projectId, base });
+
+    // Determine whether to fetch targets (only if current user is a member)
+    let files;
+    if (isMeInProject.value) {
+      // targets
+      let targets;
+      try {
+        targets = await getProjectTargets(props.projectId);
+        console.debug('[ProjectDetail] getProjectTargets', { projectId: props.projectId, targets });
+      } catch (e) {
+        console.error('[ProjectDetail] getProjectTargets failed', {
+          projectId: props.projectId,
+          error: e,
+        });
+        loadingMarkers.value = false;
+        toastStore.show('加载项目 targets 失败: ' + (e?.toString?.() ?? String(e)), 'error');
+        return;
+      }
+
+      if (!targets || !targets.length) {
+        console.debug('[ProjectDetail] no targets found', { projectId: props.projectId });
+        loadingMarkers.value = false;
+        return;
+      }
+
+      const primaryTarget = targets[0];
+
+      // files (with target filter)
+      try {
+        files = await getProjectFiles(props.projectId, primaryTarget.id);
+        console.debug('[ProjectDetail] getProjectFiles', {
+          projectId: props.projectId,
+          targetId: primaryTarget.id,
+          files,
+        });
+      } catch (e) {
+        console.error('[ProjectDetail] getProjectFiles failed', {
+          projectId: props.projectId,
+          targetId: primaryTarget.id,
+          error: e,
+        });
+        loadingMarkers.value = false;
+        toastStore.show('加载项目 files 失败: ' + (e?.toString?.() ?? String(e)), 'error');
+        return;
+      }
+    } else {
+      // Not a member: skip targets fetch and request files without target filter
+      try {
+        console.debug('[ProjectDetail] user not member, fetching files without target', {
+          projectId: props.projectId,
+        });
+        files = await getProjectFiles(props.projectId);
+        console.debug('[ProjectDetail] getProjectFiles (no target)', {
+          projectId: props.projectId,
+          files,
+        });
+      } catch (e) {
+        console.error('[ProjectDetail] getProjectFiles failed (no target)', {
+          projectId: props.projectId,
+          error: e,
+        });
+        loadingMarkers.value = false;
+        toastStore.show('加载项目 files 失败: ' + (e?.toString?.() ?? String(e)), 'error');
+        return;
+      }
+    }
 
     if (project.value) {
-      project.value.pageMarkers = markers;
+      project.value.totalPages = (files || []).length;
+      project.value.pageMarkers = (files || []).map((f, index) => ({
+        pageNumber: index + 1,
+        markerCount: f.sourceCount,
+      }));
     }
+
+    loadingMarkers.value = false;
   } catch (err) {
+    loadingMarkers.value = false;
     toastStore.show('加载项目详情失败', 'error');
   }
 }
@@ -290,7 +406,7 @@ function handleJoinOrLeave(): void {
   }
 }
 
-// 进入翻译工作台（带参与者模式或只读模式）
+// 进入翻译工作台（带翻校模式或阅读模式）
 function openTranslator(enabled: boolean): void {
   // 打开翻译工作台
   emit('open-translator', enabled);
@@ -317,7 +433,6 @@ onBeforeUnmount(() => {
     <header class="pd-header">
       <div class="pd-header__left">
         <h1 class="pd-title">{{ project.title }}</h1>
-        <p class="pd-meta">画师：{{ project.authorName }} / 上传者：{{ project.uploader }}</p>
       </div>
       <div class="pd-header__right">
         <button type="button" class="pd-close" @click="handleClose" title="关闭">×</button>
@@ -326,47 +441,38 @@ onBeforeUnmount(() => {
 
     <div class="pd-topbar">
       <div class="pd-tags">
-        <span class="pd-tag">作品集 ID: {{ project.worksetId }}</span>
-        <span class="pd-tag">项目 ID: {{ project.worksetIndex }}</span>
-        <span
-          class="pd-tag"
-          :class="{ 'pd-tag--ok': project.allowAutoJoin, 'pd-tag--bad': !project.allowAutoJoin }"
-        >
-          {{ project.allowAutoJoin ? '允许自动加入' : '禁止自动加入' }}
-        </span>
-        <span v-if="project.isHidden" class="pd-tag pd-tag--warn">隐藏项目</span>
+        <span class="pd-tag">项目集: {{ project.projsetName ?? '-' }}</span>
+        <span class="pd-tag">项目序号: {{ project.projsetIndex ?? '-' }}</span>
       </div>
       <div class="pd-actions">
         <button
-          v-if="isMeProjectMgr"
+          v-if="isMePrincipal"
           type="button"
           class="pd-btn pd-btn--primary"
           @click="handleToggleModifier"
         >
-          修改项目
+          修改项目信息
         </button>
         <button v-else type="button" class="pd-btn pd-btn--primary" @click="handleJoinOrLeave">
           {{ isMeInProject ? '退出项目' : '加入项目' }}
         </button>
-        <button type="button" class="pd-btn pd-btn--secondary" @click="openTranslator(true)">
-          参与者翻译
+        <button
+          v-if="isMeTranslatorOrProofreader"
+          type="button"
+          class="pd-btn pd-btn--secondary"
+          @click="openTranslator(true)"
+        >
+          翻校
         </button>
         <button type="button" class="pd-btn pd-btn--secondary" @click="openTranslator(false)">
-          只读翻译
+          阅读
         </button>
       </div>
     </div>
 
-    <div class="pd-description">
-      <h2 class="pd-subtitle">描述</h2>
-      <p class="pd-desc-text">
-        {{ project.description || '（暂无描述）' }}
-      </p>
-    </div>
-
     <div class="pd-card" ref="cardRef">
       <div class="pd-card__inner">
-        <div class="pd-card__left">
+        <!-- <div class="pd-card__left">
           <CircularProgress
             :progress="translationProgress"
             color="yellow"
@@ -379,7 +485,7 @@ onBeforeUnmount(() => {
             label="校对进度"
             class="pd-circ"
           />
-        </div>
+        </div> -->
         <div class="pd-card__right">
           <h2 class="pd-block-title">项目概况</h2>
           <!-- 状态卡片栅格 -->
@@ -407,13 +513,13 @@ onBeforeUnmount(() => {
               <span class="pd-metric-box__value">{{ project.totalMarkers }}</span>
             </div>
             <div class="pd-metric-box">
-              <span class="pd-metric-box__label">已翻译标记数</span>
+              <span class="pd-metric-box__label">已翻译</span>
               <span class="pd-metric-box__value pd-metric-box__value--yellow">{{
                 project.totalTranslatedMarkers
               }}</span>
             </div>
             <div class="pd-metric-box">
-              <span class="pd-metric-box__label">已校对标记数</span>
+              <span class="pd-metric-box__label">已校对</span>
               <span class="pd-metric-box__value pd-metric-box__value--pink">{{
                 project.totalProofreadMarkers
               }}</span>
@@ -540,7 +646,9 @@ onBeforeUnmount(() => {
 
 .pd-topbar {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
 }
 .pd-tags {

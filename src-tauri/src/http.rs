@@ -68,9 +68,15 @@ impl ApiClient {
             .await
             .map_err(|err| format!("request send error: {}", err))?;
 
-        let resp = resp
-            .error_for_status()
-            .map_err(|err| format!("http error: {}", err))?;
+        // 如果返回非 2xx，尝试读取响应体并返回更详细的错误信息
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "<body read error>".to_string());
+            return Err(format!("http error: status {} body: {}", status, body));
+        }
 
         // 读取为文本后再解析，这样可以优雅处理空响应体或 204 No Content 的情况
         let text = resp
@@ -132,9 +138,14 @@ impl ApiClient {
             .await
             .map_err(|err| format!("request send error: {}", err))?;
 
-        let resp = resp
-            .error_for_status()
-            .map_err(|err| format!("http error: {}", err))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "<body read error>".to_string());
+            return Err(format!("http error: status {} body: {}", status, body));
+        }
 
         // 读取为文本后再解析，这样可以优雅处理空响应体或 204 No Content 的情况
         let text = resp

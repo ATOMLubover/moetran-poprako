@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue';
-import type { MemberPosition, ResMemberBrief } from '../ipc/member';
+import type { MemberPosition } from '../ipc/member';
+import { ResMemberBrief } from '../api/model/member';
 
 // 通用成员类型（包含职位）
 export interface MemberInfo {

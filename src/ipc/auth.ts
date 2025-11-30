@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { ReqToken, ResCaptcha, ResToken } from '../api/model/auth';
 
 export async function getCaptcha(): Promise<ResCaptcha> {
+  // Raw shape from Rust
   interface RawResCaptcha {
     image: string;
     info: string;
@@ -18,6 +19,7 @@ export async function aquireMoetranToken(payload: ReqToken): Promise<ResToken> {
     captcha: payload.captcha,
     captcha_info: payload.info,
   };
+  // Raw shape from Rust
   interface RawResToken {
     token: string;
   }

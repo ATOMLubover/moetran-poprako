@@ -11,12 +11,34 @@ import {
 } from '../ipc/project';
 import type { ProjectSearchFilters } from '../ipc/project';
 import type { ResProjectEnriched } from '../api/model/project';
+import type { ResMember } from '../api/model/member';
 
 // 使用共享类型定义（见 src/api/model/displayProject.ts）
 
 // 组件事件：打开详情 / 创建项目
 const emit = defineEmits<{
-  (e: 'open-detail', projectId: string): void;
+  (
+    e: 'open-detail',
+    payload: {
+      id: string;
+      title: string;
+      projsetName: string | null;
+      projsetIndex: number | null;
+      totalMarkers: number | null;
+      totalTranslated: number | null;
+      totalChecked: number | null;
+      translatingStatus: number | null;
+      proofreadingStatus: number | null;
+      typesettingStatus: number | null;
+      reviewingStatus: number | null;
+      translators: string[];
+      proofreaders: string[];
+      letterers: string[];
+      reviewers: string[];
+      principals?: string[];
+      members?: ResMember[];
+    }
+  ): void;
   (e: 'create'): void;
 }>();
 
@@ -35,18 +57,55 @@ const canCreate = computed(() => {
 });
 
 // 内部项目列表与加载状态
-const innerProjects = ref<(ProjectBasicInfo & { hasPoprako?: boolean })[]>([]);
+type ProjectListItem = ProjectBasicInfo & { hasPoprako?: boolean } & {
+  // enriched 统计数据，供 ProjectDetail 使用
+  totalMarkers?: number;
+  totalTranslated?: number;
+  totalChecked?: number;
+  translatingStatusRaw?: number | null;
+  proofreadingStatusRaw?: number | null;
+  typesettingStatusRaw?: number | null;
+  reviewingStatusRaw?: number | null;
+  translators?: string[];
+  proofreaders?: string[];
+  letterers?: string[];
+  reviewers?: string[];
+  isPublished?: boolean;
+  principals?: string[];
+  projectSetName?: string | null;
+  members?: ResMember[];
+};
+
+const innerProjects = ref<ProjectListItem[]>([]);
 const isLoading = ref(false);
 const listContainerRef = ref<HTMLElement | null>(null);
 // resize debounce timer and listener ref
 const resizeTimer = ref<ReturnType<typeof setTimeout> | null>(null);
-const resizeListener = ref<((this: Window, ev: UIEvent) => any) | null>(null);
+const resizeListener = ref<((this: Window, ev: UIEvent) => void) | null>(null);
 // 服务端一次最多拉取多少条，之后前端再根据高度裁剪
 const serverLimit = 10;
 
 // 点击详情
-function handleOpenDetail(projectId: string): void {
-  emit('open-detail', projectId);
+function handleOpenDetail(item: ProjectListItem): void {
+  emit('open-detail', {
+    id: item.id,
+    title: item.title,
+    projsetName: item.projectSetName ?? null,
+    projsetIndex: item.projectSetIndex ?? null,
+    totalMarkers: item.totalMarkers ?? null,
+    totalTranslated: item.totalTranslated ?? null,
+    totalChecked: item.totalChecked ?? null,
+    translatingStatus: item.translatingStatusRaw ?? null,
+    proofreadingStatus: item.proofreadingStatusRaw ?? null,
+    typesettingStatus: item.typesettingStatusRaw ?? null,
+    reviewingStatus: item.reviewingStatusRaw ?? null,
+    translators: item.translators ?? [],
+    proofreaders: item.proofreaders ?? [],
+    letterers: item.letterers ?? [],
+    reviewers: item.reviewers ?? [],
+    principals: item.principals ?? [],
+    members: item.members ?? [],
+  });
 }
 
 // 创建项目：交给父组件打开右侧创建表单视图
@@ -69,14 +128,10 @@ function chipClass(phase: PhaseChip): string {
 }
 
 // 最终展示数据：始终使用内部拉取的 innerProjects
-const displayProjects = computed<(ProjectBasicInfo & { hasPoprako?: boolean })[]>(
-  () => innerProjects.value
-);
+const displayProjects = computed<ProjectListItem[]>(() => innerProjects.value);
 
 // 将 ResProjectEnriched 转为列表展示 DTO
-function mapEnrichedToBasic(
-  apiRes: ResProjectEnriched[]
-): (ProjectBasicInfo & { hasPoprako?: boolean })[] {
+function mapEnrichedToBasic(apiRes: ResProjectEnriched[]): ProjectListItem[] {
   return apiRes.map(p => {
     const labelMap: Record<PhaseChip['phase'], string> = {
       translate: '翻译',
@@ -137,16 +192,29 @@ function mapEnrichedToBasic(
       ];
     }
 
-    return {
+    const base: ProjectListItem = {
       // 后端 id 是 UUID，保持为字符串
       id: p.id,
       title: p.name,
       projectSetId: p.projectSet?.id,
       projectSetSerial: p.projsetSerial,
       projectSetIndex: p.projsetIndex,
+      projectSetName: p.projectSet?.name ?? null,
       hasPoprako: p.hasPoprako,
+      totalMarkers: p.sourceCount,
+      totalTranslated: p.translatedSourceCount,
+      totalChecked: p.checkedSourceCount,
+      translatingStatusRaw: p.translatingStatus ?? null,
+      proofreadingStatusRaw: p.proofreadingStatus ?? null,
+      typesettingStatusRaw: p.typesettingStatus ?? null,
+      reviewingStatusRaw: p.reviewingStatus ?? null,
+      isPublished: p.isPublished ?? false,
+      principals: p.principals ?? [],
+      members: (p.members ?? []) as ResMember[],
       phases,
-    } satisfies ProjectBasicInfo & { hasPoprako?: boolean };
+    };
+
+    return base;
   });
 }
 
@@ -362,12 +430,14 @@ onBeforeUnmount(() => {
           </div>
           <div class="project-list__actions">
             <button
+              v-if="!item.isPublished"
               type="button"
               class="project-list__detail-btn"
-              @click="handleOpenDetail(item.id)"
+              @click="handleOpenDetail(item)"
             >
               详情
             </button>
+            <button v-else type="button" class="project-list__detail-btn" disabled>已发布</button>
           </div>
         </li>
       </ul>

@@ -8,6 +8,7 @@ import { getUserTeams } from '../ipc/team';
 import { getMemberInfo } from '../ipc/member';
 import type { ResUser } from '../api/model/user';
 import type { ResTeam } from '../api/model/team';
+import type { ResMember } from '../api/model/member';
 import ProjectList from '../components/ProjectList.vue';
 // 使用共享的基本项目信息类型仅在本地过滤场景；当前不直接使用
 import ProjectFilterBoard from '../components/ProjectFilterBoard.vue';
@@ -30,7 +31,24 @@ const activeTeamId = ref<string | null>(null);
 // const filteredProjects = ref<ProjectBasicInfo[]>([]);
 
 // 右侧详情栏相关状态
+// 选中的项目 id 与基础信息（由 ProjectList 注入）
 const selectedProjectId = ref<string | null>(null);
+const selectedProjectTitle = ref<string>('');
+const selectedProjectProjsetName = ref<string | null>(null);
+const selectedProjectProjsetIndex = ref<number | null>(null);
+const selectedProjectTotalMarkers = ref<number | null>(null);
+const selectedProjectTotalTranslated = ref<number | null>(null);
+const selectedProjectTotalChecked = ref<number | null>(null);
+const selectedProjectTranslatingStatus = ref<number | null>(null);
+const selectedProjectProofreadingStatus = ref<number | null>(null);
+const selectedProjectTypesettingStatus = ref<number | null>(null);
+const selectedProjectReviewingStatus = ref<number | null>(null);
+const selectedProjectTranslators = ref<string[]>([]);
+const selectedProjectProofreaders = ref<string[]>([]);
+const selectedProjectLetterers = ref<string[]>([]);
+const selectedProjectReviewers = ref<string[]>([]);
+const selectedProjectPrincipals = ref<string[]>([]);
+const selectedProjectMembers = ref<ResMember[] | undefined>(undefined);
 const detailOpen = ref(false);
 // 展开后右侧详情栏占整个 PanelView 宽度的比例，可调整
 const DETAIL_SIDEBAR_MAX_RATIO = 0.5;
@@ -86,10 +104,11 @@ async function loadTeams(): Promise<void> {
 
     // If backend includes is_admin in the team objects, record it into userStore
     try {
-      (list as any[]).forEach(t => {
+      (list as ResTeam[]).forEach(t => {
         if (t && typeof t.id === 'string' && Object.prototype.hasOwnProperty.call(t, 'isAdmin')) {
           // note: API model may not include this field in TS types, so we defensive-check at runtime
-          userStore.setAdminForTeam(t.id, Boolean((t as any).isAdmin));
+          const tt = t as unknown as { isAdmin?: unknown };
+          userStore.setAdminForTeam(t.id, Boolean(tt.isAdmin));
         }
       });
     } catch (e) {
@@ -128,10 +147,44 @@ async function onSelectTeam(teamId: string): Promise<void> {
   }
 }
 
-// 打开项目详情
-function handleOpenDetail(projectId: string): void {
+// 打开项目详情（由 ProjectList 传入 enriched + 成员信息）
+function handleOpenDetail(payload: {
+  id: string;
+  title: string;
+  projsetName: string | null;
+  projsetIndex: number | null;
+  principals?: string[];
+  totalMarkers: number | null;
+  totalTranslated: number | null;
+  totalChecked: number | null;
+  translatingStatus: number | null;
+  proofreadingStatus: number | null;
+  typesettingStatus: number | null;
+  reviewingStatus: number | null;
+  translators: string[];
+  proofreaders: string[];
+  letterers: string[];
+  reviewers: string[];
+  members?: ResMember[];
+}): void {
   detailMode.value = 'detail';
-  selectedProjectId.value = projectId;
+  selectedProjectId.value = payload.id;
+  selectedProjectTitle.value = payload.title;
+  selectedProjectProjsetName.value = payload.projsetName;
+  selectedProjectProjsetIndex.value = payload.projsetIndex;
+  selectedProjectTotalMarkers.value = payload.totalMarkers;
+  selectedProjectTotalTranslated.value = payload.totalTranslated;
+  selectedProjectTotalChecked.value = payload.totalChecked;
+  selectedProjectTranslatingStatus.value = payload.translatingStatus;
+  selectedProjectProofreadingStatus.value = payload.proofreadingStatus;
+  selectedProjectTypesettingStatus.value = payload.typesettingStatus;
+  selectedProjectReviewingStatus.value = payload.reviewingStatus;
+  selectedProjectTranslators.value = payload.translators;
+  selectedProjectProofreaders.value = payload.proofreaders;
+  selectedProjectLetterers.value = payload.letterers;
+  selectedProjectReviewers.value = payload.reviewers;
+  selectedProjectPrincipals.value = payload.principals ?? [];
+  selectedProjectMembers.value = payload.members ?? undefined;
   detailReady.value = false;
   // 如果当前未展开，则触发展开动画；若已展开，则立即标记为就绪，直接切换内容
   if (!detailOpen.value) {
@@ -145,6 +198,7 @@ function handleOpenDetail(projectId: string): void {
 function handleCloseDetail(): void {
   detailOpen.value = false;
   detailReady.value = false;
+  selectedProjectMembers.value = undefined;
 }
 
 // 右侧详情栏宽度动画结束后，标记为就绪再渲染复杂内容
@@ -425,7 +479,7 @@ function handleOpenCreator(): void {
       <aside
         class="detail-sidebar"
         :class="{ 'detail-sidebar--open': detailOpen }"
-        :style="{ '--detail-sidebar-max-ratio': DETAIL_SIDEBAR_MAX_RATIO } as any"
+        :style="{ '--detail-sidebar-max-ratio': DETAIL_SIDEBAR_MAX_RATIO }"
         ref="detailSidebarRef"
         @transitionend="handleDetailTransitionEnd"
       >
@@ -436,6 +490,22 @@ function handleOpenCreator(): void {
         <ProjectDetailView
           v-else-if="detailMode === 'detail' && selectedProjectId !== null"
           :project-id="selectedProjectId"
+          :title="selectedProjectTitle"
+          :projset-name="selectedProjectProjsetName"
+          :projset-index="selectedProjectProjsetIndex"
+          :principals="selectedProjectPrincipals"
+          :total-markers="selectedProjectTotalMarkers"
+          :total-translated="selectedProjectTotalTranslated"
+          :total-checked="selectedProjectTotalChecked"
+          :translating-status="selectedProjectTranslatingStatus"
+          :proofreading-status="selectedProjectProofreadingStatus"
+          :typesetting-status="selectedProjectTypesettingStatus"
+          :reviewing-status="selectedProjectReviewingStatus"
+          :translators="selectedProjectTranslators"
+          :proofreaders="selectedProjectProofreaders"
+          :letterers="selectedProjectLetterers"
+          :reviewers="selectedProjectReviewers"
+          :members="selectedProjectMembers"
           @close="handleCloseDetail"
           @open-translator="() => {}"
           @open-creator="handleOpenCreator"

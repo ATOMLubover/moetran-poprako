@@ -19,7 +19,11 @@ pub struct GetUserTeamsReq {
 
 #[tauri::command]
 pub async fn get_user_teams(payload: GetUserTeamsReq) -> Result<Vec<ResTeam>, String> {
-    tracing::info!(page = payload.page, limit = payload.limit, "user.teams.request.start");
+    tracing::info!(
+        page = payload.page,
+        limit = payload.limit,
+        "user.teams.request.start"
+    );
 
     let mut defer = WarnDefer::new("user.teams.request");
 

@@ -1,4 +1,5 @@
 import { ResTeam } from './team';
+import { ResMember } from './member';
 
 export interface ResProjectSet {
   id: string;
@@ -27,4 +28,9 @@ export interface ResProjectEnriched extends ResProject {
   typesettingStatus?: number;
   reviewingStatus?: number;
   isPublished?: boolean;
+  // PopRaKo 返回的成员信息（可选）
+  members?: ResMember[];
+  // 仅包含 memberId 的负责人列表（可选）
+  // 仅包含 userId 的负责人列表（可选，用于与当前用户 id 比对）
+  principals?: string[];
 }

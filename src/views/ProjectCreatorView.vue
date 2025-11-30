@@ -270,7 +270,7 @@ async function handleCreateProject(): Promise<void> {
     const failedDetails = assignResults.filter(r => !r.ok) as Array<{
       invite: { id: string; role: 'translator' | 'proofreader' | 'typesetter' };
       ok: false;
-      error: any;
+      error: unknown;
     }>;
 
     if (failedDetails.length > 0) {

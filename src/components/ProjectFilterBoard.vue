@@ -168,7 +168,7 @@ function openProjsetSelector(): void {
   // only open when a teamId is available
   if (!props.teamId) return;
 
-  // prefill picked ids with any existing project-set options
+  // prefill picked ids with existing project-set options
   projsetPickedIds.value = filterOptions.value
     .filter(o => o.key === 'project-set')
     .map(o => o.value);
@@ -262,20 +262,6 @@ function onConfirm() {
         >
           选择项目集
         </button>
-        <span v-if="!props.teamId" class="fb-adv-disabled-note">请先选择团队以启用</span>
-        <!-- <div class="fb-adv-summary" style="margin-left: 8px; flex: 1">
-          <span v-if="!filterOptions.find(o => o.key === 'project-set')">未选择项目集</span>
-          <span v-else>
-            <span
-              class="fb-adv-chip"
-              v-for="opt in filterOptions.filter(o => o.key === 'project-set')"
-              :key="opt.value"
-            >
-              {{ opt.label }}
-              <button class="fb-chip__remove" @click="removeOption(opt)">&times;</button>
-            </span>
-          </span>
-        </div> -->
       </div>
 
       <div style="display: flex; align-items: center; gap: 8px; margin-left: 12px">

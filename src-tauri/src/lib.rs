@@ -80,11 +80,10 @@ pub fn run() {
             crate::user::get_user_info,
             // user teams
             crate::team::get_user_teams,
-            // project sets & projects
-            crate::project::get_team_project_sets,
-            crate::project::get_team_projects,
-            crate::project::get_user_projects,
+            // projects (enriched only)
             crate::project::get_user_projects_enriched,
+            crate::project::get_project_targets,
+            crate::project::get_project_files,
             crate::project::create_projset,
             crate::project::create_proj,
             crate::project::get_team_poprako_projsets,

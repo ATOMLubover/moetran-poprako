@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { ResSync as ResSync, ResUser } from '../api/model/user';
+import type { ResSync, ResUser } from '../api/model/user';
 
 // PopRaKo 用户同步（使用 email 作为后端的 username 字段）
 export async function syncUser(payload: {
@@ -12,7 +12,8 @@ export async function syncUser(payload: {
     username: payload.username,
     email: payload.email,
   };
-  // raw shape from Rust
+
+  // Raw response shape from PopRaKo (snake_case)
   interface RawResSync {
     token: string;
   }
@@ -23,6 +24,7 @@ export async function syncUser(payload: {
 
 // 获取用户信息
 export async function getUserInfo(): Promise<ResUser> {
+  // Raw response shape from Moetran (snake_case)
   interface RawResUser {
     id: string;
     name: string;
