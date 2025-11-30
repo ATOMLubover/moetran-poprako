@@ -91,6 +91,8 @@ pub fn run() {
             crate::project::search_user_projects_enriched,
             crate::project::search_team_projects_enriched,
             crate::project::get_team_projects_enriched,
+            crate::project::update_proj_status,
+            crate::project::publish_proj,
             // member search
             crate::member::get_members,
             crate::member::get_member_info,

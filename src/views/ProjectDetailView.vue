@@ -66,14 +66,18 @@ const props = defineProps<{
   reviewers: string[];
   // PopRaKo members with typed ResMember
   members?: ResMember[];
+  // whether this project is backed by PopRaKo
+  hasPoprako?: boolean;
   // principals are user ids
   principals?: string[];
+  // publish state
+  isPublished?: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: 'close'): void;
   (e: 'open-translator', enabled: boolean): void;
-  (e: 'open-creator'): void;
+  (e: 'open-modifier'): void;
 }>();
 
 const toastStore = useToastStore();
@@ -388,8 +392,8 @@ async function loadProject(): Promise<void> {
 
 // 切换修改面板显隐
 function handleToggleModifier(): void {
-  // 请求父组件打开创建/修改面板（父组件负责切换 detail/create）
-  emit('open-creator');
+  // 请求父组件打开修改面板
+  emit('open-modifier');
 }
 
 // 加入或退出项目（后续需要真实接口）
@@ -446,10 +450,12 @@ onBeforeUnmount(() => {
       </div>
       <div class="pd-actions">
         <button
-          v-if="isMePrincipal"
+          v-if="isMePrincipal && props.hasPoprako !== false"
           type="button"
           class="pd-btn pd-btn--primary"
           @click="handleToggleModifier"
+          :disabled="props.isPublished"
+          :title="props.isPublished ? '已发布的项目无法修改' : '修改项目信息'"
         >
           修改项目信息
         </button>
@@ -712,6 +718,12 @@ onBeforeUnmount(() => {
 .pd-btn:hover {
   box-shadow: 0 8px 24px rgba(136, 190, 247, 0.28);
   transform: translateY(-2px);
+}
+.pd-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
 }
 
 .pd-description {

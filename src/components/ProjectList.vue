@@ -37,6 +37,9 @@ const emit = defineEmits<{
       reviewers: string[];
       principals?: string[];
       members?: ResMember[];
+      isPublished?: boolean;
+      hasPoprako?: boolean;
+      teamId?: string;
     }
   ): void;
   (e: 'create'): void;
@@ -105,6 +108,9 @@ function handleOpenDetail(item: ProjectListItem): void {
     reviewers: item.reviewers ?? [],
     principals: item.principals ?? [],
     members: item.members ?? [],
+    isPublished: item.isPublished ?? false,
+    hasPoprako: item.hasPoprako ?? false,
+    teamId: props.teamId ?? undefined,
   });
 }
 

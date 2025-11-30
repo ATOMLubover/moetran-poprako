@@ -345,6 +345,36 @@ export async function assignMemberToProj(payload: AssignMemberPayload): Promise<
   });
 }
 
+// Update project phase status (PopRaKo API #9)
+export interface UpdateProjStatusPayload {
+  projId: string;
+  statusType: 'translating' | 'proofreading' | 'typesetting' | 'reviewing';
+  newStatus: number; // 0=pending, 1=wip, 2=completed
+}
+
+export async function updateProjStatus(payload: UpdateProjStatusPayload): Promise<void> {
+  await invoke<void>('update_proj_status', {
+    payload: {
+      proj_id: payload.projId,
+      status_type: payload.statusType,
+      new_status: payload.newStatus,
+    },
+  });
+}
+
+// Publish project (PopRaKo API #10)
+export interface PublishProjPayload {
+  projId: string;
+}
+
+export async function publishProj(payload: PublishProjPayload): Promise<void> {
+  await invoke<void>('publish_proj', {
+    payload: {
+      proj_id: payload.projId,
+    },
+  });
+}
+
 // ========== Moetran 项目 targets / files（供 ProjectDetail 使用） ==========
 
 export interface ProjectTargetInfo {

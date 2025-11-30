@@ -14,6 +14,7 @@ import ProjectList from '../components/ProjectList.vue';
 import ProjectFilterBoard from '../components/ProjectFilterBoard.vue';
 import ProjectDetailView from '../views/ProjectDetailView.vue';
 import ProjectCreatorView from '../views/ProjectCreatorView.vue';
+import ProjectModifierView from '../views/ProjectModifierView.vue';
 
 // 用户信息 (local ref kept for template compatibility)
 const user = ref<ResUser | null>(null);
@@ -49,6 +50,9 @@ const selectedProjectLetterers = ref<string[]>([]);
 const selectedProjectReviewers = ref<string[]>([]);
 const selectedProjectPrincipals = ref<string[]>([]);
 const selectedProjectMembers = ref<ResMember[] | undefined>(undefined);
+const selectedProjectIsPublished = ref<boolean>(false);
+const selectedProjectHasPoprako = ref<boolean>(false);
+const selectedProjectTeamId = ref<string>('');
 const detailOpen = ref(false);
 // 展开后右侧详情栏占整个 PanelView 宽度的比例，可调整
 const DETAIL_SIDEBAR_MAX_RATIO = 0.5;
@@ -56,7 +60,7 @@ const DETAIL_SIDEBAR_MAX_RATIO = 0.5;
 const detailReady = ref(false);
 const detailSidebarRef = ref<HTMLElement | null>(null);
 // 右侧侧栏模式：展示项目详情或创建新项目
-const detailMode = ref<'detail' | 'create'>('detail');
+const detailMode = ref<'detail' | 'create' | 'modifier'>('detail');
 
 // 加载状态
 const loadingUser = ref<boolean>(false);
@@ -166,6 +170,9 @@ function handleOpenDetail(payload: {
   letterers: string[];
   reviewers: string[];
   members?: ResMember[];
+  isPublished?: boolean;
+  hasPoprako?: boolean;
+  teamId?: string;
 }): void {
   detailMode.value = 'detail';
   selectedProjectId.value = payload.id;
@@ -185,6 +192,9 @@ function handleOpenDetail(payload: {
   selectedProjectReviewers.value = payload.reviewers;
   selectedProjectPrincipals.value = payload.principals ?? [];
   selectedProjectMembers.value = payload.members ?? undefined;
+  selectedProjectIsPublished.value = payload.isPublished ?? false;
+  selectedProjectHasPoprako.value = payload.hasPoprako ?? false;
+  selectedProjectTeamId.value = payload.teamId ?? activeTeamId.value ?? '';
   detailReady.value = false;
   // 如果当前未展开，则触发展开动画；若已展开，则立即标记为就绪，直接切换内容
   if (!detailOpen.value) {
@@ -199,6 +209,7 @@ function handleCloseDetail(): void {
   detailOpen.value = false;
   detailReady.value = false;
   selectedProjectMembers.value = undefined;
+  selectedProjectHasPoprako.value = false;
 }
 
 // 右侧详情栏宽度动画结束后，标记为就绪再渲染复杂内容
@@ -385,6 +396,25 @@ function handleOpenCreator(): void {
     detailReady.value = true;
   }
 }
+
+// 打开修改项目视图（由 ProjectDetailView 触发）
+function handleOpenModifier(): void {
+  detailMode.value = 'modifier';
+  detailReady.value = false;
+
+  if (!detailOpen.value) {
+    detailOpen.value = true;
+  } else {
+    detailReady.value = true;
+  }
+}
+
+// Cancel from modifier: return to detail view (don't close the sidebar)
+function handleModifierBack(): void {
+  detailMode.value = 'detail';
+  // keep the same selectedProjectId and mark detail ready so detail view renders
+  detailReady.value = true;
+}
 </script>
 
 <template>
@@ -506,14 +536,31 @@ function handleOpenCreator(): void {
           :letterers="selectedProjectLetterers"
           :reviewers="selectedProjectReviewers"
           :members="selectedProjectMembers"
+          :is-published="selectedProjectIsPublished"
           @close="handleCloseDetail"
           @open-translator="() => {}"
-          @open-creator="handleOpenCreator"
+          @open-modifier="handleOpenModifier"
         />
         <ProjectCreatorView
           v-else-if="detailMode === 'create'"
           :team-id="activeTeamId || undefined"
           @close="handleCloseDetail"
+        />
+        <ProjectModifierView
+          v-else-if="detailMode === 'modifier' && selectedProjectId !== null"
+          :project-id="selectedProjectId"
+          :project-name="selectedProjectTitle"
+          :project-description="''"
+          :team-id="selectedProjectTeamId"
+          :projset-name="selectedProjectProjsetName"
+          :members="selectedProjectMembers"
+          :translating-status="selectedProjectTranslatingStatus"
+          :proofreading-status="selectedProjectProofreadingStatus"
+          :typesetting-status="selectedProjectTypesettingStatus"
+          :reviewing-status="selectedProjectReviewingStatus"
+          :is-published="selectedProjectIsPublished"
+          @close="handleCloseDetail"
+          @back="handleModifierBack"
         />
       </aside>
     </div>

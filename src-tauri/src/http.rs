@@ -164,6 +164,71 @@ impl ApiClient {
 
         Ok(parsed)
     }
+
+    // 通用 PUT：构造请求（必要时空 body） -> 附加头 -> 状态检查 -> 解析 JSON
+    pub async fn http_put<B, R>(
+        client: &reqwest::Client,
+        url: reqwest::Url,
+        headers: Vec<(HeaderName, HeaderValue)>,
+        body: Option<B>,
+    ) -> Result<R, String>
+    where
+        B: Serialize,
+        R: DeserializeOwned,
+    {
+        tracing::debug!(%url, "ApiClient.http_put called");
+
+        let mut req = client.put(url);
+
+        match body {
+            Some(b) => {
+                req = req.json(&b);
+            }
+            None => {
+                req = req.body("");
+            }
+        }
+
+        let mut headers_map = reqwest::header::HeaderMap::new();
+
+        headers.into_iter().for_each(|(key, value)| {
+            if let Some(prev) = headers_map.insert(key, value) {
+                warn!(?prev, "Header key duplicated when building headers for PUT");
+            }
+        });
+
+        let resp = req
+            .headers(headers_map)
+            .send()
+            .await
+            .map_err(|err| format!("request send error: {}", err))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "<body read error>".to_string());
+            return Err(format!("http error: status {} body: {}", status, body));
+        }
+
+        // 读取为文本后再解析，这样可以优雅处理空响应体或 204 No Content 的情况
+        let text = resp
+            .text()
+            .await
+            .map_err(|err| format!("response body read error: {}", err))?;
+
+        if text.trim().is_empty() {
+            let parsed = serde_json::from_str::<R>("null")
+                .map_err(|err| format!("json parse error: {}", err))?;
+            return Ok(parsed);
+        }
+
+        let parsed =
+            serde_json::from_str::<R>(&text).map_err(|err| format!("json parse error: {}", err))?;
+
+        Ok(parsed)
+    }
 }
 
 thread_local! {
@@ -353,4 +418,35 @@ where
     }
 
     ApiClient::http_get(&client, url, headers).await
+}
+
+pub async fn poprako_put_opt<B, R>(path: &str, body: Option<B>) -> Result<R, String>
+where
+    B: Serialize,
+    R: DeserializeOwned,
+{
+    if path.is_empty() || path.starts_with('/') {
+        return Err(format!("Invalid path for poprako_put_opt: {}", path));
+    }
+
+    let (client, base) = POPRAKO_API_CLIENT.with(|lazy| {
+        let api = lazy.deref();
+        (api.client.clone(), api.base_url.clone())
+    });
+
+    let url = base
+        .join(path)
+        .map_err(|err| format!("Failed to build URL for {}: {}", path, err))?;
+
+    let mut headers = Vec::new();
+
+    if let Some(token) = crate::token::cached_poprako_token() {
+        headers.push((
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", token))
+                .map_err(|err| format!("Invalid token header value: {}", err))?,
+        ));
+    }
+
+    ApiClient::http_put(&client, url, headers, body).await
 }

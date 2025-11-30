@@ -1,6 +1,6 @@
 use crate::{
     defer::WarnDefer,
-    http::{moetran_get, poprako_get, poprako_post_opt},
+    http::{moetran_get, poprako_get, poprako_post_opt, poprako_put_opt},
     token::get_moetran_token,
 };
 use serde::{Deserialize, Serialize};
@@ -977,4 +977,84 @@ pub async fn search_team_projects_enriched(
     defer.success();
 
     Ok(enriched_list)
+}
+
+// ========== 更新项目状态与发布（PopRaKo API #9, #10） ==========
+
+// 更新项目流程状态（仅项目负责人可调用）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UpdateProjStatusReq {
+    pub proj_id: String,
+    pub status_type: String, // "translating" / "proofreading" / "typesetting" / "reviewing"
+    pub new_status: i32,     // 0=pending, 1=wip, 2=completed
+}
+
+#[tauri::command]
+pub async fn update_proj_status(payload: UpdateProjStatusReq) -> Result<(), String> {
+    tracing::info!(
+        proj_id = %payload.proj_id,
+        status_type = %payload.status_type,
+        new_status = payload.new_status,
+        "poprako.proj.status.update.request.start"
+    );
+
+    let mut defer = WarnDefer::new("poprako.proj.status.update");
+
+    let path = format!("projs/{}/status", payload.proj_id);
+
+    let body = serde_json::json!({
+        "proj_id": payload.proj_id,
+        "status_type": payload.status_type,
+        "new_status": payload.new_status,
+    });
+
+    // PopRaKo API returns 204 No Content on success
+    // Use unit `()` as the expected response type so empty body / 204 is handled.
+    poprako_put_opt::<serde_json::Value, ()>(&path, Some(body))
+        .await
+        .map_err(|err| format!("更新项目状态失败: {}", err))?;
+
+    tracing::info!(
+        proj_id = %payload.proj_id,
+        status_type = %payload.status_type,
+        new_status = payload.new_status,
+        "poprako.proj.status.update.ok"
+    );
+
+    defer.success();
+
+    Ok(())
+}
+
+// 标记项目为已发布（仅项目负责人可调用）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PublishProjReq {
+    pub proj_id: String,
+}
+
+#[tauri::command]
+pub async fn publish_proj(payload: PublishProjReq) -> Result<(), String> {
+    tracing::info!(
+        proj_id = %payload.proj_id,
+        "poprako.proj.publish.request.start"
+    );
+
+    let mut defer = WarnDefer::new("poprako.proj.publish");
+
+    let path = format!("projs/{}/publish", payload.proj_id);
+
+    // PopRaKo API returns 204 No Content on success (no body)
+    // Use unit `()` as the expected response type so empty body / 204 is handled.
+    poprako_put_opt::<(), ()>(&path, None)
+        .await
+        .map_err(|err| format!("标记项目为已发布失败: {}", err))?;
+
+    tracing::info!(
+        proj_id = %payload.proj_id,
+        "poprako.proj.publish.ok"
+    );
+
+    defer.success();
+
+    Ok(())
 }
