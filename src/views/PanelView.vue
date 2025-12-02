@@ -12,9 +12,9 @@ import type { ResMember } from '../api/model/member';
 import ProjectList from '../components/ProjectList.vue';
 // 使用共享的基本项目信息类型仅在本地过滤场景；当前不直接使用
 import ProjectFilterBoard from '../components/ProjectFilterBoard.vue';
-import ProjectDetailView from '../views/ProjectDetailView.vue';
 import ProjectCreatorView from '../views/ProjectCreatorView.vue';
 import ProjectModifierView from '../views/ProjectModifierView.vue';
+import ProjectDetailView from '../views/ProjectDetailView.vue';
 
 // 用户信息 (local ref kept for template compatibility)
 const user = ref<ResUser | null>(null);
@@ -32,7 +32,14 @@ const activeTeamId = ref<string | null>(null);
 // const filteredProjects = ref<ProjectBasicInfo[]>([]);
 
 // 右侧详情栏相关状态
-// 选中的项目 id 与基础信息（由 ProjectList 注入）
+// 侧边栏模式：创建 / 详情 / 修改
+const detailMode = ref<'detail' | 'create' | 'modifier'>('create');
+const DETAIL_SIDEBAR_MAX_RATIO = 0.5;
+const detailOpen = ref(false);
+const detailReady = ref(false);
+const detailSidebarRef = ref<HTMLElement | null>(null);
+
+// 项目修改时需要的数据
 const selectedProjectId = ref<string | null>(null);
 const selectedProjectTitle = ref<string>('');
 const selectedProjectProjsetName = ref<string | null>(null);
@@ -40,27 +47,18 @@ const selectedProjectProjsetIndex = ref<number | null>(null);
 const selectedProjectTotalMarkers = ref<number | null>(null);
 const selectedProjectTotalTranslated = ref<number | null>(null);
 const selectedProjectTotalChecked = ref<number | null>(null);
-const selectedProjectTranslatingStatus = ref<number | null>(null);
-const selectedProjectProofreadingStatus = ref<number | null>(null);
-const selectedProjectTypesettingStatus = ref<number | null>(null);
-const selectedProjectReviewingStatus = ref<number | null>(null);
 const selectedProjectTranslators = ref<string[]>([]);
 const selectedProjectProofreaders = ref<string[]>([]);
 const selectedProjectLetterers = ref<string[]>([]);
 const selectedProjectReviewers = ref<string[]>([]);
 const selectedProjectPrincipals = ref<string[]>([]);
 const selectedProjectMembers = ref<ResMember[] | undefined>(undefined);
+const selectedProjectTranslatingStatus = ref<number | null>(null);
+const selectedProjectProofreadingStatus = ref<number | null>(null);
+const selectedProjectTypesettingStatus = ref<number | null>(null);
+const selectedProjectReviewingStatus = ref<number | null>(null);
 const selectedProjectIsPublished = ref<boolean>(false);
-const selectedProjectHasPoprako = ref<boolean>(false);
 const selectedProjectTeamId = ref<string>('');
-const detailOpen = ref(false);
-// 展开后右侧详情栏占整个 PanelView 宽度的比例，可调整
-const DETAIL_SIDEBAR_MAX_RATIO = 0.5;
-// 详情栏展开动画完成后再挂载详情视图，避免动画过程中布局抖动
-const detailReady = ref(false);
-const detailSidebarRef = ref<HTMLElement | null>(null);
-// 右侧侧栏模式：展示项目详情或创建新项目
-const detailMode = ref<'detail' | 'create' | 'modifier'>('detail');
 
 // 加载状态
 const loadingUser = ref<boolean>(false);
@@ -174,7 +172,8 @@ function handleOpenDetail(payload: {
   hasPoprako?: boolean;
   teamId?: string;
 }): void {
-  detailMode.value = 'detail';
+  // 在 PanelView 中打开右侧详情抽屉（本地侧栏，不切换到全屏）
+  detailMode.value = 'detail' as any; // 将侧栏设置为 detail 模式
   selectedProjectId.value = payload.id;
   selectedProjectTitle.value = payload.title;
   selectedProjectProjsetName.value = payload.projsetName;
@@ -193,10 +192,8 @@ function handleOpenDetail(payload: {
   selectedProjectPrincipals.value = payload.principals ?? [];
   selectedProjectMembers.value = payload.members ?? undefined;
   selectedProjectIsPublished.value = payload.isPublished ?? false;
-  selectedProjectHasPoprako.value = payload.hasPoprako ?? false;
   selectedProjectTeamId.value = payload.teamId ?? activeTeamId.value ?? '';
   detailReady.value = false;
-  // 如果当前未展开，则触发展开动画；若已展开，则立即标记为就绪，直接切换内容
   if (!detailOpen.value) {
     detailOpen.value = true;
   } else {
@@ -204,12 +201,11 @@ function handleOpenDetail(payload: {
   }
 }
 
-// 关闭项目详情
+// 关闭项目详情/创建/修改侧边栏
 function handleCloseDetail(): void {
   detailOpen.value = false;
   detailReady.value = false;
   selectedProjectMembers.value = undefined;
-  selectedProjectHasPoprako.value = false;
 }
 
 // 右侧详情栏宽度动画结束后，标记为就绪再渲染复杂内容
@@ -409,11 +405,10 @@ function handleOpenModifier(): void {
   }
 }
 
-// Cancel from modifier: return to detail view (don't close the sidebar)
+// Cancel from modifier: close the sidebar
 function handleModifierBack(): void {
-  detailMode.value = 'detail';
-  // keep the same selectedProjectId and mark detail ready so detail view renders
-  detailReady.value = true;
+  detailOpen.value = false;
+  detailReady.value = false;
 }
 </script>
 
@@ -515,7 +510,7 @@ function handleModifierBack(): void {
       >
         <div v-if="!detailReady" class="detail-sidebar__loading">
           <div class="detail-spinner"></div>
-          <div class="detail-loading-text">加载项目详情...</div>
+          <div class="detail-loading-text">加载中...</div>
         </div>
         <ProjectDetailView
           v-else-if="detailMode === 'detail' && selectedProjectId !== null"
@@ -538,9 +533,9 @@ function handleModifierBack(): void {
           :members="selectedProjectMembers"
           :is-published="selectedProjectIsPublished"
           @close="handleCloseDetail"
-          @open-translator="() => {}"
           @open-modifier="handleOpenModifier"
         />
+
         <ProjectCreatorView
           v-else-if="detailMode === 'create'"
           :team-id="activeTeamId || undefined"

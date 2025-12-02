@@ -3,7 +3,11 @@ use crate::{
     http::{moetran_get, poprako_get, poprako_post_opt, poprako_put_opt},
     token::get_moetran_token,
 };
+use base64::{engine::general_purpose, Engine as _};
+use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE, REFERER, USER_AGENT};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
+use url::Url;
 
 // Moetran 项目集 DTO（仅用于 enriched flows）
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -169,6 +173,7 @@ pub struct MoetranProjectFile {
     pub id: String,
     pub name: String,
     pub source_count: u64,
+    pub url: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -551,11 +556,13 @@ pub async fn get_project_files(
             let id = v.get("id")?.as_str()?.to_string();
             let name = v.get("name")?.as_str()?.to_string();
             let source = v.get("source_count").and_then(|x| x.as_u64()).unwrap_or(0);
+            let url = v.get("url")?.as_str()?.to_string();
 
             Some(MoetranProjectFile {
                 id,
                 name,
                 source_count: source,
+                url,
             })
         })
         .collect();
@@ -977,6 +984,150 @@ pub async fn search_team_projects_enriched(
     defer.success();
 
     Ok(enriched_list)
+}
+
+// ========== 获取文件的 sources（用于 TranslatorView） ==========
+
+// Moetran 单个 translation DTO（精简）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MoetranTranslation {
+    pub id: String,
+    pub content: String,
+    pub proofread_content: Option<String>,
+    pub selected: bool,
+}
+
+// Moetran source DTO（精简版，仅包含 TranslatorView 所需字段）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MoetranSource {
+    pub id: String,
+    pub x: f64,
+    pub y: f64,
+    pub position_type: i32,
+    pub my_translation: Option<MoetranTranslation>,
+    pub translations: Vec<MoetranTranslation>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GetPageSourcesReq {
+    pub file_id: String,
+    pub target_id: String,
+}
+
+#[tauri::command]
+pub async fn get_page_sources(payload: GetPageSourcesReq) -> Result<Vec<MoetranSource>, String> {
+    tracing::info!(
+        file_id = %payload.file_id,
+        target_id = %payload.target_id,
+        "moetran.sources.fetch.request.start"
+    );
+
+    let mut defer = WarnDefer::new("moetran.sources.fetch");
+
+    let endpoint = format!("files/{}/sources", payload.file_id);
+    let mut query = std::collections::HashMap::new();
+    query.insert("target_id", payload.target_id.clone());
+    query.insert("paging", "false".to_string());
+
+    let sources = moetran_get::<Vec<MoetranSource>>(&endpoint, Some(&query))
+        .await
+        .map_err(|err| format!("获取页面源失败: {}", err))?;
+
+    let count = sources.len();
+    tracing::info!(
+        file_id = %payload.file_id,
+        target_id = %payload.target_id,
+        count = count,
+        "moetran.sources.fetch.ok"
+    );
+
+    defer.success();
+
+    Ok(sources)
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ProxyImageReply {
+    pub b64: String,
+    pub content_type: String,
+}
+
+#[tauri::command]
+pub async fn proxy_image(url: String) -> Result<ProxyImageReply, String> {
+    tracing::info!(%url, "proxy_image.request.start");
+
+    // Basic validation: parse URL and whitelist host
+    let parsed = Url::parse(&url).map_err(|e| format!("Invalid URL: {}", e))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "URL missing host".to_string())?;
+
+    // Only allow m-t.pics subdomains for now. Adjust whitelist as needed.
+    if !host.ends_with("m-t.pics") {
+        return Err("Host not allowed".to_string());
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        ACCEPT,
+        HeaderValue::from_static(
+            "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        ),
+    );
+    headers.insert(REFERER, HeaderValue::from_static("https://moetran.com/"));
+    headers.insert(
+        USER_AGENT,
+        HeaderValue::from_static("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0"),
+    );
+    headers.insert(
+        "Sec-CH-UA",
+        HeaderValue::from_static(
+            "\"Chromium\";v=\"142\", \"Microsoft Edge\";v=\"142\", \"Not_A Brand\";v=\"99\"",
+        ),
+    );
+
+    let resp = client
+        .get(url)
+        .headers(headers)
+        .send()
+        .await
+        .map_err(|e| format!("Fetch failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Remote returned status {}", resp.status()));
+    }
+
+    // Enforce size limit (32 MB)
+    let content_length = resp.content_length().unwrap_or(0);
+    if content_length > 32 * 1024 * 1024 {
+        return Err("Remote file too large".to_string());
+    }
+
+    let content_type = resp
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("Read body failed: {}", e))?;
+    if (bytes.len() as u64) > 32 * 1024 * 1024 {
+        return Err("Remote file too large".to_string());
+    }
+
+    let b64 = general_purpose::STANDARD.encode(&bytes);
+
+    tracing::info!(size = bytes.len(), "proxy_image.request.ok");
+
+    Ok(ProxyImageReply { b64, content_type })
 }
 
 // ========== 更新项目状态与发布（PopRaKo API #9, #10） ==========

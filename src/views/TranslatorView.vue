@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useToastStore } from '../stores/toast';
+import { getPageSources, proxyImage } from '../ipc/project';
 
 interface SourcePosition {
   x: number;
@@ -43,15 +44,30 @@ interface ShortcutHint {
 // 全局 toast store
 const toastStore = useToastStore();
 
-// 传入：项目 ID、当前页索引、是否具备编辑权限（isEnabled=false 表示只读模式）
+// 传入：项目 ID、目标语言 ID、文件列表、当前页索引、是否具备编辑权限、初始模式
+interface FileInfo {
+  id: string;
+  name: string;
+  sourceCount: number;
+  url: string; // 图片URL（Moetran API 总是返回）
+}
+
 const props = defineProps<{
   projectId: string;
+  targetId: string;
+  files: FileInfo[];
   pageIndex: number;
   isEnabled: boolean;
+  initialMode?: 'translate' | 'read'; // 初始模式：translate=翻校, read=阅览
 }>();
 
 // 是否允许编辑（参与者）
 const canEdit = computed(() => props.isEnabled);
+
+// 是否允许切换到翻校模式：只有初始就是翻校模式才能切换回去
+const canSwitchToEdit = computed(() => {
+  return props.isEnabled && props.initialMode === 'translate';
+});
 
 const emit = defineEmits<{
   (event: 'update:pageIndex', value: number): void;
@@ -145,17 +161,12 @@ const SHORTCUT_HINTS: ShortcutHint[] = [
   // },
 ];
 
-const MOCK_IMAGE_URLS = [
-  new URL('../../tests/images/cover_miseyari_01_0001.jpg', import.meta.url).href,
-  new URL('../../tests/images/miseyari_01_0001.jpg', import.meta.url).href,
-  new URL('../../tests/images/miseyari_02_0001.jpg', import.meta.url).href,
-  new URL('../../tests/images/miseyari_03_0001.jpg', import.meta.url).href,
-  new URL('../../tests/images/miseyari_04_0001.jpg', import.meta.url).href,
-];
-
 const currentPageIndex = ref(props.pageIndex);
 
 const projectPage = ref<ProjectPageData | null>(null);
+const currentImageObjectUrl = ref<string | null>(null);
+// 简单的图片缓存：fileId -> Object URL
+const imageCache = new Map<string, string>();
 
 const sources = ref<TranslationSource[]>([]);
 
@@ -173,7 +184,8 @@ const editorTranslationText = ref('');
 
 const editorProofText = ref('');
 
-const activeMode = ref<'translate' | 'proof'>('translate');
+// 根据initialMode设置初始activeMode
+const activeMode = ref<'translate' | 'proof'>(props.initialMode === 'read' ? 'proof' : 'translate');
 
 const isProofMode = computed(() => activeMode.value === 'proof');
 
@@ -385,7 +397,14 @@ const selectedSourceLabel = computed(() => {
 // 切换翻译 / 校对模式（只读模式下禁止）
 function handleToggleMode(): void {
   if (!canEdit.value) return;
+
+  // 如果当前是proof模式要切换到translate，检查是否允许
   const nextMode: 'translate' | 'proof' = isProofMode.value ? 'translate' : 'proof';
+
+  if (nextMode === 'translate' && !canSwitchToEdit.value) {
+    showToast('当前模式不支持切换到翻校模式', 'error');
+    return;
+  }
 
   activeMode.value = nextMode;
 
@@ -393,9 +412,9 @@ function handleToggleMode(): void {
 }
 
 // 切换自动重定位
-// 切换自动重定位（只读模式下禁止）
+// 切换自动重定位（只读模式下禁止，或不在翻校模式下禁止）
 function handleToggleAutoRelocate(): void {
-  if (!canEdit.value) return;
+  if (!canEdit.value || !canSwitchToEdit.value) return;
   const nextState = !isAutoRelocateEnabled.value;
 
   isAutoRelocateEnabled.value = nextState;
@@ -540,71 +559,6 @@ watch(isAutoRelocateEnabled, value => {
   });
 });
 
-// 获取 mock 页面数据
-async function __mockFetchProjectPage(pageIndex: number): Promise<ProjectPageData> {
-  sourceSerial = pageIndex * 100;
-
-  const imageIndex = pageIndex % MOCK_IMAGE_URLS.length;
-
-  const offset = (pageIndex % 4) * 0.04;
-
-  const verticalShift = (pageIndex % 3) * 0.05;
-
-  const baseSources: TranslationSource[] = [
-    {
-      id: createSourceId(),
-      category: 'inside',
-      status: pageIndex % 2 === 0 ? 'translated' : 'empty',
-      translationText: `这里是第 ${pageIndex + 1} 页的翻译示例。`,
-      proofText: '',
-      position: {
-        x: 0.22 + offset,
-        y: 0.26 + verticalShift,
-        width: 0,
-        height: 0,
-      },
-    },
-    {
-      id: createSourceId(),
-      category: 'outside',
-      status: 'empty',
-      translationText: '',
-      proofText: '',
-      position: {
-        x: 0.55 + offset * 0.8,
-        y: 0.2 + verticalShift * 0.6,
-        width: 0,
-        height: 0,
-      },
-    },
-    {
-      id: createSourceId(),
-      category: 'inside',
-      status: pageIndex % 3 === 0 ? 'proofed' : 'translated',
-      translationText: `最终校对文本示例 - 第 ${pageIndex + 1} 页`,
-      proofText: pageIndex % 3 === 0 ? `最终校对文本示例 - 第 ${pageIndex + 1} 页` : '',
-      position: {
-        x: 0.38 + offset * 0.5,
-        y: 0.62 + verticalShift,
-        width: 0,
-        height: 0,
-      },
-    },
-  ];
-
-  return new Promise(resolve => {
-    window.setTimeout(() => {
-      resolve({
-        imageUrl: MOCK_IMAGE_URLS[imageIndex],
-        pageIndex: pageIndex + 1,
-        pageCount: 24,
-        title: 'MOE 漫画项目',
-        sources: baseSources,
-      });
-    }, 160);
-  });
-}
-
 // 初始化页面数据
 async function initPage(pageIndex: number): Promise<void> {
   const requestToken = ++latestPageLoadToken;
@@ -612,13 +566,104 @@ async function initPage(pageIndex: number): Promise<void> {
   isLoading.value = true;
 
   try {
-    const result = await __mockFetchProjectPage(pageIndex);
-
-    if (requestToken !== latestPageLoadToken) {
-      return;
+    // 获取当前页对应的文件 ID
+    const currentFile = props.files[pageIndex];
+    if (!currentFile) {
+      throw new Error(`页面索引 ${pageIndex} 超出文件列表范围`);
     }
 
+    let convertedSources: TranslationSource[] = [];
+
+    // 只有翻校模式需要加载 sources
+    if (props.initialMode === 'translate' && props.targetId) {
+      // 从 API 获取页面 sources
+      const apiSources = await getPageSources(currentFile.id, props.targetId);
+
+      // 检查是否已被新请求替代
+      if (requestToken !== latestPageLoadToken) {
+        return;
+      }
+
+      // 转换 API 数据到内部格式
+      convertedSources = apiSources.map(src => {
+        // 查找选中的翻译内容
+        const selectedTranslation = src.myTranslation?.selected
+          ? src.myTranslation
+          : src.translations.find(t => t.selected);
+
+        const translationText = selectedTranslation?.content || '';
+        const proofText = selectedTranslation?.proofreadContent || '';
+
+        // 根据翻译和校对状态确定 status
+        let status: SourceStatus = 'empty';
+        if (proofText) {
+          status = 'proofed';
+        } else if (translationText) {
+          status = 'translated';
+        }
+
+        return {
+          id: src.id,
+          category: src.positionType === 1 ? 'inside' : 'outside',
+          status,
+          translationText,
+          proofText,
+          position: {
+            x: src.x,
+            y: src.y,
+            width: 0,
+            height: 0,
+          },
+        };
+      });
+    }
+    // else: 阅览模式不加载sources，convertedSources保持为空数组
+
+    // 更新页面数据
+    const result: ProjectPageData = {
+      imageUrl: '', // will be filled by proxied object URL
+      pageIndex: pageIndex + 1,
+      pageCount: props.files.length,
+      title: currentFile.name,
+      sources: convertedSources,
+    };
+
     projectPage.value = result;
+
+    // load image via backend proxy -> Blob -> Object URL
+    try {
+      // revoke previous image if any
+      if (currentImageObjectUrl.value) {
+        try {
+          URL.revokeObjectURL(currentImageObjectUrl.value);
+        } catch (_) {}
+        currentImageObjectUrl.value = null;
+      }
+
+      // 优先使用缓存
+      let objectUrl = imageCache.get(currentFile.id) || null;
+      if (!objectUrl) {
+        const imgReply = await proxyImage(currentFile.url);
+        const binaryString = atob(imgReply.b64);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+
+        const blob = new Blob([bytes], { type: imgReply.content_type });
+        objectUrl = URL.createObjectURL(blob);
+        imageCache.set(currentFile.id, objectUrl);
+      }
+
+      currentImageObjectUrl.value = objectUrl;
+
+      if (projectPage.value) {
+        projectPage.value.imageUrl = objectUrl;
+      }
+    } catch (err) {
+      console.error('加载代理图片失败', err);
+      showToast('加载图片失败', 'error');
+      // keep imageUrl empty
+    }
 
     if (!pageSourceStore.has(pageIndex)) {
       pageSourceStore.set(pageIndex, cloneSourceList(result.sources));
@@ -631,6 +676,7 @@ async function initPage(pageIndex: number): Promise<void> {
     activeSourceId.value = null;
   } catch (error) {
     console.error('加载项目页面失败', error);
+    showToast('加载页面失败', 'error');
   } finally {
     if (requestToken === latestPageLoadToken) {
       editorTranslationText.value = selectedSource.value?.translationText ?? '';
@@ -644,6 +690,37 @@ async function initPage(pageIndex: number): Promise<void> {
       isLoading.value = false;
     }
   }
+
+  // fire-and-forget preload of adjacent images
+  void preloadAdjacent(pageIndex);
+}
+
+// 预加载相邻页图片（pageIndex-1, pageIndex+1），若未缓存
+async function preloadAdjacent(pageIndex: number): Promise<void> {
+  const ids: string[] = [];
+  if (pageIndex - 1 >= 0) ids.push(props.files[pageIndex - 1].id);
+  if (pageIndex + 1 < props.files.length) ids.push(props.files[pageIndex + 1].id);
+
+  await Promise.all(
+    ids.map(async fileId => {
+      if (imageCache.has(fileId)) return;
+      const file = props.files.find(f => f.id === fileId);
+      if (!file) return;
+      try {
+        const reply = await proxyImage(file.url);
+        const bin = atob(reply.b64);
+        const len = bin.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+        const blob = new Blob([bytes], { type: reply.content_type });
+        const url = URL.createObjectURL(blob);
+        imageCache.set(fileId, url);
+      } catch (e) {
+        // 忽略预加载失败
+        console.warn('预加载失败', fileId, e);
+      }
+    })
+  );
 }
 
 // 生成唯一 ID
@@ -1620,6 +1697,13 @@ onBeforeUnmount(() => {
     boardResizeObserver.disconnect();
 
     boardResizeObserver = null;
+  }
+
+  if (currentImageObjectUrl.value) {
+    try {
+      URL.revokeObjectURL(currentImageObjectUrl.value);
+    } catch (_) {}
+    currentImageObjectUrl.value = null;
   }
 
   // 全局 toast 不需要在此清理

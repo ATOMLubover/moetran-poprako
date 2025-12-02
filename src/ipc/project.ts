@@ -387,6 +387,7 @@ export interface ProjectFileInfo {
   id: string;
   name: string;
   sourceCount: number;
+  url: string;
 }
 
 export async function getProjectTargets(projectId: string): Promise<ProjectTargetInfo[]> {
@@ -429,6 +430,7 @@ export async function getProjectFiles(
         id: string;
         name: string;
         source_count: number;
+        url: string;
       }[]
     >('get_project_files', {
       payload,
@@ -440,9 +442,101 @@ export async function getProjectFiles(
       id: f.id,
       name: f.name,
       sourceCount: f.source_count ?? 0,
+      url: f.url,
     }));
   } catch (err) {
     console.error('[ipc] getProjectFiles failed', { projectId, targetId, err });
+    throw err;
+  }
+}
+
+// ========== 获取页面的 sources（用于 TranslatorView） ==========
+
+export interface PageTranslation {
+  id: string;
+  content: string;
+  proofreadContent?: string;
+  selected: boolean;
+}
+
+export interface PageSource {
+  id: string;
+  x: number;
+  y: number;
+  positionType: number;
+  myTranslation?: PageTranslation;
+  translations: PageTranslation[];
+}
+
+export async function getPageSources(fileId: string, targetId: string): Promise<PageSource[]> {
+  try {
+    console.debug('[ipc] invoke get_page_sources', { fileId, targetId });
+    const raw = await invoke<
+      {
+        id: string;
+        x: number;
+        y: number;
+        position_type: number;
+        my_translation?: {
+          id: string;
+          content: string;
+          proofread_content?: string;
+          selected: boolean;
+        };
+        translations: {
+          id: string;
+          content: string;
+          proofread_content?: string;
+          selected: boolean;
+        }[];
+      }[]
+    >('get_page_sources', {
+      payload: {
+        file_id: fileId,
+        target_id: targetId,
+      },
+    });
+
+    console.debug('[ipc] get_page_sources result', { fileId, targetId, raw });
+
+    return (raw || []).map(s => ({
+      id: s.id,
+      x: s.x,
+      y: s.y,
+      positionType: s.position_type,
+      myTranslation: s.my_translation
+        ? {
+            id: s.my_translation.id,
+            content: s.my_translation.content,
+            proofreadContent: s.my_translation.proofread_content,
+            selected: s.my_translation.selected,
+          }
+        : undefined,
+      translations: (s.translations || []).map(t => ({
+        id: t.id,
+        content: t.content,
+        proofreadContent: t.proofread_content,
+        selected: t.selected,
+      })),
+    }));
+  } catch (err) {
+    console.error('[ipc] getPageSources failed', { fileId, targetId, err });
+    throw err;
+  }
+}
+
+export async function proxyImage(url: string): Promise<{ b64: string; content_type: string }> {
+  try {
+    console.debug('[ipc] invoke proxy_image', { url });
+    const raw = await invoke<{ b64: string; content_type: string }>('proxy_image', {
+      url,
+    });
+
+    console.debug('[ipc] proxy_image result', { url, raw });
+
+    return raw as { b64: string; content_type: string };
+  } catch (err) {
+    console.error('[ipc] proxyImage failed', { url, err });
     throw err;
   }
 }

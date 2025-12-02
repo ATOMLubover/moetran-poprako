@@ -2278,6 +2278,7 @@ dependencies = [
 name = "moetran-native"
 version = "0.1.0"
 dependencies = [
+ "base64 0.21.7",
  "dotenvy",
  "reqwest",
  "serde",
@@ -2288,6 +2289,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tracing",
  "tracing-subscriber",
+ "url",
  "urlencoding",
 ]
 

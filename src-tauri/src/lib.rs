@@ -84,6 +84,8 @@ pub fn run() {
             crate::project::get_user_projects_enriched,
             crate::project::get_project_targets,
             crate::project::get_project_files,
+            crate::project::get_page_sources,
+            crate::project::proxy_image,
             crate::project::create_projset,
             crate::project::create_proj,
             crate::project::get_team_poprako_projsets,

@@ -87,6 +87,28 @@ const resizeTimer = ref<ReturnType<typeof setTimeout> | null>(null);
 const resizeListener = ref<((this: Window, ev: UIEvent) => void) | null>(null);
 // 服务端一次最多拉取多少条，之后前端再根据高度裁剪
 const serverLimit = 10;
+// 分页状态
+const currentPage = ref(1);
+const lastFetchCount = ref(0);
+// 是否还有下一页（基于返回数量是否达到 serverLimit）
+const hasNextPage = computed(() => lastFetchCount.value === serverLimit);
+
+function goPrevPage(): void {
+  if (currentPage.value > 1) {
+    currentPage.value -= 1;
+    void fetchAndClamp();
+  }
+}
+
+function goNextPage(): void {
+  if (!hasNextPage.value) return;
+  currentPage.value += 1;
+  void fetchAndClamp();
+}
+
+function refreshList(): void {
+  void fetchAndClamp();
+}
 
 // 点击详情
 function handleOpenDetail(item: ProjectListItem): void {
@@ -234,7 +256,9 @@ async function fetchAndClamp(): Promise<void> {
       'items, teamId =',
       props.teamId,
       'filters =',
-      props.filters
+      props.filters,
+      'page =',
+      currentPage.value
     );
 
     let apiRes: ResProjectEnriched[] = [];
@@ -247,13 +271,13 @@ async function fetchAndClamp(): Promise<void> {
         apiRes = await searchTeamProjectsEnriched({
           team_id: props.teamId as string,
           ...props.filters,
-          page: 1,
+          page: currentPage.value,
           limit: serverLimit,
         });
       } else {
         apiRes = await getTeamProjectsEnriched({
           teamId: props.teamId as string,
-          page: 1,
+          page: currentPage.value,
           limit: serverLimit,
         });
       }
@@ -262,14 +286,15 @@ async function fetchAndClamp(): Promise<void> {
       if (hasFilters) {
         apiRes = await searchUserProjectsEnriched({
           ...props.filters,
-          page: 1,
+          page: currentPage.value,
           limit: serverLimit,
         });
       } else {
-        apiRes = await getUserProjectsEnriched({ page: 1, limit: serverLimit });
+        apiRes = await getUserProjectsEnriched({ page: currentPage.value, limit: serverLimit });
       }
     }
     const all = mapEnrichedToBasic(apiRes);
+    lastFetchCount.value = apiRes.length;
     innerProjects.value = all;
 
     // 下一帧再测量，确保 DOM 已更新；如果此时 DOM 未挂载，跳过裁剪但保留数据
@@ -316,6 +341,7 @@ async function fetchAndClamp(): Promise<void> {
   } catch (err) {
     console.error('[ProjectList] 获取用户项目失败:', err);
     innerProjects.value = [];
+    lastFetchCount.value = 0;
     try {
       const toastStore = useToastStore();
       // 给用户友好的提示（网络或后端服务不可用）
@@ -352,6 +378,7 @@ onMounted(() => {
 watch(
   () => props.filters,
   () => {
+    currentPage.value = 1; // reset page on filters change
     requestAnimationFrame(() => {
       void fetchAndClamp();
     });
@@ -364,6 +391,7 @@ watch(
   () => props.teamId,
   (newVal, oldVal) => {
     console.log('[ProjectList] teamId changed:', oldVal, '->', newVal);
+    currentPage.value = 1; // reset page when team changes
     requestAnimationFrame(() => {
       void fetchAndClamp();
     });
@@ -393,6 +421,29 @@ onBeforeUnmount(() => {
       >
         <button
           type="button"
+          class="icon-btn"
+          @click="refreshList"
+          :disabled="isLoading"
+          title="刷新"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"></path>
+            <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"></path>
+          </svg>
+        </button>
+        <button
+          type="button"
           class="project-list__publish"
           @click="
             () => {
@@ -412,6 +463,49 @@ onBeforeUnmount(() => {
           创建新项目
         </button>
         <!-- <span v-if="!canCreate" class="project-list__locked-note">🔒 仅团队管理员可创建</span> -->
+        <div class="pagination-controls">
+          <button
+            type="button"
+            class="icon-btn"
+            @click="goPrevPage"
+            :disabled="isLoading || currentPage <= 1"
+            title="上一页"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="15 18 9 12 15 6"></polyline>
+            </svg>
+          </button>
+          <span class="page-indicator">第 {{ currentPage }} 页</span>
+          <button
+            type="button"
+            class="icon-btn"
+            @click="goNextPage"
+            :disabled="isLoading || !hasNextPage"
+            title="下一页"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+          </button>
+        </div>
       </div>
     </header>
 
@@ -478,6 +572,41 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 10px;
+}
+.pagination-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px;
+  font-size: 12px;
+  color: #2a4f7a;
+}
+.page-indicator {
+  font-weight: 600;
+}
+.icon-btn {
+  border: 1px solid rgba(118, 184, 255, 0.35);
+  background: #f4f9ff;
+  color: #2f5a8f;
+  padding: 4px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+.icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.icon-btn:not(:disabled):hover {
+  background: #eef6ff;
+  box-shadow: 0 4px 14px rgba(118, 184, 255, 0.25);
+  transform: translateY(-1px);
 }
 
 /* When the current user cannot create projects for the selected team,

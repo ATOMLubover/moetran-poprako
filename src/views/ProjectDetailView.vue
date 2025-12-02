@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import { Line } from 'vue-chartjs';
 import {
   Chart as ChartJS,
@@ -14,6 +14,7 @@ import {
 } from 'chart.js';
 import { useToastStore } from '../stores/toast';
 import { useUserStore } from '../stores/user';
+import { useRouterStore } from '../stores/router';
 import { getProjectTargets, getProjectFiles } from '../ipc/project';
 
 // TODO: 后续接口可能扩展字段（如权限、进度来源），保持结构可扩展
@@ -74,16 +75,27 @@ const props = defineProps<{
   isPublished?: boolean;
 }>();
 
+interface FileInfo {
+  id: string;
+  name: string;
+  sourceCount: number;
+  url: string; // 图片URL（Moetran API 总是返回）
+}
+
 const emit = defineEmits<{
   (e: 'close'): void;
-  (e: 'open-translator', enabled: boolean): void;
   (e: 'open-modifier'): void;
 }>();
 
 const toastStore = useToastStore();
+const routerStore = useRouterStore();
 
 // 项目详情数据
 const project = ref<ProjectDetail | null>(null);
+
+// 存储 target 和 files 列表供翻译视图使用
+const primaryTargetId = ref<string | null>(null);
+const primaryFiles = ref<FileInfo[]>([]);
 
 // NOTE: 修改按钮现在将触发打开创建/修改面板（由父组件处理）
 
@@ -335,6 +347,9 @@ async function loadProject(): Promise<void> {
 
       const primaryTarget = targets[0];
 
+      // 存储 targetId 供翻译视图使用
+      primaryTargetId.value = primaryTarget.id;
+
       // files (with target filter)
       try {
         files = await getProjectFiles(props.projectId, primaryTarget.id);
@@ -343,6 +358,27 @@ async function loadProject(): Promise<void> {
           targetId: primaryTarget.id,
           files,
         });
+
+        // If target-specific fetch returned no files, try fallback without target filter.
+        if (!files || files.length === 0) {
+          console.debug('[ProjectDetail] target-specific files empty, trying unfiltered files', {
+            projectId: props.projectId,
+          });
+          try {
+            const unfiltered = await getProjectFiles(props.projectId);
+            console.debug('[ProjectDetail] getProjectFiles (fallback)', {
+              projectId: props.projectId,
+              unfiltered,
+            });
+            if (unfiltered && unfiltered.length > 0) files = unfiltered;
+          } catch (e2) {
+            // fallback failed; keep original empty list and continue to show no files
+            console.warn('[ProjectDetail] fallback getProjectFiles failed', {
+              projectId: props.projectId,
+              error: e2,
+            });
+          }
+        }
       } catch (e) {
         console.error('[ProjectDetail] getProjectFiles failed', {
           projectId: props.projectId,
@@ -381,6 +417,16 @@ async function loadProject(): Promise<void> {
         pageNumber: index + 1,
         markerCount: f.sourceCount,
       }));
+
+      // 存储整个文件列表供翻译视图使用
+      if (files && files.length > 0) {
+        primaryFiles.value = files;
+        // 如果还没有 targetId（非成员情况），也允许阅读模式
+        // 非成员看不到 targets，但可以看文件，此时使用空字符串作为占位
+        if (!primaryTargetId.value && !isMeInProject.value) {
+          primaryTargetId.value = ''; // 允许非成员进入阅读模式
+        }
+      }
     }
 
     loadingMarkers.value = false;
@@ -412,8 +458,21 @@ function handleJoinOrLeave(): void {
 
 // 进入翻译工作台（带翻校模式或阅读模式）
 function openTranslator(enabled: boolean): void {
-  // 打开翻译工作台
-  emit('open-translator', enabled);
+  // 验证必要数据是否已加载
+  // 注意：非成员用户在阅读模式下，primaryTargetId 可以为空字符串
+  if (primaryTargetId.value === null || primaryFiles.value.length === 0) {
+    toastStore.show('项目数据尚未加载完成，请稍后再试', 'error');
+    return;
+  }
+
+  // 使用 router store 导航到翻译视图（全屏独立视图）
+  routerStore.navigateToTranslator({
+    projectId: props.projectId,
+    targetId: primaryTargetId.value,
+    files: primaryFiles.value,
+    enabled,
+    initialMode: enabled ? 'translate' : 'read',
+  });
 }
 
 // 关闭当前详情视图
@@ -427,6 +486,20 @@ onMounted(() => {
   window.addEventListener('resize', handleResize);
 });
 
+// 如果父组件在侧栏打开时切换了 `projectId`，需要响应式地重新加载数据
+watch(
+  () => props.projectId,
+  (newId, oldId) => {
+    if (newId === oldId) return;
+    project.value = null;
+    primaryTargetId.value = null;
+    primaryFiles.value = [];
+    loadingMarkers.value = false;
+    // 重新加载新的 project 数据
+    loadProject();
+  }
+);
+
 onBeforeUnmount(() => {
   window.removeEventListener('resize', handleResize);
 });
@@ -439,6 +512,23 @@ onBeforeUnmount(() => {
         <h1 class="pd-title">{{ project.title }}</h1>
       </div>
       <div class="pd-header__right">
+        <button type="button" class="pd-refresh" @click="loadProject" title="刷新">
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"></path>
+            <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"></path>
+          </svg>
+        </button>
         <button type="button" class="pd-close" @click="handleClose" title="关闭">×</button>
       </div>
     </header>
@@ -629,6 +719,23 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+.pd-refresh {
+  border: 1px solid rgba(118, 184, 255, 0.35);
+  background: #f4f9ff;
+  color: #2f5a8f;
+  padding: 6px 8px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+.pd-refresh:hover {
+  background: #eef6ff;
+  box-shadow: 0 6px 18px rgba(118, 184, 255, 0.25);
+  transform: translateY(-1px);
 }
 .pd-close {
   border: 1px solid rgba(150, 180, 210, 0.5);
