@@ -32,6 +32,8 @@ interface RawResProject {
   is_published?: boolean | null;
   members?: RawPoprakoMember[] | null;
   principals?: string[] | null;
+  // Moetran 原生项目可能返回的 role 字段（object | null）
+  role?: any | null;
 }
 
 function mapRawTeam(t: any): ResTeam {
@@ -83,6 +85,8 @@ function mapRawProject(r: RawResProject): ResProjectEnriched {
       ((r.members || []) as RawPoprakoMember[])
         .filter(m => m.is_principal)
         .map(m => m.user_id ?? m.member_id),
+    // passthrough Moetran `role` for native projects; frontend will only check null/non-null
+    role: (r as any).role ?? null,
   } as ResProjectEnriched;
 }
 

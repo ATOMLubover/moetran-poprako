@@ -33,4 +33,7 @@ export interface ResProjectEnriched extends ResProject {
   // 仅包含 memberId 的负责人列表（可选）
   // 仅包含 userId 的负责人列表（可选，用于与当前用户 id 比对）
   principals?: string[];
+  // Moetran 原生项目返回的 role 字段（若用户在项目内则为对象，否则为 null）
+  // 只需用于判定是否为项目成员，不依赖具体结构
+  role?: any | null;
 }

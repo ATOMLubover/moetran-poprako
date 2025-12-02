@@ -6,6 +6,7 @@ use crate::{
 use base64::{engine::general_purpose, Engine as _};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE, REFERER, USER_AGENT};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::time::Duration;
 use url::Url;
 
@@ -26,6 +27,10 @@ pub struct ResProject {
     pub checked_source_count: u64,
     pub team: crate::team::ResTeam,
     pub project_set: ResProjectSet,
+    // Moetran may include a `role` field for native projects indicating the
+    // current user's role in the project; we only passthrough it (may be null).
+    #[serde(default)]
+    pub role: Option<Value>,
 }
 
 // PopRaKo 项目搜索返回的精简 DTO（参考 ProjInfoReply）
@@ -157,6 +162,9 @@ pub struct ResProjectEnriched {
     // 从 members 中提取的负责人 user id 列表（可选）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub principals: Option<Vec<String>>,
+    // Passthrough of Moetran `role` for native projects; may be null.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<Value>,
 }
 
 // ========== Moetran 项目 target / files DTO（供 ProjectDetail 使用） ==========
@@ -671,6 +679,7 @@ pub async fn get_user_projects_enriched(
                         .map(|m| m.user_id.clone())
                         .collect()
                 }),
+                role: item.role.clone(),
             });
         } else {
             enriched_list.push(ResProjectEnriched {
@@ -690,6 +699,7 @@ pub async fn get_user_projects_enriched(
                 is_published: None,
                 members: None,
                 principals: None,
+                role: item.role.clone(),
             });
         }
     }
@@ -788,6 +798,7 @@ pub async fn get_team_projects_enriched(
                         .map(|m| m.user_id.clone())
                         .collect()
                 }),
+                role: item.role.clone(),
             });
         } else {
             enriched_list.push(ResProjectEnriched {
@@ -807,6 +818,7 @@ pub async fn get_team_projects_enriched(
                 is_published: None,
                 members: None,
                 principals: None,
+                role: item.role.clone(),
             });
         }
     }
@@ -886,6 +898,7 @@ pub async fn search_user_projects_enriched(
                         .map(|m| m.user_id.clone())
                         .collect()
                 }),
+                role: base.role.clone(),
             });
         }
     }
@@ -971,6 +984,7 @@ pub async fn search_team_projects_enriched(
                         .map(|m| m.user_id.clone())
                         .collect()
                 }),
+                role: base.role.clone(),
             });
         }
     }

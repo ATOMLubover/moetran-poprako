@@ -53,6 +53,8 @@ const selectedProjectLetterers = ref<string[]>([]);
 const selectedProjectReviewers = ref<string[]>([]);
 const selectedProjectPrincipals = ref<string[]>([]);
 const selectedProjectMembers = ref<ResMember[] | undefined>(undefined);
+const selectedProjectRole = ref<any | null>(null);
+const selectedProjectHasPoprako = ref<boolean | undefined>(undefined);
 const selectedProjectTranslatingStatus = ref<number | null>(null);
 const selectedProjectProofreadingStatus = ref<number | null>(null);
 const selectedProjectTypesettingStatus = ref<number | null>(null);
@@ -170,6 +172,7 @@ function handleOpenDetail(payload: {
   members?: ResMember[];
   isPublished?: boolean;
   hasPoprako?: boolean;
+  role?: any | null;
   teamId?: string;
 }): void {
   // 在 PanelView 中打开右侧详情抽屉（本地侧栏，不切换到全屏）
@@ -191,6 +194,8 @@ function handleOpenDetail(payload: {
   selectedProjectReviewers.value = payload.reviewers;
   selectedProjectPrincipals.value = payload.principals ?? [];
   selectedProjectMembers.value = payload.members ?? undefined;
+  selectedProjectRole.value = (payload as any).role ?? null;
+  selectedProjectHasPoprako.value = payload.hasPoprako ?? undefined;
   selectedProjectIsPublished.value = payload.isPublished ?? false;
   selectedProjectTeamId.value = payload.teamId ?? activeTeamId.value ?? '';
   detailReady.value = false;
@@ -206,6 +211,8 @@ function handleCloseDetail(): void {
   detailOpen.value = false;
   detailReady.value = false;
   selectedProjectMembers.value = undefined;
+  selectedProjectRole.value = null;
+  selectedProjectHasPoprako.value = undefined;
 }
 
 // 右侧详情栏宽度动画结束后，标记为就绪再渲染复杂内容
@@ -532,6 +539,8 @@ function handleModifierBack(): void {
           :reviewers="selectedProjectReviewers"
           :members="selectedProjectMembers"
           :is-published="selectedProjectIsPublished"
+          :role="selectedProjectRole"
+          :has-poprako="selectedProjectHasPoprako"
           @close="handleCloseDetail"
           @open-modifier="handleOpenModifier"
         />

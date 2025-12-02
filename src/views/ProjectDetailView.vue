@@ -73,6 +73,8 @@ const props = defineProps<{
   principals?: string[];
   // publish state
   isPublished?: boolean;
+  // Moetran 原生项目可能返回的 role 字段；若非 null 表示当前用户在该项目中
+  role?: any | null;
 }>();
 
 interface FileInfo {
@@ -111,6 +113,14 @@ const userStore = useUserStore();
 const isMeInProject = computed(() => {
   const uid = userStore.user?.id;
   if (!uid) return false;
+  // For native Moetran projects (no PopRaKo backing), Moetran may include a
+  // top-level `role` field indicating the current user's role in the project.
+  // If `hasPoprako === false`, treat `props.role !== null` as membership.
+  if (props.hasPoprako === false) {
+    // props.role may be undefined if backend didn't provide it; treat undefined as not-in-project
+    return (props.role ?? null) !== null;
+  }
+
   // Prefer explicit PopRaKo `members` (each member exposes `userId`),
   // fall back to legacy role arrays which may contain user ids.
   if (props.members && Array.isArray(props.members) && props.members.length > 0) {
@@ -141,6 +151,11 @@ const isMeTranslatorOrProofreader = computed(() => {
   const uid = userStore.user?.id;
   if (!uid) return false;
 
+  // For native Moetran projects, if backend provided a `role` field,
+  // treat any non-null value as membership (allowing 翻校 entry).
+  if (props.hasPoprako === false) {
+    return (props.role ?? null) !== null;
+  }
   console.log('Checking isMeTranslatorOrProofreader for uid', uid, {
     members: props.members,
     translators: props.translators,

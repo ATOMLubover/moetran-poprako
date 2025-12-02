@@ -45,6 +45,8 @@ watch(
       :proofreaders="[]"
       :letterers="[]"
       :reviewers="[]"
+      :role="routerStore.projectDetailParams.role"
+      :has-poprako="routerStore.projectDetailParams.hasPoprako ?? undefined"
       @close="routerStore.navigateToPanel()"
     />
     <TranslatorView

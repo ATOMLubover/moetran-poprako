@@ -39,6 +39,7 @@ const emit = defineEmits<{
       members?: ResMember[];
       isPublished?: boolean;
       hasPoprako?: boolean;
+      role?: any | null;
       teamId?: string;
     }
   ): void;
@@ -77,6 +78,7 @@ type ProjectListItem = ProjectBasicInfo & { hasPoprako?: boolean } & {
   principals?: string[];
   projectSetName?: string | null;
   members?: ResMember[];
+  role?: any | null;
 };
 
 const innerProjects = ref<ProjectListItem[]>([]);
@@ -132,6 +134,7 @@ function handleOpenDetail(item: ProjectListItem): void {
     members: item.members ?? [],
     isPublished: item.isPublished ?? false,
     hasPoprako: item.hasPoprako ?? false,
+    role: item.role ?? null,
     teamId: props.teamId ?? undefined,
   });
 }
@@ -239,6 +242,7 @@ function mapEnrichedToBasic(apiRes: ResProjectEnriched[]): ProjectListItem[] {
       isPublished: p.isPublished ?? false,
       principals: p.principals ?? [],
       members: (p.members ?? []) as ResMember[],
+      role: (p as any).role ?? null,
       phases,
     };
 

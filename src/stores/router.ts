@@ -21,6 +21,9 @@ export interface ProjectDetailViewParams {
   totalChecked: number;
   translatingStatus: number | null;
   proofreadingStatus: number | null;
+  // optional passthroughs for detail view (role for native Moetran projects)
+  role?: any | null;
+  hasPoprako?: boolean | null;
 }
 
 export const useRouterStore = defineStore('router', () => {
