@@ -56,6 +56,8 @@ watch(
       :files="routerStore.translatorParams.files"
       :is-enabled="routerStore.translatorParams.enabled"
       :initial-mode="routerStore.translatorParams.initialMode"
+      :has-poprako="routerStore.translatorParams.hasPoprako"
+      :is-proofreader="routerStore.translatorParams.isProofreader"
       v-model:page-index="pageIndex"
       @back="routerStore.navigateToPanel()"
     />

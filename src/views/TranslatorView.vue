@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useToastStore } from '../stores/toast';
 import { getPageSources, proxyImage } from '../ipc/project';
+import LoadingCircle from '../components/LoadingCircle.vue';
 
 interface SourcePosition {
   x: number;
@@ -33,7 +34,7 @@ interface ProjectPageData {
 
 interface SourceLabelInfo {
   number: string;
-  display: string;
+  suffix: string;
 }
 
 interface ShortcutHint {
@@ -52,6 +53,148 @@ interface FileInfo {
   url: string; // 图片URL（Moetran API 总是返回）
 }
 
+const IMAGE_CACHE_LIMIT = 8;
+
+const GLOBAL_IMAGE_CACHE_KEY = '__MOETRAN_IMAGE_CACHE__';
+
+const GLOBAL_IMAGE_FETCH_KEY = '__MOETRAN_IMAGE_FETCH__';
+
+type ImageCacheBucket = Map<string, string>;
+
+type ImageFetchBucket = Map<string, Promise<string>>;
+
+function resolveImageCacheBucket(): ImageCacheBucket {
+  const container = globalThis as typeof globalThis & Record<string, ImageCacheBucket>;
+
+  if (!container[GLOBAL_IMAGE_CACHE_KEY]) {
+    container[GLOBAL_IMAGE_CACHE_KEY] = new Map<string, string>();
+  }
+
+  return container[GLOBAL_IMAGE_CACHE_KEY];
+}
+
+function resolveImageFetchBucket(): ImageFetchBucket {
+  const container = globalThis as typeof globalThis & Record<string, ImageFetchBucket>;
+
+  if (!container[GLOBAL_IMAGE_FETCH_KEY]) {
+    container[GLOBAL_IMAGE_FETCH_KEY] = new Map<string, Promise<string>>();
+  }
+
+  return container[GLOBAL_IMAGE_FETCH_KEY];
+}
+
+const sharedImageCache = resolveImageCacheBucket();
+
+const sharedImageFetches = resolveImageFetchBucket();
+
+function makeImageCacheKey(projectId: string, fileId: string): string {
+  return `${projectId}::${fileId}`;
+}
+
+function promoteImageCacheEntry(key: string): string | null {
+  const cached = sharedImageCache.get(key);
+
+  if (!cached) {
+    return null;
+  }
+
+  sharedImageCache.delete(key);
+
+  sharedImageCache.set(key, cached);
+
+  return cached;
+}
+
+function enforceImageCacheLimit(): void {
+  while (sharedImageCache.size > IMAGE_CACHE_LIMIT) {
+    const iterator = sharedImageCache.keys();
+
+    const oldestKey = iterator.next().value as string | undefined;
+
+    if (!oldestKey) {
+      break;
+    }
+
+    const oldestUrl = sharedImageCache.get(oldestKey);
+
+    if (oldestUrl) {
+      try {
+        URL.revokeObjectURL(oldestUrl);
+      } catch (_) {}
+    }
+
+    sharedImageCache.delete(oldestKey);
+  }
+}
+
+function storeImageCacheEntry(key: string, url: string): void {
+  const existing = sharedImageCache.get(key);
+
+  if (existing && existing !== url) {
+    try {
+      URL.revokeObjectURL(existing);
+    } catch (_) {}
+  }
+
+  sharedImageCache.delete(key);
+
+  sharedImageCache.set(key, url);
+
+  enforceImageCacheLimit();
+}
+
+function createObjectUrlFromBase64(b64: string, contentType: string): string {
+  const binary = atob(b64);
+
+  const length = binary.length;
+
+  const bytes = new Uint8Array(length);
+
+  for (let i = 0; i < length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+
+  const blob = new Blob([bytes], { type: contentType });
+
+  return URL.createObjectURL(blob);
+}
+
+async function fetchImageForFile(projectId: string, file: FileInfo): Promise<string> {
+  const key = makeImageCacheKey(projectId, file.id);
+
+  const cached = promoteImageCacheEntry(key);
+
+  if (cached) {
+    return cached;
+  }
+
+  let pending = sharedImageFetches.get(key);
+
+  if (!pending) {
+    pending = (async () => {
+      const reply = await proxyImage(file.url);
+
+      const url = createObjectUrlFromBase64(reply.b64, reply.content_type);
+
+      storeImageCacheEntry(key, url);
+
+      return url;
+    })();
+
+    sharedImageFetches.set(key, pending);
+  }
+
+  try {
+    const url = await pending;
+
+    promoteImageCacheEntry(key);
+
+    return url;
+  } finally {
+    sharedImageFetches.delete(key);
+  }
+}
+
 const props = defineProps<{
   projectId: string;
   targetId: string;
@@ -59,6 +202,8 @@ const props = defineProps<{
   pageIndex: number;
   isEnabled: boolean;
   initialMode?: 'translate' | 'read'; // 初始模式：translate=翻校, read=阅览
+  hasPoprako: boolean;
+  isProofreader: boolean;
 }>();
 
 // 是否允许编辑（参与者）
@@ -161,16 +306,18 @@ const SHORTCUT_HINTS: ShortcutHint[] = [
   // },
 ];
 
+const SPECIAL_SYMBOLS = ['★', '✰', '❤', '♥', '♡', '♂', '♁', '❈', '•', '♩', '♪', '♫'];
+
 const currentPageIndex = ref(props.pageIndex);
 
 const projectPage = ref<ProjectPageData | null>(null);
 const currentImageObjectUrl = ref<string | null>(null);
-// 简单的图片缓存：fileId -> Object URL
-const imageCache = new Map<string, string>();
-
-const imageCacheOrder = ref<string[]>([]);
 
 const sources = ref<TranslationSource[]>([]);
+
+let previousPageIndex: number | null = null;
+
+let hasInitialWarmup = false;
 
 const pageInputValue = ref(currentPageIndex.value + 1);
 
@@ -247,7 +394,7 @@ let sourceSerial = 0;
 
 let latestPageLoadToken = 0;
 
-const pageSourceStore = new Map<number, TranslationSource[]>();
+const pageSourceStore = new Map<string, TranslationSource[]>();
 
 const hasEditorBeenDragged = ref(false);
 
@@ -275,7 +422,15 @@ function persistPageSources(pageIndex: number): void {
     return;
   }
 
-  pageSourceStore.set(pageIndex, cloneSourceList(sources.value));
+  const file = props.files[pageIndex];
+
+  if (!file) {
+    return;
+  }
+
+  const key = makeImageCacheKey(props.projectId, file.id);
+
+  pageSourceStore.set(key, cloneSourceList(sources.value));
 }
 
 const boardTransform = computed(
@@ -378,7 +533,7 @@ const sourceLabelMap = computed(() => {
 
     labelMap.set(item.id, {
       number,
-      display: `${number} ${suffix}`,
+      suffix,
     });
 
     index += 1;
@@ -387,12 +542,15 @@ const sourceLabelMap = computed(() => {
   return labelMap;
 });
 
-const selectedSourceLabel = computed(() => {
+const selectedSourceLabelInfo = computed(() => {
   if (!selectedSource.value) {
-    return '';
+    return null;
   }
 
-  return sourceLabelMap.value.get(selectedSource.value.id)?.display ?? '';
+  const info = sourceLabelMap.value.get(selectedSource.value.id);
+  if (!info) return null;
+
+  return { number: info.number, suffix: info.suffix };
 });
 
 // 切换翻译/校对模式
@@ -424,10 +582,38 @@ function handleToggleAutoRelocate(): void {
   showToast(nextState ? '自动重定位已开启' : '自动重定位已关闭');
 }
 
+// 复制特殊符号
+function copySymbol(symbol: string): void {
+  navigator.clipboard
+    .writeText(symbol)
+    .then(() => {
+      showToast(`已复制 ${symbol}`);
+    })
+    .catch(() => {
+      showToast('复制失败', 'error');
+    });
+}
+
+// 调整textarea高度
+function adjustTextareaHeight(textarea: HTMLTextAreaElement | null): void {
+  if (!textarea) return;
+  textarea.style.height = 'auto';
+  textarea.style.height = textarea.scrollHeight + 'px';
+}
+
 watch(
   () => props.pageIndex,
   value => {
     currentPageIndex.value = value;
+  }
+);
+
+watch(
+  () => props.projectId,
+  () => {
+    previousPageIndex = null;
+
+    hasInitialWarmup = false;
   }
 );
 
@@ -455,11 +641,14 @@ watch(selectedSource, (source, previousSource) => {
   nextTick(() => {
     if (isProofMode.value) {
       proofTextareaRef.value?.focus();
+      adjustTextareaHeight(proofTextareaRef.value);
+      adjustTextareaHeight(translationTextareaRef.value); // for readonly translation in proof mode
 
       return;
     }
 
     translationTextareaRef.value?.focus();
+    adjustTextareaHeight(translationTextareaRef.value);
   });
 
   if (source && isAutoRelocateEnabled.value) {
@@ -487,6 +676,8 @@ watch(editorTranslationText, value => {
   }
 
   selectedSource.value.status = 'translated';
+
+  nextTick(() => adjustTextareaHeight(translationTextareaRef.value));
 });
 
 watch(editorProofText, value => {
@@ -495,6 +686,8 @@ watch(editorProofText, value => {
   }
 
   selectedSource.value.proofText = value;
+
+  nextTick(() => adjustTextareaHeight(proofTextareaRef.value));
 });
 
 watch(activeMode, mode => {
@@ -590,13 +783,31 @@ async function initPage(pageIndex: number): Promise<void> {
 
       // 转换 API 数据到内部格式
       convertedSources = apiSources.map(src => {
-        // 查找选中的翻译内容
-        const selectedTranslation = src.myTranslation?.selected
-          ? src.myTranslation
-          : src.translations.find(t => t.selected);
+        // 扫描所有翻译对象，优先查找 proofreadContent，然后 content
+        // 千万不要修改content相关逻辑
+        let translationText = '';
+        let proofText = '';
 
-        const translationText = selectedTranslation?.content || '';
-        const proofText = selectedTranslation?.proofreadContent || '';
+        // 收集所有翻译对象
+        const allTranslations = [];
+        if (src.myTranslation) {
+          allTranslations.push(src.myTranslation);
+        }
+        allTranslations.push(...src.translations);
+
+        // 查找第一个有 proofreadContent 的
+        const firstWithProof = allTranslations.find(t => t.proofreadContent);
+        if (firstWithProof) {
+          proofText = firstWithProof.proofreadContent || '';
+          translationText = firstWithProof.content || '';
+        } else {
+          // 如果没有 proofreadContent，查找第一个有 content 的
+          const firstWithContent = allTranslations.find(t => t.content);
+          if (firstWithContent) {
+            translationText = firstWithContent.content || '';
+            proofText = firstWithContent.proofreadContent || '';
+          }
+        }
 
         // 根据翻译和校对状态确定 status
         let status: SourceStatus = 'empty';
@@ -636,37 +847,9 @@ async function initPage(pageIndex: number): Promise<void> {
 
     projectPage.value = result;
 
-    // load image via backend proxy -> Blob -> Object URL
+    // 通过共享缓存获取图片
     try {
-      // revoke previous image if any
-      if (currentImageObjectUrl.value) {
-        try {
-          URL.revokeObjectURL(currentImageObjectUrl.value);
-        } catch (_) {}
-        currentImageObjectUrl.value = null;
-      }
-
-      // 优先使用缓存
-      let objectUrl = imageCache.get(currentFile.id) || null;
-      if (!objectUrl) {
-        const imgReply = await proxyImage(currentFile.url);
-        const binaryString = atob(imgReply.b64);
-        const len = binaryString.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
-
-        const blob = new Blob([bytes], { type: imgReply.content_type });
-        objectUrl = URL.createObjectURL(blob);
-        if (!imageCache.has(currentFile.id)) imageCacheOrder.value.push(currentFile.id);
-        imageCache.set(currentFile.id, objectUrl);
-        if (imageCacheOrder.value.length > 3) {
-          const old = imageCacheOrder.value.shift();
-          if (old) {
-            URL.revokeObjectURL(imageCache.get(old)!);
-            imageCache.delete(old);
-          }
-        }
-      }
+      const objectUrl = await fetchImageForFile(props.projectId, currentFile);
 
       currentImageObjectUrl.value = objectUrl;
 
@@ -679,11 +862,13 @@ async function initPage(pageIndex: number): Promise<void> {
       // keep imageUrl empty
     }
 
-    if (!pageSourceStore.has(pageIndex)) {
-      pageSourceStore.set(pageIndex, cloneSourceList(result.sources));
+    const key = makeImageCacheKey(props.projectId, currentFile.id);
+
+    if (!pageSourceStore.has(key)) {
+      pageSourceStore.set(key, cloneSourceList(result.sources));
     }
 
-    const hydratedSources = pageSourceStore.get(pageIndex) ?? [];
+    const hydratedSources = pageSourceStore.get(key) ?? [];
 
     sources.value = cloneSourceList(hydratedSources);
 
@@ -702,47 +887,114 @@ async function initPage(pageIndex: number): Promise<void> {
       pan.value = { x: 0, y: 0 };
 
       isLoading.value = false;
+
+      const direction: -1 | 0 | 1 =
+        previousPageIndex === null
+          ? 0
+          : pageIndex > previousPageIndex
+            ? 1
+            : pageIndex < previousPageIndex
+              ? -1
+              : 0;
+
+      previousPageIndex = pageIndex;
+
+      if (!hasInitialWarmup) {
+        warmupAroundPage(pageIndex);
+      }
+
+      touchCacheForPage(pageIndex);
+
+      preloadAdjacent(pageIndex, direction);
+    }
+  }
+}
+
+async function ensureImageCachedByIndex(index: number, promoteWhenCached = true): Promise<void> {
+  const file = props.files[index];
+
+  if (!file) {
+    return;
+  }
+
+  if (!promoteWhenCached) {
+    const key = makeImageCacheKey(props.projectId, file.id);
+
+    if (sharedImageCache.has(key)) {
+      return;
     }
   }
 
-  // fire-and-forget preload of adjacent images
-  void preloadAdjacent(pageIndex);
+  try {
+    await fetchImageForFile(props.projectId, file);
+  } catch (error) {
+    // 忽略预加载失败
+    console.warn('预加载失败', file.id, error);
+  }
 }
 
-// 预加载相邻页图片（pageIndex-1, pageIndex+1），若未缓存
-async function preloadAdjacent(pageIndex: number): Promise<void> {
-  const ids: string[] = [];
-  if (pageIndex - 1 >= 0) ids.push(props.files[pageIndex - 1].id);
-  if (pageIndex + 1 < props.files.length) ids.push(props.files[pageIndex + 1].id);
+function preloadAdjacent(pageIndex: number, direction: -1 | 0 | 1): void {
+  const tasks: Array<{ index: number; promote: boolean }> = [];
 
-  await Promise.all(
-    ids.map(async fileId => {
-      if (imageCache.has(fileId)) return;
-      const file = props.files.find(f => f.id === fileId);
-      if (!file) return;
-      try {
-        const reply = await proxyImage(file.url);
-        const bin = atob(reply.b64);
-        const len = bin.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
-        const blob = new Blob([bytes], { type: reply.content_type });
-        const url = URL.createObjectURL(blob);
-        if (!imageCache.has(fileId)) imageCacheOrder.value.push(fileId);
-        imageCache.set(fileId, url);
-        if (imageCacheOrder.value.length > 3) {
-          const old = imageCacheOrder.value.shift();
-          if (old) {
-            URL.revokeObjectURL(imageCache.get(old)!);
-            imageCache.delete(old);
-          }
-        }
-      } catch (e) {
-        // 忽略预加载失败
-        console.warn('预加载失败', fileId, e);
+  if (direction === 1 && pageIndex + 2 < props.files.length) {
+    tasks.push({ index: pageIndex + 2, promote: true });
+  } else if (direction === -1 && pageIndex - 2 >= 0) {
+    tasks.push({ index: pageIndex - 2, promote: true });
+  }
+
+  if (pageIndex + 1 < props.files.length) {
+    tasks.push({ index: pageIndex + 1, promote: false });
+  }
+
+  if (pageIndex - 1 >= 0) {
+    tasks.push({ index: pageIndex - 1, promote: false });
+  }
+
+  if (!tasks.length) {
+    return;
+  }
+
+  void (async () => {
+    for (const task of tasks) {
+      await ensureImageCachedByIndex(task.index, task.promote);
+    }
+
+    touchCacheForPage(pageIndex);
+  })();
+}
+
+function touchCacheForPage(pageIndex: number): void {
+  const file = props.files[pageIndex];
+
+  if (!file) {
+    return;
+  }
+
+  promoteImageCacheEntry(makeImageCacheKey(props.projectId, file.id));
+}
+
+function warmupAroundPage(pageIndex: number): void {
+  if (hasInitialWarmup) {
+    return;
+  }
+
+  hasInitialWarmup = true;
+
+  const offsets = [-1, 1, -2, 2];
+
+  void (async () => {
+    for (const offset of offsets) {
+      const target = pageIndex + offset;
+
+      if (target < 0 || target >= props.files.length) {
+        continue;
       }
-    })
-  );
+
+      await ensureImageCachedByIndex(target);
+    }
+
+    touchCacheForPage(pageIndex);
+  })();
 }
 
 // 生成唯一 ID
@@ -1721,12 +1973,7 @@ onBeforeUnmount(() => {
     boardResizeObserver = null;
   }
 
-  if (currentImageObjectUrl.value) {
-    try {
-      URL.revokeObjectURL(currentImageObjectUrl.value);
-    } catch (_) {}
-    currentImageObjectUrl.value = null;
-  }
+  currentImageObjectUrl.value = null;
 
   // 全局 toast 不需要在此清理
 });
@@ -1852,6 +2099,27 @@ onBeforeUnmount(() => {
             />
           </svg>
         </button>
+        <button
+          type="button"
+          class="toolbox__button"
+          :class="{ 'toolbox__button--active': isProofMode }"
+          :title="isProofMode ? '切换为翻译模式' : '切换为校对模式'"
+          @click="handleToggleMode"
+          :aria-pressed="isProofMode"
+          v-if="canEdit"
+        >
+          <span class="sr-only">{{ isProofMode ? '切换为翻译模式' : '切换为校对模式' }}</span>
+          <svg class="toolbox__icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M6 12.5L10 16.5L18 8.5M11 4H7A3 3 0 0 0 4 7V17A3 3 0 0 0 7 20H17A3 3 0 0 0 20 17V13"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
         <button type="button" class="toolbox__button" title="快捷键指南" @click="openShortcutHelp">
           <span class="sr-only">快捷键指南</span>
           <svg class="toolbox__icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -1892,6 +2160,9 @@ onBeforeUnmount(() => {
           @pointercancel="handleCanvasPointerCancel"
           @contextmenu.prevent
         >
+          <div v-if="isLoading" class="board__loading">
+            <LoadingCircle />
+          </div>
           <div class="board__frame" ref="imageWrapperRef" :style="{ transform: boardTransform }">
             <img
               v-if="projectPage"
@@ -1918,7 +2189,7 @@ onBeforeUnmount(() => {
                   top: `${item.position.y * 100}%`,
                   transform: markerTransform,
                 }"
-                :aria-label="sourceLabelMap.get(item.id)?.display ?? ''"
+                :aria-label="`${sourceLabelMap.get(item.id)?.number ?? ''} ${sourceLabelMap.get(item.id)?.suffix ?? ''}`"
                 @pointerdown="event => handleSourcePointerDown(event, item.id)"
                 @click.stop="handleSelectSource(item.id)"
                 @contextmenu.prevent.stop="handleRemoveSource(item.id)"
@@ -1957,7 +2228,10 @@ onBeforeUnmount(() => {
               @click="handleSelectSource(item.id)"
             >
               <div class="panel__item-top">
-                <span>{{ sourceLabelMap.get(item.id)?.display ?? '' }}</span>
+                <span
+                  >【{{ sourceLabelMap.get(item.id)?.number ?? '' }}】
+                  {{ sourceLabelMap.get(item.id)?.suffix ?? '' }}</span
+                >
                 <span
                   class="panel__status-dot"
                   :class="{
@@ -1977,7 +2251,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
     <div
-      v-if="selectedSource && canEdit"
+      v-if="selectedSource && canEdit && (!isProofMode || props.isProofreader || !props.hasPoprako)"
       class="editor"
       :style="{
         left: `${editorPosition.x}px`,
@@ -1988,7 +2262,21 @@ onBeforeUnmount(() => {
     >
       <header class="editor__header" @pointerdown="handleEditorPointerDown">
         <div class="editor__title">
-          <span class="editor__label">{{ selectedSourceLabel }}</span>
+          <span class="editor__label">
+            【{{ selectedSourceLabelInfo?.number }}】
+            <button
+              type="button"
+              class="editor__category-toggle"
+              :class="
+                selectedSourceLabelInfo?.suffix === '框内'
+                  ? 'editor__category-toggle--inside'
+                  : 'editor__category-toggle--outside'
+              "
+              @click="toggleSourceCategory"
+            >
+              {{ selectedSourceLabelInfo?.suffix }}
+            </button>
+          </span>
           <span class="editor__mode">{{ isProofMode ? '校对模式' : '翻译模式' }}</span>
         </div>
         <button
@@ -2005,6 +2293,17 @@ onBeforeUnmount(() => {
         </button>
       </header>
       <div class="editor__body" :class="{ 'editor__body--proof-mode': isProofMode }">
+        <div class="editor__symbols">
+          <button
+            v-for="symbol in SPECIAL_SYMBOLS"
+            :key="symbol"
+            class="editor__symbol"
+            @click="copySymbol(symbol)"
+            :title="`复制 ${symbol}`"
+          >
+            {{ symbol }}
+          </button>
+        </div>
         <div v-if="!isProofMode" class="editor__field">
           <div class="editor__field-label">翻译稿</div>
           <textarea
@@ -2012,6 +2311,14 @@ onBeforeUnmount(() => {
             class="editor__textarea"
             placeholder="待翻译..."
             ref="translationTextareaRef"
+          ></textarea>
+        </div>
+        <div v-if="isProofMode" class="editor__field editor__field--readonly">
+          <div class="editor__field-label">翻译稿</div>
+          <textarea
+            :value="editorTranslationText"
+            readonly
+            class="editor__textarea editor__textarea--readonly"
           ></textarea>
         </div>
         <div v-if="isProofMode" class="editor__field editor__field--proof">
@@ -2029,23 +2336,11 @@ onBeforeUnmount(() => {
         <div class="editor__footer-actions">
           <button
             type="button"
-            class="editor__footer-button editor__footer-button--secondary"
-            @click="toggleSourceCategory"
-          >
-            {{ selectedSource.category === 'inside' ? '切换为框外' : '切换为框内' }}
-          </button>
-          <button
-            type="button"
             class="editor__footer-button editor__footer-button--primary"
             @click="toggleProofStatus"
+            v-if="isProofMode"
           >
-            {{
-              selectedSource.status === 'proofed'
-                ? '取消校对状态'
-                : isProofMode
-                  ? '提交校对'
-                  : '标记为已校对'
-            }}
+            {{ selectedSource.status === 'proofed' ? '取消校对状态' : '提交校对' }}
           </button>
         </div>
       </footer>
@@ -2288,6 +2583,14 @@ onBeforeUnmount(() => {
   touch-action: none;
   min-height: 0;
   height: 100%;
+}
+
+.board__loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
 }
 
 .board--proof {
@@ -2571,6 +2874,33 @@ onBeforeUnmount(() => {
   font-weight: 600;
   font-size: 14px;
   color: #294061;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.editor__category-toggle {
+  border: 2px solid;
+  background: none;
+  color: #2f5a8f;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: background 0.16s ease;
+}
+
+.editor__category-toggle--inside {
+  border-color: #ffb6c1; /* 浅粉色 */
+}
+
+.editor__category-toggle--outside {
+  border-color: #ffff99; /* 浅黄色 */
+}
+
+.editor__category-toggle:hover {
+  background: rgba(118, 184, 255, 0.2);
 }
 
 .editor__mode {
@@ -2626,6 +2956,33 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
+.editor__symbols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(24px, 1fr));
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.editor__symbol {
+  border: none;
+  background: rgba(236, 244, 255, 0.9);
+  border-radius: 8px;
+  padding: 6px;
+  font-size: 16px;
+  cursor: pointer;
+  transition:
+    transform 0.16s ease,
+    F background 0.16s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.editor__symbol:hover {
+  transform: scale(1.2);
+  background: rgba(200, 215, 230, 0.95);
+}
+
 .editor__field-label {
   font-size: 12px;
   color: #4a5f7d;
@@ -2634,7 +2991,7 @@ onBeforeUnmount(() => {
 
 .editor__textarea {
   width: 100%;
-  min-height: 108px;
+  min-height: 43px;
   border: 1px solid rgba(188, 206, 233, 0.85);
   border-radius: 14px;
   padding: 11px;
@@ -2642,7 +2999,7 @@ onBeforeUnmount(() => {
   line-height: 1.6;
   color: #2a3b4f;
   background: rgba(246, 250, 255, 0.92);
-  resize: vertical;
+  resize: none;
   transition:
     border 0.16s ease,
     box-shadow 0.16s ease;
@@ -2656,8 +3013,17 @@ onBeforeUnmount(() => {
 }
 
 .editor__textarea--proof {
-  min-height: 96px;
+  min-height: 43px;
   background: rgba(244, 240, 255, 0.94);
+}
+
+.editor__field--readonly {
+  opacity: 0.7;
+}
+
+.editor__textarea--readonly {
+  background: rgba(240, 240, 240, 0.92);
+  cursor: not-allowed;
 }
 
 .editor__footer {

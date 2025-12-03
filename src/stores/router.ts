@@ -9,6 +9,8 @@ export interface TranslatorViewParams {
   files: Array<{ id: string; name: string; sourceCount: number; url: string }>;
   enabled: boolean;
   initialMode: 'translate' | 'read';
+  hasPoprako: boolean;
+  isProofreader: boolean;
 }
 
 export interface ProjectDetailViewParams {

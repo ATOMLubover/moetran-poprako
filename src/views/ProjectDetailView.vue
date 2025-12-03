@@ -176,6 +176,30 @@ const isMeTranslatorOrProofreader = computed(() => {
   return translators.includes(uid) || proofreaders.includes(uid);
 });
 
+// whether current user is specifically a proofreader
+const isMeProofreader = computed(() => {
+  const uid = userStore.user?.id;
+  if (!uid) return false;
+
+  // For native Moetran projects, if backend provided a `role` field,
+  // we cannot distinguish translator vs proofreader, so assume not proofreader for safety
+  if (props.hasPoprako === false) {
+    return false;
+  }
+
+  // If PopRaKo `members` provided with role flags, prefer that
+  if (props.members && Array.isArray(props.members) && props.members.length > 0) {
+    const m = (props.members as ResMember[]).find(
+      mm => (mm.userId ?? (mm as unknown as { user_id?: string }).user_id ?? mm.memberId) === uid
+    );
+    return !!m && m.isProofreader === true;
+  }
+
+  // Fallback to legacy role arrays
+  const proofreaders = props.proofreaders ?? [];
+  return proofreaders.includes(uid);
+});
+
 // --- 进度相关计算 ---
 // (per-page and totals are displayed as raw numbers; percent progress computations removed)
 
@@ -487,6 +511,8 @@ function openTranslator(enabled: boolean): void {
     files: primaryFiles.value,
     enabled,
     initialMode: enabled ? 'translate' : 'read',
+    hasPoprako: props.hasPoprako,
+    isProofreader: isMeProofreader.value,
   });
 }
 
