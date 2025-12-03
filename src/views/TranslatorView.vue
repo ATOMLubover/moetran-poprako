@@ -168,6 +168,8 @@ const currentImageObjectUrl = ref<string | null>(null);
 // 简单的图片缓存：fileId -> Object URL
 const imageCache = new Map<string, string>();
 
+const imageCacheOrder = ref<string[]>([]);
+
 const sources = ref<TranslationSource[]>([]);
 
 const pageInputValue = ref(currentPageIndex.value + 1);
@@ -579,6 +581,8 @@ async function initPage(pageIndex: number): Promise<void> {
       // 从 API 获取页面 sources
       const apiSources = await getPageSources(currentFile.id, props.targetId);
 
+      console.log('API raw sources:', apiSources);
+
       // 检查是否已被新请求替代
       if (requestToken !== latestPageLoadToken) {
         return;
@@ -616,6 +620,8 @@ async function initPage(pageIndex: number): Promise<void> {
           },
         };
       });
+
+      console.log('Converted sources:', convertedSources);
     }
     // else: 阅览模式不加载sources，convertedSources保持为空数组
 
@@ -651,7 +657,15 @@ async function initPage(pageIndex: number): Promise<void> {
 
         const blob = new Blob([bytes], { type: imgReply.content_type });
         objectUrl = URL.createObjectURL(blob);
+        if (!imageCache.has(currentFile.id)) imageCacheOrder.value.push(currentFile.id);
         imageCache.set(currentFile.id, objectUrl);
+        if (imageCacheOrder.value.length > 3) {
+          const old = imageCacheOrder.value.shift();
+          if (old) {
+            URL.revokeObjectURL(imageCache.get(old)!);
+            imageCache.delete(old);
+          }
+        }
       }
 
       currentImageObjectUrl.value = objectUrl;
@@ -714,7 +728,15 @@ async function preloadAdjacent(pageIndex: number): Promise<void> {
         for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
         const blob = new Blob([bytes], { type: reply.content_type });
         const url = URL.createObjectURL(blob);
+        if (!imageCache.has(fileId)) imageCacheOrder.value.push(fileId);
         imageCache.set(fileId, url);
+        if (imageCacheOrder.value.length > 3) {
+          const old = imageCacheOrder.value.shift();
+          if (old) {
+            URL.revokeObjectURL(imageCache.get(old)!);
+            imageCache.delete(old);
+          }
+        }
       } catch (e) {
         // 忽略预加载失败
         console.warn('预加载失败', fileId, e);
@@ -1947,11 +1969,7 @@ onBeforeUnmount(() => {
                 ></span>
               </div>
               <p class="panel__item-text">
-                {{
-                  item.status === 'proofed'
-                    ? item.proofText || '〈empty〉'
-                    : item.translationText || '〈empty〉'
-                }}
+                {{ item.proofText || item.translationText || '〈empty〉' }}
               </p>
             </li>
           </ul>
