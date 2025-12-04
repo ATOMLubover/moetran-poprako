@@ -15,6 +15,7 @@ import {
 import { useToastStore } from '../stores/toast';
 import { useUserStore } from '../stores/user';
 import { useRouterStore } from '../stores/router';
+import { useCacheStore } from '../stores/cache';
 import { getProjectTargets, getProjectFiles } from '../ipc/project';
 
 // TODO: 后续接口可能扩展字段（如权限、进度来源），保持结构可扩展
@@ -91,6 +92,7 @@ const emit = defineEmits<{
 
 const toastStore = useToastStore();
 const routerStore = useRouterStore();
+const cacheStore = useCacheStore();
 
 // 项目详情数据
 const project = ref<ProjectDetail | null>(null);
@@ -360,93 +362,105 @@ async function loadProject(): Promise<void> {
 
     console.debug('[ProjectDetail] loadProject start', { projectId: props.projectId, base });
 
-    // Determine whether to fetch targets (only if current user is a member)
     let files;
-    if (isMeInProject.value) {
-      // targets
-      let targets;
-      try {
-        targets = await getProjectTargets(props.projectId);
-        console.debug('[ProjectDetail] getProjectTargets', { projectId: props.projectId, targets });
-      } catch (e) {
-        console.error('[ProjectDetail] getProjectTargets failed', {
-          projectId: props.projectId,
-          error: e,
-        });
-        loadingMarkers.value = false;
-        toastStore.show('加载项目 targets 失败: ' + (e?.toString?.() ?? String(e)), 'error');
-        return;
-      }
+    const cachedFiles = cacheStore.promoteProjectDetailCacheEntry(props.projectId);
+    if (cachedFiles) {
+      files = cachedFiles;
+    } else {
+      // Determine whether to fetch targets (only if current user is a member)
+      if (isMeInProject.value) {
+        // targets
+        let targets;
+        try {
+          targets = await getProjectTargets(props.projectId);
+          console.debug('[ProjectDetail] getProjectTargets', {
+            projectId: props.projectId,
+            targets,
+          });
+        } catch (e) {
+          console.error('[ProjectDetail] getProjectTargets failed', {
+            projectId: props.projectId,
+            error: e,
+          });
+          loadingMarkers.value = false;
+          toastStore.show('加载项目 targets 失败: ' + (e?.toString?.() ?? String(e)), 'error');
+          return;
+        }
 
-      if (!targets || !targets.length) {
-        console.debug('[ProjectDetail] no targets found', { projectId: props.projectId });
-        loadingMarkers.value = false;
-        return;
-      }
+        if (!targets || !targets.length) {
+          console.debug('[ProjectDetail] no targets found', { projectId: props.projectId });
+          loadingMarkers.value = false;
+          return;
+        }
 
-      const primaryTarget = targets[0];
+        const primaryTarget = targets[0];
 
-      // 存储 targetId 供翻译视图使用
-      primaryTargetId.value = primaryTarget.id;
+        // 存储 targetId 供翻译视图使用
+        primaryTargetId.value = primaryTarget.id;
 
-      // files (with target filter)
-      try {
-        files = await getProjectFiles(props.projectId, primaryTarget.id);
-        console.debug('[ProjectDetail] getProjectFiles', {
-          projectId: props.projectId,
-          targetId: primaryTarget.id,
-          files,
-        });
+        // files (with target filter)
+        try {
+          files = await getProjectFiles(props.projectId, primaryTarget.id);
+          console.debug('[ProjectDetail] getProjectFiles', {
+            projectId: props.projectId,
+            targetId: primaryTarget.id,
+            files,
+          });
 
-        // If target-specific fetch returned no files, try fallback without target filter.
-        if (!files || files.length === 0) {
-          console.debug('[ProjectDetail] target-specific files empty, trying unfiltered files', {
+          // If target-specific fetch returned no files, try fallback without target filter.
+          if (!files || files.length === 0) {
+            console.debug('[ProjectDetail] target-specific files empty, trying unfiltered files', {
+              projectId: props.projectId,
+            });
+            try {
+              const unfiltered = await getProjectFiles(props.projectId);
+              console.debug('[ProjectDetail] getProjectFiles (fallback)', {
+                projectId: props.projectId,
+                unfiltered,
+              });
+              if (unfiltered && unfiltered.length > 0) files = unfiltered;
+            } catch (e2) {
+              // fallback failed; keep original empty list and continue to show no files
+              console.warn('[ProjectDetail] fallback getProjectFiles failed', {
+                projectId: props.projectId,
+                error: e2,
+              });
+            }
+          }
+        } catch (e) {
+          console.error('[ProjectDetail] getProjectFiles failed', {
+            projectId: props.projectId,
+            targetId: primaryTarget.id,
+            error: e,
+          });
+          loadingMarkers.value = false;
+          toastStore.show('加载项目 files 失败: ' + (e?.toString?.() ?? String(e)), 'error');
+          return;
+        }
+      } else {
+        // Not a member: skip targets fetch and request files without target filter
+        try {
+          console.debug('[ProjectDetail] user not member, fetching files without target', {
             projectId: props.projectId,
           });
-          try {
-            const unfiltered = await getProjectFiles(props.projectId);
-            console.debug('[ProjectDetail] getProjectFiles (fallback)', {
-              projectId: props.projectId,
-              unfiltered,
-            });
-            if (unfiltered && unfiltered.length > 0) files = unfiltered;
-          } catch (e2) {
-            // fallback failed; keep original empty list and continue to show no files
-            console.warn('[ProjectDetail] fallback getProjectFiles failed', {
-              projectId: props.projectId,
-              error: e2,
-            });
-          }
+          files = await getProjectFiles(props.projectId);
+          console.debug('[ProjectDetail] getProjectFiles (no target)', {
+            projectId: props.projectId,
+            files,
+          });
+        } catch (e) {
+          console.error('[ProjectDetail] getProjectFiles failed (no target)', {
+            projectId: props.projectId,
+            error: e,
+          });
+          loadingMarkers.value = false;
+          toastStore.show('加载项目 files 失败: ' + (e?.toString?.() ?? String(e)), 'error');
+          return;
         }
-      } catch (e) {
-        console.error('[ProjectDetail] getProjectFiles failed', {
-          projectId: props.projectId,
-          targetId: primaryTarget.id,
-          error: e,
-        });
-        loadingMarkers.value = false;
-        toastStore.show('加载项目 files 失败: ' + (e?.toString?.() ?? String(e)), 'error');
-        return;
       }
-    } else {
-      // Not a member: skip targets fetch and request files without target filter
-      try {
-        console.debug('[ProjectDetail] user not member, fetching files without target', {
-          projectId: props.projectId,
-        });
-        files = await getProjectFiles(props.projectId);
-        console.debug('[ProjectDetail] getProjectFiles (no target)', {
-          projectId: props.projectId,
-          files,
-        });
-      } catch (e) {
-        console.error('[ProjectDetail] getProjectFiles failed (no target)', {
-          projectId: props.projectId,
-          error: e,
-        });
-        loadingMarkers.value = false;
-        toastStore.show('加载项目 files 失败: ' + (e?.toString?.() ?? String(e)), 'error');
-        return;
+
+      if (files) {
+        cacheStore.storeProjectDetailCacheEntry(props.projectId, files);
       }
     }
 

@@ -1,8 +1,34 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useToastStore } from '../stores/toast';
-import { getPageSources, proxyImage } from '../ipc/project';
+import { useCacheStore } from '../stores/cache';
+import {
+  createSource,
+  deleteSource,
+  getPageSources,
+  proxyImage,
+  submitTranslation,
+  updateTranslation,
+} from '../ipc/project';
+import type { PageTranslation } from '../ipc/project';
 import LoadingCircle from '../components/LoadingCircle.vue';
+
+// Constants
+const DEFAULT_EDITOR_POSITION = { x: 50, y: 50 };
+const DEFAULT_EDITOR_SIZE = { width: 400, height: 300 };
+const PANEL_COLLAPSE_BREAKPOINT = 768;
+const WORKSPACE_VERTICAL_OFFSET = 100;
+const PANEL_COLLAPSED_WIDTH = 50;
+const PANEL_WIDTH_RATIO = 0.3;
+const MARKER_REFERENCE_WIDTH = 1920;
+const MAX_MARKER_VIEWPORT_SCALE = 2.0;
+const MIN_MARKER_VIEWPORT_SCALE = 0.5;
+const MARKER_TIP_OFFSET_PX = 10;
+const ZOOM_STEP = 0.25;
+const PANNING_THRESHOLD = 10;
+const WORKSPACE_BOTTOM_GUTTER = 20;
+const KEYBOARD_ZOOM_RATIO = 0.1;
+const KEYBOARD_PAN_STEP = 50;
 
 interface SourcePosition {
   x: number;
@@ -15,6 +41,14 @@ type SourceStatus = 'empty' | 'translated' | 'proofed';
 
 type SourceCategory = 'outside' | 'inside';
 
+interface TranslationRecord {
+  id: string;
+  content: string;
+  proofreadContent: string;
+  selected: boolean;
+  isMine: boolean;
+}
+
 interface TranslationSource {
   id: string;
   category: SourceCategory;
@@ -22,6 +56,12 @@ interface TranslationSource {
   translationText: string;
   proofText: string;
   position: SourcePosition;
+  records: TranslationRecord[];
+  myTranslationId: string | null;
+  selectedTranslationId: string | null;
+  primaryTranslationId: string | null;
+  serverTranslationText: string;
+  serverProofText: string;
 }
 
 interface ProjectPageData {
@@ -37,13 +77,16 @@ interface SourceLabelInfo {
   suffix: string;
 }
 
-interface ShortcutHint {
-  combo: string;
-  description: string;
-}
+// interface ShortcutHint {
+//   combo: string;
+//   description: string;
+// }
 
 // 全局 toast store
 const toastStore = useToastStore();
+
+// 全局 cache store
+const cacheStore = useCacheStore();
 
 // 传入：项目 ID、目标语言 ID、文件列表、当前页索引、是否具备编辑权限、初始模式
 interface FileInfo {
@@ -53,94 +96,8 @@ interface FileInfo {
   url: string; // 图片URL（Moetran API 总是返回）
 }
 
-const IMAGE_CACHE_LIMIT = 8;
-
-const GLOBAL_IMAGE_CACHE_KEY = '__MOETRAN_IMAGE_CACHE__';
-
-const GLOBAL_IMAGE_FETCH_KEY = '__MOETRAN_IMAGE_FETCH__';
-
-type ImageCacheBucket = Map<string, string>;
-
-type ImageFetchBucket = Map<string, Promise<string>>;
-
-function resolveImageCacheBucket(): ImageCacheBucket {
-  const container = globalThis as typeof globalThis & Record<string, ImageCacheBucket>;
-
-  if (!container[GLOBAL_IMAGE_CACHE_KEY]) {
-    container[GLOBAL_IMAGE_CACHE_KEY] = new Map<string, string>();
-  }
-
-  return container[GLOBAL_IMAGE_CACHE_KEY];
-}
-
-function resolveImageFetchBucket(): ImageFetchBucket {
-  const container = globalThis as typeof globalThis & Record<string, ImageFetchBucket>;
-
-  if (!container[GLOBAL_IMAGE_FETCH_KEY]) {
-    container[GLOBAL_IMAGE_FETCH_KEY] = new Map<string, Promise<string>>();
-  }
-
-  return container[GLOBAL_IMAGE_FETCH_KEY];
-}
-
-const sharedImageCache = resolveImageCacheBucket();
-
-const sharedImageFetches = resolveImageFetchBucket();
-
 function makeImageCacheKey(projectId: string, fileId: string): string {
   return `${projectId}::${fileId}`;
-}
-
-function promoteImageCacheEntry(key: string): string | null {
-  const cached = sharedImageCache.get(key);
-
-  if (!cached) {
-    return null;
-  }
-
-  sharedImageCache.delete(key);
-
-  sharedImageCache.set(key, cached);
-
-  return cached;
-}
-
-function enforceImageCacheLimit(): void {
-  while (sharedImageCache.size > IMAGE_CACHE_LIMIT) {
-    const iterator = sharedImageCache.keys();
-
-    const oldestKey = iterator.next().value as string | undefined;
-
-    if (!oldestKey) {
-      break;
-    }
-
-    const oldestUrl = sharedImageCache.get(oldestKey);
-
-    if (oldestUrl) {
-      try {
-        URL.revokeObjectURL(oldestUrl);
-      } catch (_) {}
-    }
-
-    sharedImageCache.delete(oldestKey);
-  }
-}
-
-function storeImageCacheEntry(key: string, url: string): void {
-  const existing = sharedImageCache.get(key);
-
-  if (existing && existing !== url) {
-    try {
-      URL.revokeObjectURL(existing);
-    } catch (_) {}
-  }
-
-  sharedImageCache.delete(key);
-
-  sharedImageCache.set(key, url);
-
-  enforceImageCacheLimit();
 }
 
 function createObjectUrlFromBase64(b64: string, contentType: string): string {
@@ -162,13 +119,13 @@ function createObjectUrlFromBase64(b64: string, contentType: string): string {
 async function fetchImageForFile(projectId: string, file: FileInfo): Promise<string> {
   const key = makeImageCacheKey(projectId, file.id);
 
-  const cached = promoteImageCacheEntry(key);
+  const cached = cacheStore.promoteImageCacheEntry(key);
 
   if (cached) {
     return cached;
   }
 
-  let pending = sharedImageFetches.get(key);
+  let pending = cacheStore.imageFetches.get(key);
 
   if (!pending) {
     pending = (async () => {
@@ -176,22 +133,22 @@ async function fetchImageForFile(projectId: string, file: FileInfo): Promise<str
 
       const url = createObjectUrlFromBase64(reply.b64, reply.content_type);
 
-      storeImageCacheEntry(key, url);
+      cacheStore.storeImageCacheEntry(key, url);
 
       return url;
     })();
 
-    sharedImageFetches.set(key, pending);
+    cacheStore.imageFetches.set(key, pending);
   }
 
   try {
     const url = await pending;
 
-    promoteImageCacheEntry(key);
+    cacheStore.promoteImageCacheEntry(key);
 
     return url;
   } finally {
-    sharedImageFetches.delete(key);
+    cacheStore.imageFetches.delete(key);
   }
 }
 
@@ -223,74 +180,112 @@ const MIN_ZOOM = 0.6;
 
 const MAX_ZOOM = 2.4;
 
-const ZOOM_STEP = 0.12;
-
-const PANNING_THRESHOLD = 6;
-
-const DEFAULT_EDITOR_POSITION = { x: 72, y: 72 };
-
-const DEFAULT_EDITOR_SIZE = { width: 320, height: 280 };
-
 const MIN_WORKSPACE_HEIGHT = 420;
+async function addSourceAtPointer(
+  event: MouseEvent | PointerEvent,
+  category: SourceCategory,
+  activate = true
+): Promise<void> {
+  if (!canEdit.value) return;
 
-const WORKSPACE_VERTICAL_OFFSET = 220;
+  const wrapper = imageWrapperRef.value;
+  const currentFile = props.files[currentPageIndex.value];
 
-const PANEL_COLLAPSE_BREAKPOINT = 1180;
+  if (!wrapper || !projectPage.value || !currentFile) {
+    return;
+  }
 
-const PANEL_COLLAPSED_WIDTH = 56;
+  const rect = wrapper.getBoundingClientRect();
 
-const PANEL_WIDTH_RATIO = 0.2;
+  const relativeX = (event.clientX - rect.left) / rect.width;
+  const relativeY = (event.clientY - rect.top) / rect.height;
 
-const MARKER_REFERENCE_WIDTH = 1280;
+  if (relativeX < 0 || relativeX > 1 || relativeY < 0 || relativeY > 1) {
+    return;
+  }
 
-const MIN_MARKER_VIEWPORT_SCALE = 0.9;
+  if (!props.targetId) {
+    showToast('缺少目标语言', 'error');
 
-const MAX_MARKER_VIEWPORT_SCALE = 1.2;
+    return;
+  }
 
-const WORKSPACE_BOTTOM_GUTTER = 32;
+  const clampedX = Math.min(Math.max(relativeX, 0), 1);
+  const clampedY = Math.min(Math.max(relativeY, 0), 1);
 
-const MARKER_TIP_OFFSET_PX = 26; // 圆心到指针尖端的偏移，需与样式保持一致
+  const positionType = category === 'inside' ? 1 : 2;
 
-const KEYBOARD_PAN_STEP = 96;
+  try {
+    const created = await createSource({
+      fileId: currentFile.id,
+      targetId: props.targetId,
+      positionType,
+      x: clampedX,
+      y: clampedY,
+    });
 
-const KEYBOARD_ZOOM_RATIO = 0.25;
+    const records: TranslationRecord[] = [];
 
-const SHORTCUT_HINTS: ShortcutHint[] = [
-  {
-    combo: 'Tab',
-    description: '在标记之间向前轮换焦点',
-  },
-  {
-    combo: 'Shift + Tab',
-    description: '在标记之间向后轮换焦点',
-  },
-  {
-    combo: 'Ctrl + Enter',
-    description: '在校对模式中提交校对并标记完成',
-  },
-  {
-    combo: 'Esc',
-    description: '关闭快捷键悬浮窗',
-  },
-  {
-    combo: 'Ctrl + D',
-    description: '切换到下一页',
-  },
-  {
-    combo: 'Ctrl + U',
-    description: '切换到上一页',
-  },
-  {
-    combo: 'Ctrl + P',
-    description: '在翻译与校对模式之间切换',
-  },
-  {
-    combo: 'Ctrl + F',
-    description: '切换自动重定位模式',
-  },
+    if (created.myTranslation) {
+      records.push(toTranslationRecord(created.myTranslation, true));
+    }
+
+    (created.translations || []).forEach(item => {
+      records.push(toTranslationRecord(item, false));
+    });
+
+    const proofed = records.find(item => item.selected);
+    const mine = records.find(item => item.isMine);
+    const primary = proofed || mine || records[0];
+
+    const translationText = primary?.content ?? '';
+    const proofText = primary?.proofreadContent ?? '';
+
+    const newSource: TranslationSource = {
+      id: created.id,
+      category,
+      status: proofText ? 'proofed' : translationText ? 'translated' : 'empty',
+      translationText,
+      proofText,
+      position: {
+        x: created.x,
+        y: created.y,
+        width: 0,
+        height: 0,
+      },
+      records,
+      myTranslationId: mine?.id ?? null,
+      selectedTranslationId: proofed?.id ?? null,
+      primaryTranslationId: primary?.id ?? null,
+      serverTranslationText: translationText,
+      serverProofText: proofText,
+    };
+
+    sources.value = [...sources.value, newSource];
+
+    persistPageSources(currentPageIndex.value);
+
+    if (activate) {
+      activeSourceId.value = newSource.id;
+      editorTranslationText.value = '';
+      editorProofText.value = '';
+    }
+
+    showToast('翻译源已创建');
+  } catch (error) {
+    console.error('创建翻译源失败', error);
+    showToast('创建翻译源失败', 'error');
+  }
+}
+
+const SHORTCUT_HINTS = [
   {
     combo: 'Ctrl + L',
     description: '收起或展开源列表',
+  },
+  {
+    combo: 'Ctrl + `',
+    description: '显示/隐藏编辑器',
   },
   {
     combo: 'Ctrl + ↑ / ↓ / ← / →',
@@ -332,6 +327,8 @@ const isLoading = ref(false);
 const editorTranslationText = ref('');
 
 const editorProofText = ref('');
+
+const isSubmittingProof = ref(false);
 
 // 根据initialMode设置初始activeMode
 const activeMode = ref<'translate' | 'proof'>(props.initialMode === 'read' ? 'proof' : 'translate');
@@ -390,11 +387,16 @@ const panelHeightPx = ref<number | null>(null);
 
 const workspaceHeightPx = ref<number | null>(null);
 
-let sourceSerial = 0;
-
 let latestPageLoadToken = 0;
 
 const pageSourceStore = new Map<string, TranslationSource[]>();
+
+// 增量更新追踪：translationId -> 待更新的内容
+const pendingContentUpdates = new Map<string, string>();
+const pendingProofreadUpdates = new Map<string, string>();
+const pendingSelectedUpdates = new Map<string, boolean>();
+
+let autoSyncTimer: number | null = null;
 
 const hasEditorBeenDragged = ref(false);
 
@@ -410,11 +412,111 @@ function cloneSource(source: TranslationSource): TranslationSource {
   return {
     ...source,
     position: { ...source.position },
+    records: source.records.map(item => ({ ...item })),
   };
 }
 
 function cloneSourceList(list: TranslationSource[]): TranslationSource[] {
   return list.map(item => cloneSource(item));
+}
+
+// 维护翻译记录列表
+function upsertTranslationRecord(source: TranslationSource, record: TranslationRecord): void {
+  const index = source.records.findIndex(item => item.id === record.id);
+
+  const nextRecord: TranslationRecord = {
+    id: record.id,
+    content: record.content,
+    proofreadContent: record.proofreadContent,
+    selected: record.selected,
+    isMine: record.isMine,
+  };
+
+  if (index >= 0) {
+    source.records.splice(index, 1, nextRecord);
+
+    return;
+  }
+
+  source.records.push(nextRecord);
+}
+
+// 找到校对目标
+function resolveProofTarget(source: TranslationSource): TranslationRecord | null {
+  if (source.primaryTranslationId) {
+    const found = source.records.find(item => item.id === source.primaryTranslationId);
+
+    if (found) {
+      return found;
+    }
+  }
+
+  if (source.records.length > 0) {
+    return source.records[0];
+  }
+
+  return null;
+}
+
+// 转换 Moetran 翻译对象
+function toTranslationRecord(entry: PageTranslation, isMine: boolean): TranslationRecord {
+  return {
+    id: entry.id,
+    content: entry.content || '',
+    proofreadContent: entry.proofreadContent || '',
+    selected: entry.selected,
+    isMine,
+  };
+}
+
+// 同步记录到源对象
+function applyRecordToSource(source: TranslationSource, record: TranslationRecord): void {
+  if (record.isMine) {
+    source.records.forEach(item => {
+      if (item.id !== record.id && item.isMine) {
+        item.isMine = false;
+      }
+    });
+  }
+
+  if (record.selected) {
+    source.records.forEach(item => {
+      if (item.id !== record.id) {
+        item.selected = false;
+      }
+    });
+  }
+
+  upsertTranslationRecord(source, record);
+
+  if (record.isMine) {
+    source.myTranslationId = record.id;
+  }
+
+  if (record.selected) {
+    source.selectedTranslationId = record.id;
+  } else if (source.selectedTranslationId === record.id) {
+    source.selectedTranslationId = null;
+  }
+
+  source.primaryTranslationId = record.id;
+  source.translationText = record.content;
+  source.proofText = record.proofreadContent;
+  source.serverTranslationText = record.content;
+  source.serverProofText = record.proofreadContent;
+
+  if (record.proofreadContent) {
+    source.status = 'proofed';
+  } else if (record.content) {
+    source.status = 'translated';
+  } else {
+    source.status = 'empty';
+  }
+
+  if (selectedSource.value && selectedSource.value.id === source.id) {
+    editorTranslationText.value = source.translationText;
+    editorProofText.value = source.proofText;
+  }
 }
 
 function persistPageSources(pageIndex: number): void {
@@ -603,7 +705,10 @@ function adjustTextareaHeight(textarea: HTMLTextAreaElement | null): void {
 
 watch(
   () => props.pageIndex,
-  value => {
+  async value => {
+    // 翻页前强制提交当前页的所有待更新内容
+    await flushPendingUpdates();
+
     currentPageIndex.value = value;
   }
 );
@@ -671,11 +776,46 @@ watch(editorTranslationText, value => {
 
   if (value.trim().length === 0) {
     selectedSource.value.status = 'empty';
-
     return;
   }
 
   selectedSource.value.status = 'translated';
+
+  // 如果还没有 myTranslationId，需要先创建翻译记录
+  if (!selectedSource.value.myTranslationId) {
+    if (!canEdit.value || !props.targetId) {
+      return;
+    }
+
+    // 异步创建翻译记录
+    void (async () => {
+      const currentSource = selectedSource.value;
+      if (!currentSource) return;
+
+      try {
+        const result = await submitTranslation({
+          sourceId: currentSource.id,
+          targetId: props.targetId,
+          content: value,
+        });
+
+        const record = toTranslationRecord(result, true);
+        applyRecordToSource(currentSource, record);
+        currentSource.serverTranslationText = value;
+
+        persistPageSources(currentPageIndex.value);
+      } catch (err) {
+        console.error('[TranslatorView] 自动创建翻译失败', err);
+      }
+    })();
+  } else {
+    // 已有翻译记录，标记为待更新
+    const translationId = selectedSource.value.myTranslationId;
+    if (value !== selectedSource.value.serverTranslationText) {
+      pendingContentUpdates.set(translationId, value);
+      console.log('[TranslatorView] 标记翻译文本为待更新:', translationId, value.substring(0, 50));
+    }
+  }
 
   nextTick(() => adjustTextareaHeight(translationTextareaRef.value));
 });
@@ -686,6 +826,14 @@ watch(editorProofText, value => {
   }
 
   selectedSource.value.proofText = value;
+
+  // 标记校对文本为待更新
+  const translationId =
+    selectedSource.value.selectedTranslationId || selectedSource.value.myTranslationId;
+  if (translationId && value !== selectedSource.value.serverProofText) {
+    pendingProofreadUpdates.set(translationId, value);
+    console.log('[TranslatorView] 标记校对文本为待更新:', translationId, value.substring(0, 50));
+  }
 
   nextTick(() => adjustTextareaHeight(proofTextareaRef.value));
 });
@@ -760,6 +908,9 @@ async function initPage(pageIndex: number): Promise<void> {
 
   isLoading.value = true;
 
+  // 缓存项目详情
+  cacheStore.storeProjectDetailCacheEntry(props.projectId, props.files);
+
   try {
     // 获取当前页对应的文件 ID
     const currentFile = props.files[pageIndex];
@@ -783,33 +934,36 @@ async function initPage(pageIndex: number): Promise<void> {
 
       // 转换 API 数据到内部格式
       convertedSources = apiSources.map(src => {
-        // 扫描所有翻译对象，优先查找 proofreadContent，然后 content
-        // 千万不要修改content相关逻辑
-        let translationText = '';
-        let proofText = '';
+        const records: TranslationRecord[] = [];
+        const seen = new Set<string>();
 
-        // 收集所有翻译对象
-        const allTranslations = [];
-        if (src.myTranslation) {
-          allTranslations.push(src.myTranslation);
-        }
-        allTranslations.push(...src.translations);
-
-        // 查找第一个有 proofreadContent 的
-        const firstWithProof = allTranslations.find(t => t.proofreadContent);
-        if (firstWithProof) {
-          proofText = firstWithProof.proofreadContent || '';
-          translationText = firstWithProof.content || '';
-        } else {
-          // 如果没有 proofreadContent，查找第一个有 content 的
-          const firstWithContent = allTranslations.find(t => t.content);
-          if (firstWithContent) {
-            translationText = firstWithContent.content || '';
-            proofText = firstWithContent.proofreadContent || '';
+        const pushRecord = (record: PageTranslation | undefined, isMine: boolean) => {
+          if (!record) {
+            return;
           }
-        }
 
-        // 根据翻译和校对状态确定 status
+          if (seen.has(record.id)) {
+            return;
+          }
+
+          seen.add(record.id);
+
+          records.push(toTranslationRecord(record, isMine));
+        };
+
+        pushRecord(src.myTranslation, true);
+
+        (src.translations || []).forEach(item => {
+          pushRecord(item, false);
+        });
+
+        const proofed = records.find(item => item.selected);
+        const mine = records.find(item => item.isMine);
+        const primary = proofed || mine || records[0];
+
+        const translationText = primary?.content ?? '';
+        const proofText = primary?.proofreadContent ?? '';
+
         let status: SourceStatus = 'empty';
         if (proofText) {
           status = 'proofed';
@@ -829,6 +983,12 @@ async function initPage(pageIndex: number): Promise<void> {
             width: 0,
             height: 0,
           },
+          records,
+          myTranslationId: mine?.id ?? null,
+          selectedTranslationId: proofed?.id ?? null,
+          primaryTranslationId: primary?.id ?? null,
+          serverTranslationText: translationText,
+          serverProofText: proofText,
         };
       });
 
@@ -920,7 +1080,7 @@ async function ensureImageCachedByIndex(index: number, promoteWhenCached = true)
   if (!promoteWhenCached) {
     const key = makeImageCacheKey(props.projectId, file.id);
 
-    if (sharedImageCache.has(key)) {
+    if (cacheStore.imageCache.has(key)) {
       return;
     }
   }
@@ -970,7 +1130,7 @@ function touchCacheForPage(pageIndex: number): void {
     return;
   }
 
-  promoteImageCacheEntry(makeImageCacheKey(props.projectId, file.id));
+  cacheStore.promoteImageCacheEntry(makeImageCacheKey(props.projectId, file.id));
 }
 
 function warmupAroundPage(pageIndex: number): void {
@@ -997,56 +1157,119 @@ function warmupAroundPage(pageIndex: number): void {
   })();
 }
 
-// 生成唯一 ID
-function createSourceId(): string {
-  sourceSerial += 1;
+// 自动同步定时器管理
+function startAutoSyncTimer(): void {
+  if (autoSyncTimer !== null) {
+    return;
+  }
 
-  return `${props.projectId}-src-${sourceSerial}`;
+  autoSyncTimer = window.setInterval(() => {
+    void flushPendingUpdates();
+  }, 2000); // 每 2 秒同步一次
 }
 
-// 通过坐标创建标记
-// 通过坐标创建标记（只读模式下禁止）
-function addSourceAtPointer(
-  event: MouseEvent | PointerEvent,
-  category: SourceCategory,
-  activate = true
-): void {
-  if (!canEdit.value) return;
-  const wrapper = imageWrapperRef.value;
+function stopAutoSyncTimer(): void {
+  if (autoSyncTimer !== null) {
+    clearInterval(autoSyncTimer);
+    autoSyncTimer = null;
+  }
+}
 
-  if (!wrapper || !projectPage.value) {
+// 强制提交所有待更新内容
+async function flushPendingUpdates(): Promise<void> {
+  const contentUpdates = Array.from(pendingContentUpdates.entries());
+  const proofreadUpdates = Array.from(pendingProofreadUpdates.entries());
+  const selectedUpdates = Array.from(pendingSelectedUpdates.entries());
+
+  if (
+    contentUpdates.length === 0 &&
+    proofreadUpdates.length === 0 &&
+    selectedUpdates.length === 0
+  ) {
     return;
   }
 
-  const rect = wrapper.getBoundingClientRect();
+  console.log('[TranslatorView] 开始批量更新翻译', {
+    contentCount: contentUpdates.length,
+    proofreadCount: proofreadUpdates.length,
+    selectedCount: selectedUpdates.length,
+  });
 
-  const relativeX = (event.clientX - rect.left) / rect.width;
+  // 合并同一个 translationId 的更新
+  const updateMap = new Map<
+    string,
+    { content?: string; proofreadContent?: string; selected?: boolean }
+  >();
 
-  const relativeY = (event.clientY - rect.top) / rect.height;
-
-  if (relativeX < 0 || relativeX > 1 || relativeY < 0 || relativeY > 1) {
-    return;
+  for (const [translationId, content] of contentUpdates) {
+    const existing = updateMap.get(translationId) || {};
+    existing.content = content;
+    updateMap.set(translationId, existing);
   }
 
-  const newSource: TranslationSource = {
-    id: createSourceId(),
-    category,
-    status: 'empty',
-    translationText: '',
-    proofText: '',
-    position: {
-      x: Math.min(Math.max(relativeX, 0), 1),
-      y: Math.min(Math.max(relativeY, 0), 1),
-      width: 0,
-      height: 0,
-    },
-  };
-
-  sources.value = [...sources.value, newSource];
-
-  if (activate) {
-    activeSourceId.value = newSource.id;
+  for (const [translationId, proofreadContent] of proofreadUpdates) {
+    const existing = updateMap.get(translationId) || {};
+    existing.proofreadContent = proofreadContent;
+    updateMap.set(translationId, existing);
   }
+
+  for (const [translationId, selected] of selectedUpdates) {
+    const existing = updateMap.get(translationId) || {};
+    existing.selected = selected;
+    updateMap.set(translationId, existing);
+  }
+
+  // 依次提交更新
+  const successfulIds: string[] = [];
+
+  for (const [translationId, updates] of updateMap.entries()) {
+    try {
+      await updateTranslation({
+        translationId,
+        ...updates,
+      });
+
+      successfulIds.push(translationId);
+
+      // 更新成功后，同步 serverTranslationText 和 serverProofText
+      const source = sources.value.find(
+        s =>
+          s.myTranslationId === translationId ||
+          s.selectedTranslationId === translationId ||
+          s.primaryTranslationId === translationId
+      );
+
+      if (source) {
+        if (updates.content !== undefined) {
+          source.serverTranslationText = updates.content;
+        }
+        if (updates.proofreadContent !== undefined) {
+          source.serverProofText = updates.proofreadContent;
+        }
+      }
+    } catch (err) {
+      // 如果是 source_id 无效（404 等），自动从待更新列表中移除
+      const errMsg = String(err);
+      if (errMsg.includes('404') || errMsg.includes('not found') || errMsg.includes('无效')) {
+        console.warn('[TranslatorView] translationId 无效，自动移除:', translationId, err);
+        successfulIds.push(translationId);
+      } else {
+        console.error('[TranslatorView] 更新翻译失败:', translationId, err);
+      }
+    }
+  }
+
+  // 清除已成功提交的更新
+  for (const translationId of successfulIds) {
+    pendingContentUpdates.delete(translationId);
+    pendingProofreadUpdates.delete(translationId);
+    pendingSelectedUpdates.delete(translationId);
+  }
+
+  console.log('[TranslatorView] 批量更新完成', {
+    totalAttempts: updateMap.size,
+    successful: successfulIds.length,
+  });
 }
 
 // 收起 / 展开源列表（只读模式下禁止）
@@ -1153,9 +1376,32 @@ function stopDraggingSource(): void {
 
 // 删除标记
 // 删除标记（只读模式下禁止）
-function handleRemoveSource(sourceId: string): void {
+async function handleRemoveSource(sourceId: string): Promise<void> {
   if (!canEdit.value) return;
+
+  const file = props.files[currentPageIndex.value];
+
+  // 如果是服务端已存在的 source，尝试通知后端删除
+  if (!sourceId.startsWith(`${props.projectId}-src-`)) {
+    try {
+      await deleteSource(sourceId);
+    } catch (e) {
+      console.error('删除服务端 source 失败', e);
+      showToast('删除标记失败', 'error');
+      // 继续从本地移除以保证 UI 响应
+    }
+  }
+
   sources.value = sources.value.filter(item => item.id !== sourceId);
+
+  if (file) {
+    const pageKey = makeImageCacheKey(props.projectId, file.id);
+    const cached = pageSourceStore.get(pageKey);
+    if (cached) {
+      const next = cached.filter(item => item.id !== sourceId);
+      pageSourceStore.set(pageKey, cloneSourceList(next));
+    }
+  }
 
   if (activeSourceId.value === sourceId) {
     activeSourceId.value = sources.value[0]?.id ?? null;
@@ -1771,10 +2017,14 @@ function handleGlobalShortcuts(event: KeyboardEvent): void {
       return;
     }
 
-    if (event.key === 'Escape') {
+    if (event.key === '`') {
       event.preventDefault();
 
-      handleBackToProject();
+      if (activeSourceId.value) {
+        activeSourceId.value = null;
+      } else if (sources.value.length > 0) {
+        activeSourceId.value = sources.value[0].id;
+      }
 
       return;
     }
@@ -1794,38 +2044,75 @@ function toggleSourceCategory(): void {
 
 // 切换校对状态
 // 切换校对状态（只读模式下禁止）
-function toggleProofStatus(): void {
+async function toggleProofStatus(): Promise<void> {
   if (!canEdit.value) return;
-  if (!selectedSource.value) {
+  const source = selectedSource.value;
+
+  if (!source) {
     return;
   }
 
-  if (selectedSource.value.status === 'proofed') {
-    selectedSource.value.status =
-      selectedSource.value.translationText.trim().length === 0 ? 'empty' : 'translated';
+  if (isSubmittingProof.value) {
+    return;
+  }
 
-    selectedSource.value.proofText = '';
+  const targetRecord = resolveProofTarget(source);
 
-    editorProofText.value = '';
+  if (!targetRecord) {
+    showToast('当前标记没有翻译稿可供校对', 'error');
 
     return;
   }
+
+  const isActiveProof =
+    source.status === 'proofed' && source.selectedTranslationId === targetRecord.id;
 
   const proofCandidate = editorProofText.value.trim() || editorTranslationText.value.trim();
 
-  if (proofCandidate.length === 0) {
+  const proofDirty = source.proofText !== source.serverProofText;
+
+  if (!isActiveProof && proofCandidate.length === 0) {
+    showToast('请先填写校对内容', 'error');
+
     return;
   }
 
-  selectedSource.value.translationText = proofCandidate;
+  isSubmittingProof.value = true;
 
-  selectedSource.value.proofText = proofCandidate;
+  try {
+    if (isActiveProof && !proofDirty) {
+      const result = await updateTranslation({
+        translationId: targetRecord.id,
+        selected: false,
+        proofreadContent: '',
+      });
 
-  editorTranslationText.value = proofCandidate;
+      const record = toTranslationRecord(result, targetRecord.isMine);
 
-  editorProofText.value = proofCandidate;
+      applyRecordToSource(source, record);
 
-  selectedSource.value.status = 'proofed';
+      showToast('已取消校对状态');
+    } else {
+      const result = await updateTranslation({
+        translationId: targetRecord.id,
+        selected: true,
+        proofreadContent: proofCandidate,
+      });
+
+      const record = toTranslationRecord(result, targetRecord.isMine);
+
+      applyRecordToSource(source, record);
+
+      showToast('校对已提交');
+    }
+
+    persistPageSources(currentPageIndex.value);
+  } catch (error) {
+    console.error('提交校对失败', error);
+    showToast('提交校对失败', 'error');
+  } finally {
+    isSubmittingProof.value = false;
+  }
 }
 
 // 校对模式快捷键（只读模式下禁止）
@@ -1841,7 +2128,7 @@ function handleProofShortcut(event: KeyboardEvent): void {
 
   event.preventDefault();
 
-  toggleProofStatus();
+  void toggleProofStatus();
 }
 
 // 关闭悬浮窗
@@ -1850,7 +2137,10 @@ function handleCloseEditor(): void {
 }
 
 // 返回项目详情
-function handleBackToProject(): void {
+async function handleBackToProject(): Promise<void> {
+  // 退出前强制提交所有待更新内容
+  await flushPendingUpdates();
+
   emit('back');
 }
 
@@ -1948,9 +2238,18 @@ onMounted(() => {
       }
     });
   }
+
+  // 启动自动同步定时器（每 2 秒）
+  startAutoSyncTimer();
 });
 
 onBeforeUnmount(() => {
+  // 退出前强制提交所有待更新内容
+  void flushPendingUpdates();
+
+  // 停止自动同步定时器
+  stopAutoSyncTimer();
+
   window.removeEventListener('pointermove', updateDraggingSourcePosition);
 
   window.removeEventListener('pointermove', updateEditorPosition);
@@ -2165,14 +2464,14 @@ onBeforeUnmount(() => {
           </div>
           <div class="board__frame" ref="imageWrapperRef" :style="{ transform: boardTransform }">
             <img
-              v-if="projectPage"
+              v-if="projectPage && !isLoading"
               :src="projectPage.imageUrl"
               alt="漫画页"
               class="board__image"
               draggable="false"
               @load="handleBoardContentLoaded"
             />
-            <template v-if="showMarkers && canEdit">
+            <template v-if="showMarkers && canEdit && !isLoading">
               <button
                 v-for="item in sources"
                 :key="item.id"
@@ -2335,12 +2634,19 @@ onBeforeUnmount(() => {
       <footer class="editor__footer">
         <div class="editor__footer-actions">
           <button
+            v-if="isProofMode"
             type="button"
             class="editor__footer-button editor__footer-button--primary"
             @click="toggleProofStatus"
-            v-if="isProofMode"
+            :disabled="isSubmittingProof"
           >
-            {{ selectedSource.status === 'proofed' ? '取消校对状态' : '提交校对' }}
+            {{
+              isSubmittingProof
+                ? '提交中...'
+                : selectedSource.status === 'proofed'
+                  ? '取消校对状态'
+                  : '提交校对'
+            }}
           </button>
         </div>
       </footer>

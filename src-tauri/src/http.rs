@@ -2,6 +2,7 @@ use std::{cell::LazyCell, collections::HashMap, ops::Deref as _, time::Duration}
 
 use reqwest::header::{self, HeaderName, HeaderValue};
 use serde::{de::DeserializeOwned, Serialize};
+use serde_json::Value;
 
 use tracing::{debug, warn};
 
@@ -229,6 +230,65 @@ impl ApiClient {
 
         Ok(parsed)
     }
+
+    // 通用 DELETE：执行请求 -> 状态检查 -> 解析 JSON（多数情况返回空 body）
+    pub async fn http_delete<R>(
+        client: &reqwest::Client,
+        url: reqwest::Url,
+        headers: Vec<(HeaderName, HeaderValue)>,
+    ) -> Result<R, String>
+    where
+        R: DeserializeOwned,
+    {
+        tracing::debug!(%url, "ApiClient.http_delete called");
+
+        let mut req = client.delete(url);
+
+        if !headers.is_empty() {
+            let mut headers_map = reqwest::header::HeaderMap::new();
+
+            headers.into_iter().for_each(|(key, value)| {
+                if let Some(prev) = headers_map.insert(key, value) {
+                    warn!(
+                        ?prev,
+                        "Header key duplicated when building headers for DELETE"
+                    );
+                }
+            });
+
+            req = req.headers(headers_map);
+        }
+
+        let resp = req
+            .send()
+            .await
+            .map_err(|err| format!("request send error: {}", err))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "<body read error>".to_string());
+            return Err(format!("http error: status {} body: {}", status, body));
+        }
+
+        let text = resp
+            .text()
+            .await
+            .map_err(|err| format!("response body read error: {}", err))?;
+
+        if text.trim().is_empty() {
+            let parsed = serde_json::from_str::<R>("null")
+                .map_err(|err| format!("json parse error: {}", err))?;
+            return Ok(parsed);
+        }
+
+        let parsed =
+            serde_json::from_str::<R>(&text).map_err(|err| format!("json parse error: {}", err))?;
+
+        Ok(parsed)
+    }
 }
 
 thread_local! {
@@ -298,6 +358,118 @@ where
     }
 
     ApiClient::http_post(&client, url, headers, body).await
+}
+
+pub async fn moetran_put_opt<B, R>(path: &str, body: Option<B>) -> Result<R, String>
+where
+    B: Serialize,
+    R: DeserializeOwned,
+{
+    if path.is_empty() || path.starts_with('/') {
+        return Err(format!("Invalid path for moetran_put_opt: {}", path));
+    }
+
+    let (client, base) = MOETRAN_API_CLIENT.with(|lazy| {
+        let api = lazy.deref();
+        (api.client.clone(), api.base_url.clone())
+    });
+
+    let url = base
+        .join(path)
+        .map_err(|err| format!("Failed to build URL for {}: {}", path, err))?;
+
+    let mut headers = Vec::new();
+
+    if let Some(token) = crate::token::cached_moetran_token() {
+        match HeaderValue::from_str(&format!("Bearer {}", token)) {
+            Ok(header_value) => {
+                headers.push((header::AUTHORIZATION, header_value));
+                debug!("Authorization header added for moetran_put_opt");
+            }
+            Err(err) => {
+                warn!("Invalid token header value: {}", err);
+            }
+        }
+    } else {
+        warn!("No cached Moetran token available");
+    }
+
+    ApiClient::http_put(&client, url, headers, body).await
+}
+
+// 通用 DELETE：构造请求 -> 附加头 -> 状态检查
+pub async fn http_delete<R>(
+    client: &reqwest::Client,
+    url: reqwest::Url,
+    headers: Vec<(HeaderName, HeaderValue)>,
+) -> Result<R, String>
+where
+    R: DeserializeOwned,
+{
+    let mut req = client.delete(url);
+
+    if !headers.is_empty() {
+        let mut hm = header::HeaderMap::new();
+        for (k, v) in headers.into_iter() {
+            hm.insert(k, v);
+        }
+        req = req.headers(hm);
+    }
+
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    let status = resp.status();
+
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("Remote returned status {}: {}", status, text));
+    }
+
+    let parsed = resp
+        .json::<R>()
+        .await
+        .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+
+    Ok(parsed)
+}
+
+pub async fn moetran_delete<R>(path: &str) -> Result<R, String>
+where
+    R: DeserializeOwned,
+{
+    if path.is_empty() || path.starts_with('/') {
+        return Err(format!("Invalid path for moetran_delete: {}", path));
+    }
+
+    let (client, base) = MOETRAN_API_CLIENT.with(|lazy| {
+        let api = lazy.deref();
+        (api.client.clone(), api.base_url.clone())
+    });
+
+    let url = base
+        .join(path)
+        .map_err(|err| format!("Failed to build URL for {}: {}", path, err))?;
+
+    let mut headers = Vec::new();
+
+    if let Some(token) = crate::token::cached_moetran_token() {
+        match HeaderValue::from_str(&format!("Bearer {}", token)) {
+            Ok(header_value) => {
+                headers.push((header::AUTHORIZATION, header_value));
+                debug!("Authorization header added for moetran_delete");
+            }
+            Err(err) => {
+                warn!("Invalid token header value: {}", err);
+            }
+        }
+    } else {
+        warn!("No cached Moetran token available");
+    }
+
+    ApiClient::http_delete(&client, url, headers).await
 }
 
 pub async fn moetran_get<R>(path: &str, query: Option<&HashMap<&str, String>>) -> Result<R, String>

@@ -1,12 +1,15 @@
 use crate::{
     defer::WarnDefer,
-    http::{moetran_get, poprako_get, poprako_post_opt, poprako_put_opt},
+    http::{
+        moetran_delete, moetran_get, moetran_post_opt, moetran_put_opt, poprako_get,
+        poprako_post_opt, poprako_put_opt,
+    },
     token::get_moetran_token,
 };
 use base64::{engine::general_purpose, Engine as _};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE, REFERER, USER_AGENT};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::time::Duration;
 use url::Url;
 
@@ -1019,6 +1022,7 @@ pub struct MoetranSource {
     pub y: f64,
     pub position_type: i32,
     pub my_translation: Option<MoetranTranslation>,
+    #[serde(default)]
     pub translations: Vec<MoetranTranslation>,
 }
 
@@ -1058,6 +1062,193 @@ pub async fn get_page_sources(payload: GetPageSourcesReq) -> Result<Vec<MoetranS
     defer.success();
 
     Ok(sources)
+}
+
+// 在指定文件上创建一个 source（标记）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CreateSourceReq {
+    pub file_id: String,
+    pub x: f64,
+    pub y: f64,
+    #[serde(default)]
+    pub position_type: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<f64>,
+}
+
+#[tauri::command]
+pub async fn create_source(payload: CreateSourceReq) -> Result<MoetranSource, String> {
+    tracing::info!(file_id = %payload.file_id, x = payload.x, y = payload.y, "moetran.source.create.start");
+
+    let mut defer = WarnDefer::new("moetran.source.create");
+
+    let path = format!("files/{}/sources", payload.file_id);
+
+    let mut body = serde_json::Map::new();
+
+    body.insert("x".to_string(), serde_json::Value::from(payload.x));
+    body.insert("y".to_string(), serde_json::Value::from(payload.y));
+    body.insert(
+        "position_type".to_string(),
+        serde_json::Value::from(payload.position_type),
+    );
+
+    if let Some(w) = payload.width {
+        body.insert("width".to_string(), serde_json::Value::from(w));
+    }
+
+    if let Some(h) = payload.height {
+        body.insert("height".to_string(), serde_json::Value::from(h));
+    }
+
+    let reply = moetran_post_opt::<serde_json::Value, MoetranSource>(
+        &path,
+        Some(serde_json::Value::Object(body)),
+    )
+    .await
+    .map_err(|err| format!("创建 source 失败: {}", err))?;
+
+    tracing::info!(source_id = %reply.id, "moetran.source.create.ok");
+
+    defer.success();
+
+    Ok(reply)
+}
+
+// 删除 source
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DeleteSourceReq {
+    pub source_id: String,
+}
+
+#[tauri::command]
+pub async fn delete_source(payload: DeleteSourceReq) -> Result<(), String> {
+    tracing::info!(source_id = %payload.source_id, "moetran.source.delete.start");
+
+    let mut defer = WarnDefer::new("moetran.source.delete");
+
+    let path = format!("sources/{}", payload.source_id);
+
+    moetran_delete::<serde_json::Value>(&path)
+        .await
+        .map_err(|err| format!("删除 source 失败: {}", err))?;
+
+    tracing::info!(source_id = %payload.source_id, "moetran.source.delete.ok");
+
+    defer.success();
+
+    Ok(())
+}
+
+// 提交翻译稿
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SubmitTranslationReq {
+    pub source_id: String,
+    pub target_id: String,
+    pub content: String,
+}
+
+#[tauri::command]
+pub async fn submit_translation(
+    payload: SubmitTranslationReq,
+) -> Result<MoetranTranslation, String> {
+    tracing::info!(
+        source_id = %payload.source_id,
+        target_id = %payload.target_id,
+        content_len = payload.content.len(),
+        "moetran.translation.submit.start"
+    );
+
+    let mut defer = WarnDefer::new("moetran.translation.submit");
+
+    let path = format!("sources/{}/translations", payload.source_id);
+
+    let body = serde_json::json!({
+        "target_id": payload.target_id,
+        "content": payload.content,
+    });
+
+    let reply = moetran_post_opt::<serde_json::Value, MoetranTranslation>(&path, Some(body))
+        .await
+        .map_err(|err| format!("提交翻译失败: {}", err))?;
+
+    tracing::info!(
+        translation_id = %reply.id,
+        source_id = %payload.source_id,
+        "moetran.translation.submit.ok"
+    );
+
+    defer.success();
+
+    Ok(reply)
+}
+
+// 更新翻译稿（包括校对状态与校对内容）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UpdateTranslationReq {
+    pub translation_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proofread_content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+}
+
+#[tauri::command]
+pub async fn update_translation(
+    payload: UpdateTranslationReq,
+) -> Result<MoetranTranslation, String> {
+    let has_selected = payload.selected.is_some();
+    let has_proof = payload.proofread_content.is_some();
+    let has_content = payload.content.is_some();
+
+    if !has_selected && !has_proof && !has_content {
+        return Err("至少需要一个可更新字段".to_string());
+    }
+
+    tracing::info!(
+        translation_id = %payload.translation_id,
+        has_selected,
+        has_proof,
+        has_content,
+        "moetran.translation.update.start"
+    );
+
+    let mut defer = WarnDefer::new("moetran.translation.update");
+
+    let mut body = Map::new();
+
+    if let Some(selected) = payload.selected {
+        body.insert("selected".to_string(), Value::Bool(selected));
+    }
+
+    if let Some(proof) = payload.proofread_content {
+        body.insert("proofread_content".to_string(), Value::String(proof));
+    }
+
+    if let Some(content) = payload.content {
+        body.insert("content".to_string(), Value::String(content));
+    }
+
+    let path = format!("translations/{}", payload.translation_id);
+
+    let reply =
+        moetran_put_opt::<serde_json::Value, MoetranTranslation>(&path, Some(Value::Object(body)))
+            .await
+            .map_err(|err| format!("更新翻译失败: {}", err))?;
+
+    tracing::info!(
+        translation_id = %reply.id,
+        selected = reply.selected,
+        "moetran.translation.update.ok"
+    );
+
+    defer.success();
+
+    Ok(reply)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

@@ -5,7 +5,6 @@ import { useToastStore } from '../stores/toast';
 import { useUserStore } from '../stores/user';
 import { getUserInfo } from '../ipc/user';
 import { getUserTeams } from '../ipc/team';
-import { getMemberInfo } from '../ipc/member';
 import type { ResUser } from '../api/model/user';
 import type { ResTeam } from '../api/model/team';
 import type { ResMember } from '../api/model/member';
@@ -34,10 +33,8 @@ const activeTeamId = ref<string | null>(null);
 // 右侧详情栏相关状态
 // 侧边栏模式：创建 / 详情 / 修改
 const detailMode = ref<'detail' | 'create' | 'modifier'>('create');
-const DETAIL_SIDEBAR_MAX_RATIO = 0.5;
 const detailOpen = ref(false);
 const detailReady = ref(false);
-const detailSidebarRef = ref<HTMLElement | null>(null);
 
 // 项目修改时需要的数据
 const selectedProjectId = ref<string | null>(null);
@@ -69,16 +66,6 @@ const loadingProjects = ref<boolean>(false);
 
 // 依赖的 store
 const toastStore = useToastStore();
-
-// Avatar error handlers: 当图片加载失败时，将对应实体的 `has_avatar` 置为 false，以触发回退 UI（首字母）
-function onUserAvatarError(): void {
-  if (user.value) user.value.hasAvatar = false;
-}
-
-function onTeamAvatarError(teamId: string): void {
-  const t = teams.value.find(x => x.id === teamId);
-  if (t) t.hasAvatar = false;
-}
 
 // 载入用户信息
 async function loadUser(): Promise<void> {
@@ -140,6 +127,7 @@ async function onSelectTeam(teamId: string): Promise<void> {
   activeTeamId.value = teamId;
 
   try {
+    const { getMemberInfo } = await import('../ipc/member');
     const info = await getMemberInfo(teamId);
     // eslint-disable-next-line no-console
     console.log('[PanelView] member info for team', teamId, info);
@@ -175,8 +163,8 @@ function handleOpenDetail(payload: {
   role?: any | null;
   teamId?: string;
 }): void {
-  // 在 PanelView 中打开右侧详情抽屉（本地侧栏，不切换到全屏）
-  detailMode.value = 'detail' as any; // 将侧栏设置为 detail 模式
+  // 在 PanelView 中打开全屏详情视图
+  detailMode.value = 'detail' as any; // 设置为 detail 模式
   selectedProjectId.value = payload.id;
   selectedProjectTitle.value = payload.title;
   selectedProjectProjsetName.value = payload.projsetName;
@@ -199,11 +187,9 @@ function handleOpenDetail(payload: {
   selectedProjectIsPublished.value = payload.isPublished ?? false;
   selectedProjectTeamId.value = payload.teamId ?? activeTeamId.value ?? '';
   detailReady.value = false;
-  if (!detailOpen.value) {
-    detailOpen.value = true;
-  } else {
-    detailReady.value = true;
-  }
+  detailOpen.value = true;
+  // 直接标记为就绪，全屏显示
+  detailReady.value = true;
 }
 
 // 关闭项目详情/创建/修改侧边栏
@@ -213,13 +199,6 @@ function handleCloseDetail(): void {
   selectedProjectMembers.value = undefined;
   selectedProjectRole.value = null;
   selectedProjectHasPoprako.value = undefined;
-}
-
-// 右侧详情栏宽度动画结束后，标记为就绪再渲染复杂内容
-function handleDetailTransitionEnd(e: TransitionEvent): void {
-  if (e.propertyName !== 'width') return;
-  if (!detailOpen.value) return;
-  detailReady.value = true;
 }
 
 // 初始化加载（仅在拥有 moetran token 时进行）
@@ -392,24 +371,18 @@ function handleOpenCreator(): void {
   detailMode.value = 'create';
   selectedProjectId.value = null;
   detailReady.value = false;
-
-  if (!detailOpen.value) {
-    detailOpen.value = true;
-  } else {
-    detailReady.value = true;
-  }
+  detailOpen.value = true;
+  // 直接标记为就绪，全屏显示
+  detailReady.value = true;
 }
 
 // 打开修改项目视图（由 ProjectDetailView 触发）
 function handleOpenModifier(): void {
   detailMode.value = 'modifier';
   detailReady.value = false;
-
-  if (!detailOpen.value) {
-    detailOpen.value = true;
-  } else {
-    detailReady.value = true;
-  }
+  detailOpen.value = true;
+  // 直接标记为就绪，全屏显示
+  detailReady.value = true;
 }
 
 // Cancel from modifier: close the sidebar
@@ -428,33 +401,13 @@ function handleModifierBack(): void {
       <aside class="teams-sidebar">
         <ul class="teams-list">
           <li class="team-item team-item--user" @click="selectUserProjects">
-            <template v-if="user?.hasAvatar && user?.avatar">
-              <img
-                class="team-item__avatar-img"
-                :src="user.avatar"
-                alt="user"
-                @error="onUserAvatarError"
-              />
-            </template>
-            <template v-else>
-              <span class="team-item__avatar user-avatar">{{
-                user?.name ? user.name.slice(0, 1) : '我'
-              }}</span>
-            </template>
+            <span class="team-item__avatar user-avatar">{{
+              user?.name ? user.name.slice(0, 1) : '我'
+            }}</span>
             <span class="team-item__name">{{ user?.name || '我' }} 的项目</span>
           </li>
           <li v-for="team in teams" :key="team.id" class="team-item" @click="onSelectTeam(team.id)">
-            <template v-if="team.hasAvatar && team.avatar">
-              <img
-                class="team-item__avatar-img"
-                :src="team.avatar"
-                :alt="team.name"
-                @error="() => onTeamAvatarError(team.id)"
-              />
-            </template>
-            <template v-else>
-              <span class="team-item__avatar">{{ team.name.slice(0, 1) }}</span>
-            </template>
+            <span class="team-item__avatar">{{ team.name.slice(0, 1) }}</span>
             <span class="team-item__name">{{ team.name }} 的项目</span>
           </li>
           <li v-if="!loadingTeams && teams.length === 0" class="team-item team-item--empty">
@@ -507,66 +460,61 @@ function handleModifierBack(): void {
         </div>
       </main>
 
-      <!-- 右侧项目详情伸缩侧栏 -->
-      <aside
-        class="detail-sidebar"
-        :class="{ 'detail-sidebar--open': detailOpen }"
-        :style="{ '--detail-sidebar-max-ratio': DETAIL_SIDEBAR_MAX_RATIO }"
-        ref="detailSidebarRef"
-        @transitionend="handleDetailTransitionEnd"
-      >
-        <div v-if="!detailReady" class="detail-sidebar__loading">
-          <div class="detail-spinner"></div>
-          <div class="detail-loading-text">加载中...</div>
-        </div>
-        <ProjectDetailView
-          v-else-if="detailMode === 'detail' && selectedProjectId !== null"
-          :project-id="selectedProjectId"
-          :title="selectedProjectTitle"
-          :projset-name="selectedProjectProjsetName"
-          :projset-index="selectedProjectProjsetIndex"
-          :principals="selectedProjectPrincipals"
-          :total-markers="selectedProjectTotalMarkers"
-          :total-translated="selectedProjectTotalTranslated"
-          :total-checked="selectedProjectTotalChecked"
-          :translating-status="selectedProjectTranslatingStatus"
-          :proofreading-status="selectedProjectProofreadingStatus"
-          :typesetting-status="selectedProjectTypesettingStatus"
-          :reviewing-status="selectedProjectReviewingStatus"
-          :translators="selectedProjectTranslators"
-          :proofreaders="selectedProjectProofreaders"
-          :letterers="selectedProjectLetterers"
-          :reviewers="selectedProjectReviewers"
-          :members="selectedProjectMembers"
-          :is-published="selectedProjectIsPublished"
-          :role="selectedProjectRole"
-          :has-poprako="selectedProjectHasPoprako"
-          @close="handleCloseDetail"
-          @open-modifier="handleOpenModifier"
-        />
+      <!-- 全屏项目详情/创建/修改视图 -->
+      <div v-if="detailOpen" class="detail-fullscreen">
+        <div class="detail-fullscreen__container">
+          <div v-if="!detailReady" class="detail-fullscreen__loading">
+            <LoadingCircle />
+          </div>
+          <ProjectDetailView
+            v-else-if="detailMode === 'detail' && selectedProjectId !== null"
+            :project-id="selectedProjectId"
+            :title="selectedProjectTitle"
+            :projset-name="selectedProjectProjsetName"
+            :projset-index="selectedProjectProjsetIndex"
+            :principals="selectedProjectPrincipals"
+            :total-markers="selectedProjectTotalMarkers"
+            :total-translated="selectedProjectTotalTranslated"
+            :total-checked="selectedProjectTotalChecked"
+            :translating-status="selectedProjectTranslatingStatus"
+            :proofreading-status="selectedProjectProofreadingStatus"
+            :typesetting-status="selectedProjectTypesettingStatus"
+            :reviewing-status="selectedProjectReviewingStatus"
+            :translators="selectedProjectTranslators"
+            :proofreaders="selectedProjectProofreaders"
+            :letterers="selectedProjectLetterers"
+            :reviewers="selectedProjectReviewers"
+            :members="selectedProjectMembers"
+            :is-published="selectedProjectIsPublished"
+            :role="selectedProjectRole"
+            :has-poprako="selectedProjectHasPoprako"
+            @close="handleCloseDetail"
+            @open-modifier="handleOpenModifier"
+          />
 
-        <ProjectCreatorView
-          v-else-if="detailMode === 'create'"
-          :team-id="activeTeamId || undefined"
-          @close="handleCloseDetail"
-        />
-        <ProjectModifierView
-          v-else-if="detailMode === 'modifier' && selectedProjectId !== null"
-          :project-id="selectedProjectId"
-          :project-name="selectedProjectTitle"
-          :project-description="''"
-          :team-id="selectedProjectTeamId"
-          :projset-name="selectedProjectProjsetName"
-          :members="selectedProjectMembers"
-          :translating-status="selectedProjectTranslatingStatus"
-          :proofreading-status="selectedProjectProofreadingStatus"
-          :typesetting-status="selectedProjectTypesettingStatus"
-          :reviewing-status="selectedProjectReviewingStatus"
-          :is-published="selectedProjectIsPublished"
-          @close="handleCloseDetail"
-          @back="handleModifierBack"
-        />
-      </aside>
+          <ProjectCreatorView
+            v-else-if="detailMode === 'create'"
+            :team-id="activeTeamId || undefined"
+            @close="handleCloseDetail"
+          />
+          <ProjectModifierView
+            v-else-if="detailMode === 'modifier' && selectedProjectId !== null"
+            :project-id="selectedProjectId"
+            :project-name="selectedProjectTitle"
+            :project-description="''"
+            :team-id="selectedProjectTeamId"
+            :projset-name="selectedProjectProjsetName"
+            :members="selectedProjectMembers"
+            :translating-status="selectedProjectTranslatingStatus"
+            :proofreading-status="selectedProjectProofreadingStatus"
+            :typesetting-status="selectedProjectTypesettingStatus"
+            :reviewing-status="selectedProjectReviewingStatus"
+            :is-published="selectedProjectIsPublished"
+            @close="handleCloseDetail"
+            @back="handleModifierBack"
+          />
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -613,39 +561,20 @@ function handleModifierBack(): void {
   flex: 1;
   display: flex;
   flex-direction: row;
-  padding: 16px 24px 28px;
+  padding: 16px 24px 10px;
   gap: 22px;
 }
 
-/* 侧边栏：单层头像+名字列表，通过宽度+裁剪表现收起/展开 */
+/* 侧边栏：单层头像+名字列表，始终展开显示 */
 .teams-sidebar {
-  width: 80px; /* 收起时宽度，仅头像区域 */
+  width: 200px; /* 减少宽度 */
   flex: 0 0 auto;
   display: block;
   background: #ffffff;
   border: 1px solid rgba(150, 180, 210, 0.35);
   border-radius: 16px;
   box-shadow: 0 8px 28px rgba(140, 180, 230, 0.18);
-  height: calc(100vh - 54px - 44px);
-  overflow: hidden; /* 隐藏溢出部分（名字在收起时被裁剪） */
-  transition: width 0.28s ease;
-}
-.teams-sidebar:hover {
-  width: clamp(260px, 26vw, 360px);
-}
-
-/* 当侧栏收起（未 hover）时，隐藏名字，防止文字首字母在收起状态下溢出 */
-.teams-sidebar:not(:hover) .team-item__name {
-  max-width: 0;
-  opacity: 0;
-  transform: translateX(-4px);
-  transition:
-    max-width 0.18s ease,
-    opacity 0.18s ease,
-    transform 0.18s ease;
-  overflow: hidden;
-  white-space: nowrap;
-  pointer-events: none;
+  overflow: hidden; /* 隐藏溢出部分 */
 }
 
 /* 确保列表项在 flex 收缩时不会导致子元素溢出 */
@@ -701,19 +630,6 @@ function handleModifierBack(): void {
   background: linear-gradient(135deg, #cde6ff, #e6f4ff);
 }
 
-/* Avatar image styles */
-.team-item__avatar-img {
-  width: 34px;
-  height: 28px;
-  min-width: 34px;
-  min-height: 28px;
-  border-radius: 8px;
-  object-fit: cover;
-  display: block;
-  box-sizing: border-box;
-  align-self: center;
-}
-
 .top-bar__avatar-img {
   width: 34px;
   height: 34px;
@@ -743,7 +659,6 @@ function handleModifierBack(): void {
 
 /* Ensure avatar containers don't shrink when parent gets narrow */
 .team-item__avatar,
-.team-item__avatar-img,
 .top-bar__avatar,
 .top-bar__avatar-img {
   flex-shrink: 0;
@@ -771,10 +686,9 @@ function handleModifierBack(): void {
   background: #ffffff;
   border: 1px solid rgba(150, 180, 210, 0.3);
   border-radius: 18px;
-  padding: 20px 22px 26px;
+  padding: 20px 22px 6px; /* 减少底部 padding，从 26px 改为 6px */
   box-sizing: border-box;
   box-shadow: 0 10px 34px rgba(140, 180, 230, 0.22);
-  height: calc(100vh - 54px - 44px);
   min-width: 0; /* 防止被右侧栏挤压时产生水平抖动 */
 }
 .projects-header {
@@ -964,61 +878,50 @@ function handleModifierBack(): void {
   overflow: auto;
   padding-right: 6px; /* 给滚动条留出些许空间，防止内容紧贴 */
 }
+
+/* 隐藏滚动条的 hack 技巧 */
+.projects-scroll::-webkit-scrollbar {
+  display: none;
+}
+.projects-scroll {
+  -ms-overflow-style: none; /* IE and Edge */
+  scrollbar-width: none; /* Firefox */
+}
 .placeholder {
   font-size: 13px;
   color: #6b859d;
 }
 
-/* 右侧详情伸缩侧栏，与左侧类似的宽度动画 */
-.detail-sidebar {
-  width: 0;
-  flex: 0 0 auto;
-  overflow: hidden;
-  height: calc(100vh - 54px - 44px);
-  background: #ffffff;
-  border-radius: 18px;
-  border: 1px solid rgba(150, 180, 210, 0.35);
-  box-shadow: 0 10px 34px rgba(140, 180, 230, 0.22);
-  box-sizing: border-box;
-  transition:
-    width 0.28s ease,
-    opacity 0.22s ease;
-  opacity: 0;
-}
-
-.detail-sidebar--open {
-  /* 使用比例控制最大宽度，可通过 DETAIL_SIDEBAR_MAX_RATIO 调整 */
-  width: calc(var(--detail-sidebar-max-ratio, 0.5) * 100%);
-  opacity: 1;
-}
-
-.detail-sidebar__loading {
-  height: 100%;
+/* 全屏详情视图 */
+.detail-fullscreen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 14px;
-  color: #4a5f7a;
-  font-size: 13px;
 }
 
-.detail-spinner {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  border: 3px solid rgba(160, 190, 230, 0.35);
-  border-top-color: rgba(118, 184, 255, 0.95);
-  animation: detail-spin 0.8s linear infinite;
+.detail-fullscreen__container {
+  background: #ffffff;
+  border: 1px solid rgba(150, 180, 210, 0.35);
+  border-radius: 18px;
+  box-shadow: 0 10px 34px rgba(140, 180, 230, 0.22);
+  width: 70%;
+  height: 80%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-.detail-loading-text {
-  opacity: 0.85;
-}
-
-@keyframes detail-spin {
-  to {
-    transform: rotate(360deg);
-  }
+.detail-fullscreen__loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 </style>

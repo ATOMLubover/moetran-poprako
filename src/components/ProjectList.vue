@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useToastStore } from '../stores/toast';
 import { useUserStore } from '../stores/user';
 import type { ProjectBasicInfo, PhaseStatus, PhaseChip } from '../api/model/displayProject';
@@ -301,46 +301,54 @@ async function fetchAndClamp(): Promise<void> {
     lastFetchCount.value = apiRes.length;
     innerProjects.value = all;
 
-    // 下一帧再测量，确保 DOM 已更新；如果此时 DOM 未挂载，跳过裁剪但保留数据
-    requestAnimationFrame(() => {
-      const container = listContainerRef.value;
-      if (!container) {
-        console.log('[ProjectList] fetchAndClamp: container not mounted yet, skip clamp');
-        return;
-      }
+    // 使用 setTimeout 确保 DOM 完全渲染后再裁剪
+    void nextTick().then(() => {
+      requestAnimationFrame(() => {
+        const container = listContainerRef.value;
+        if (!container) {
+          console.log('[ProjectList] fetchAndClamp: container not mounted yet, skip clamp');
+          return;
+        }
 
-      const scroll = container.closest('.projects-scroll') as HTMLElement | null;
-      const host = scroll ?? container;
-      const hostRect = host.getBoundingClientRect();
-      const items = host.querySelectorAll('.project-list__item');
-      if (!items.length) {
-        console.log('[ProjectList] fetchAndClamp: no items rendered');
-        return;
-      }
+        const scroll = container.closest('.projects-scroll') as HTMLElement | null;
+        const host = scroll ?? container;
+        const hostRect = host.getBoundingClientRect();
+        const items = host.querySelectorAll('.project-list__item');
+        if (!items.length) {
+          console.log('[ProjectList] fetchAndClamp: no items rendered');
+          return;
+        }
 
-      const firstItemRect = (items[0] as HTMLElement).getBoundingClientRect();
-      const itemHeight = firstItemRect.height;
-      const verticalGap = 16; // 来自 .project-list__items 的 gap
+        const firstItemRect = (items[0] as HTMLElement).getBoundingClientRect();
+        const itemHeight = firstItemRect.height;
+        const verticalGap = 16; // 来自 .project-list__items 的 gap
 
-      const totalItemBlock = itemHeight + verticalGap;
-      const safePadding = 8;
-      const usableHeight = hostRect.height - safePadding;
-      const maxItems = Math.max(1, Math.floor(usableHeight / totalItemBlock));
+        // 使用窗口高度估算剩余空间，避免列表撑出滚动条
+        const totalItemBlock = itemHeight + verticalGap;
+        const safePadding = 24;
+        const availableHeight = Math.max(120, window.innerHeight - hostRect.top - safePadding);
+        const maxItems = Math.max(1, Math.floor(availableHeight / totalItemBlock));
+        const adjustedMaxItems = Math.max(1, maxItems - 1);
 
-      console.log(
-        '[ProjectList] clamp: hostHeight=',
-        hostRect.height,
-        'itemHeight=',
-        itemHeight,
-        'gap=',
-        verticalGap,
-        'maxItems=',
-        maxItems
-      );
+        console.log(
+          '[ProjectList] clamp: top=',
+          hostRect.top,
+          'availHeight=',
+          availableHeight,
+          'itemHeight=',
+          itemHeight,
+          'gap=',
+          verticalGap,
+          'maxItems=',
+          maxItems,
+          'adjustedMaxItems=',
+          adjustedMaxItems
+        );
 
-      if (innerProjects.value.length > maxItems) {
-        innerProjects.value = innerProjects.value.slice(0, maxItems);
-      }
+        if (innerProjects.value.length > adjustedMaxItems) {
+          innerProjects.value = innerProjects.value.slice(0, adjustedMaxItems);
+        }
+      });
     });
   } catch (err) {
     console.error('[ProjectList] 获取用户项目失败:', err);
@@ -556,7 +564,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 18px;
-  padding: 16px 30px 20px;
+  padding: 16px 30px 10px;
   border-radius: 24px;
   background: rgba(255, 255, 255, 0.92);
   color: #28405c;

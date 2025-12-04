@@ -529,6 +529,198 @@ export async function getPageSources(fileId: string, targetId: string): Promise<
   }
 }
 
+export interface CreateSourcePayload {
+  fileId: string;
+  targetId: string;
+  positionType: number;
+  x: number;
+  y: number;
+}
+
+export async function createSource(payload: CreateSourcePayload): Promise<PageSource> {
+  try {
+    console.debug('[ipc] invoke create_source', payload);
+
+    const raw = await invoke<{
+      id: string;
+      x: number;
+      y: number;
+      position_type: number;
+      my_translation?: {
+        id: string;
+        content: string;
+        proofread_content?: string | null;
+        selected: boolean;
+      };
+      translations?: {
+        id: string;
+        content: string;
+        proofread_content?: string | null;
+        selected: boolean;
+      }[];
+    }>('create_source', {
+      payload: {
+        file_id: payload.fileId,
+        target_id: payload.targetId,
+        position_type: payload.positionType,
+        x: payload.x,
+        y: payload.y,
+      },
+    });
+
+    console.debug('[ipc] create_source result', { payload, raw });
+
+    return {
+      id: raw.id,
+      x: raw.x,
+      y: raw.y,
+      positionType: raw.position_type,
+      myTranslation: raw.my_translation
+        ? {
+            id: raw.my_translation.id,
+            content: raw.my_translation.content,
+            proofreadContent:
+              typeof raw.my_translation.proofread_content === 'string'
+                ? raw.my_translation.proofread_content
+                : undefined,
+            selected: raw.my_translation.selected,
+          }
+        : undefined,
+      translations: (raw.translations || []).map(item => ({
+        id: item.id,
+        content: item.content,
+        proofreadContent:
+          typeof item.proofread_content === 'string' ? item.proofread_content : undefined,
+        selected: item.selected,
+      })),
+    };
+  } catch (err) {
+    console.error('[ipc] createSource failed', { payload, err });
+    throw err;
+  }
+}
+
+export async function deleteSource(sourceId: string): Promise<void> {
+  try {
+    console.debug('[ipc] invoke delete_source', { sourceId });
+
+    await invoke('delete_source', {
+      payload: {
+        source_id: sourceId,
+      },
+    });
+
+    console.debug('[ipc] delete_source ok', { sourceId });
+  } catch (err) {
+    console.error('[ipc] deleteSource failed', { sourceId, err });
+    throw err;
+  }
+}
+
+export interface UpdateTranslationPayload {
+  translationId: string;
+  selected?: boolean;
+  proofreadContent?: string;
+  content?: string;
+}
+
+export async function submitTranslation(
+  payload: SubmitTranslationPayload
+): Promise<PageTranslation> {
+  try {
+    console.debug('[ipc] invoke submit_translation', payload);
+
+    const raw = await invoke<{
+      id: string;
+      content: string;
+      proofread_content?: string | null;
+      selected: boolean;
+    }>('submit_translation', {
+      payload: {
+        source_id: payload.sourceId,
+        target_id: payload.targetId,
+        content: payload.content,
+      },
+    });
+
+    console.debug('[ipc] submit_translation result', { payload, raw });
+
+    return {
+      id: raw.id,
+      content: raw.content,
+      proofreadContent:
+        typeof raw.proofread_content === 'string' ? raw.proofread_content : undefined,
+      selected: raw.selected,
+    };
+  } catch (err) {
+    console.error('[ipc] submitTranslation failed', { payload, err });
+    throw err;
+  }
+}
+
+export interface SubmitTranslationPayload {
+  sourceId: string;
+  targetId: string;
+  content: string;
+}
+
+export interface UpdateTranslationPayload {
+  translationId: string;
+  selected?: boolean;
+  proofreadContent?: string;
+  content?: string;
+}
+
+export async function updateTranslation(
+  payload: UpdateTranslationPayload
+): Promise<PageTranslation> {
+  const request: Record<string, unknown> = {
+    translation_id: payload.translationId,
+  };
+
+  if (typeof payload.selected === 'boolean') {
+    request.selected = payload.selected;
+  }
+
+  if (typeof payload.proofreadContent !== 'undefined') {
+    request.proofread_content = payload.proofreadContent;
+  }
+
+  if (typeof payload.content !== 'undefined') {
+    request.content = payload.content;
+  }
+
+  if (Object.keys(request).length === 1) {
+    throw new Error('updateTranslation requires at least one field');
+  }
+
+  try {
+    console.debug('[ipc] invoke update_translation', request);
+
+    const raw = await invoke<{
+      id: string;
+      content: string;
+      proofread_content?: string | null;
+      selected: boolean;
+    }>('update_translation', {
+      payload: request,
+    });
+
+    console.debug('[ipc] update_translation result', { request, raw });
+
+    return {
+      id: raw.id,
+      content: raw.content,
+      proofreadContent:
+        typeof raw.proofread_content === 'string' ? raw.proofread_content : undefined,
+      selected: raw.selected,
+    };
+  } catch (err) {
+    console.error('[ipc] updateTranslation failed', { request, err });
+    throw err;
+  }
+}
+
 export async function proxyImage(url: string): Promise<{ b64: string; content_type: string }> {
   try {
     console.debug('[ipc] invoke proxy_image', { url });
