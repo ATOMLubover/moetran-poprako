@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 pub trait ResultExt<T, E> {
     fn log_err(self) -> Self;
 }

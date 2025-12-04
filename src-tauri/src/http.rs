@@ -2,7 +2,6 @@ use std::{cell::LazyCell, collections::HashMap, ops::Deref as _, time::Duration}
 
 use reqwest::header::{self, HeaderName, HeaderValue};
 use serde::{de::DeserializeOwned, Serialize};
-use serde_json::Value;
 
 use tracing::{debug, warn};
 
@@ -398,6 +397,7 @@ where
 }
 
 // 通用 DELETE：构造请求 -> 附加头 -> 状态检查
+#[allow(dead_code)]
 pub async fn http_delete<R>(
     client: &reqwest::Client,
     url: reqwest::Url,
@@ -576,14 +576,32 @@ where
         .join(path)
         .map_err(|err| format!("Failed to build URL for {}: {}", path, err))?;
 
+    // For Poprako endpoints other than 'sync', an Authorization header is required.
+    // If no token is cached, fail early to avoid sending unauthenticated requests.
     let mut headers = Vec::new();
 
-    if let Some(token) = crate::token::cached_poprako_token() {
+    if path != "sync" {
+        let token = crate::token::cached_poprako_token();
+        if token.is_none() {
+            return Err(
+                "Missing Poprako token: Authorization header required for this endpoint"
+                    .to_string(),
+            );
+        }
         headers.push((
             header::AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", token))
+            HeaderValue::from_str(&format!("Bearer {}", token.unwrap()))
                 .map_err(|err| format!("Invalid token header value: {}", err))?,
         ));
+    } else {
+        // sync endpoint may be called without Authorization header
+        if let Some(token) = crate::token::cached_poprako_token() {
+            headers.push((
+                header::AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {}", token))
+                    .map_err(|err| format!("Invalid token header value: {}", err))?,
+            ));
+        }
     }
 
     ApiClient::http_post(&client, url, headers, body).await
@@ -616,15 +634,28 @@ where
         }
     }
 
+    // Require Authorization for all Poprako endpoints except 'sync'
     let mut headers = Vec::new();
-
-    if let Some(token) = crate::token::cached_poprako_token() {
-        match HeaderValue::from_str(&format!("Bearer {}", token)) {
+    if path != "sync" {
+        let token = crate::token::cached_poprako_token();
+        if token.is_none() {
+            return Err(
+                "Missing Poprako token: Authorization header required for this endpoint"
+                    .to_string(),
+            );
+        }
+        match HeaderValue::from_str(&format!("Bearer {}", token.unwrap())) {
             Ok(header_value) => {
                 headers.push((header::AUTHORIZATION, header_value));
             }
             Err(err) => {
                 warn!("Invalid token header value: {}", err);
+            }
+        }
+    } else {
+        if let Some(token) = crate::token::cached_poprako_token() {
+            if let Ok(hv) = HeaderValue::from_str(&format!("Bearer {}", token)) {
+                headers.push((header::AUTHORIZATION, hv));
             }
         }
     }
@@ -650,14 +681,29 @@ where
         .join(path)
         .map_err(|err| format!("Failed to build URL for {}: {}", path, err))?;
 
+    // Require Authorization header for non-sync endpoints
     let mut headers = Vec::new();
-
-    if let Some(token) = crate::token::cached_poprako_token() {
+    if path != "sync" {
+        let token = crate::token::cached_poprako_token();
+        if token.is_none() {
+            return Err(
+                "Missing Poprako token: Authorization header required for this endpoint"
+                    .to_string(),
+            );
+        }
         headers.push((
             header::AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", token))
+            HeaderValue::from_str(&format!("Bearer {}", token.unwrap()))
                 .map_err(|err| format!("Invalid token header value: {}", err))?,
         ));
+    } else {
+        if let Some(token) = crate::token::cached_poprako_token() {
+            headers.push((
+                header::AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {}", token))
+                    .map_err(|err| format!("Invalid token header value: {}", err))?,
+            ));
+        }
     }
 
     ApiClient::http_put(&client, url, headers, body).await

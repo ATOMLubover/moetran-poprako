@@ -1137,8 +1137,14 @@ pub async fn update_source(payload: UpdateSourceReq) -> Result<MoetranSource, St
     let path = format!("sources/{}", payload.source_id);
 
     let mut body = serde_json::Map::new();
-    body.insert("id".to_string(), serde_json::Value::String(payload.source_id.clone()));
-    body.insert("position_type".to_string(), serde_json::Value::from(payload.position_type));
+    body.insert(
+        "id".to_string(),
+        serde_json::Value::String(payload.source_id.clone()),
+    );
+    body.insert(
+        "position_type".to_string(),
+        serde_json::Value::from(payload.position_type),
+    );
 
     let reply = moetran_put_opt::<serde_json::Value, MoetranSource>(
         &path,
@@ -1449,6 +1455,90 @@ pub async fn publish_proj(payload: PublishProjReq) -> Result<(), String> {
     tracing::info!(
         proj_id = %payload.proj_id,
         "poprako.proj.publish.ok"
+    );
+
+    defer.success();
+
+    Ok(())
+}
+
+// 上传漫画页文件到 Moetran 项目
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UploadProjectFileReq {
+    pub project_id: String,
+    pub file_name: String,
+    pub file_bytes: Vec<u8>,
+}
+
+#[tauri::command]
+pub async fn upload_project_file(payload: UploadProjectFileReq) -> Result<(), String> {
+    tracing::info!(
+        project_id = %payload.project_id,
+        file_name = %payload.file_name,
+        file_size = payload.file_bytes.len(),
+        "moetran.project.file.upload.start"
+    );
+
+    let mut defer = WarnDefer::new("moetran.project.file.upload");
+
+    // 验证文件类型（仅支持 jpg/jpeg/png/bmp）
+    let ext = payload
+        .file_name
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+    if !matches!(ext.as_str(), "jpg" | "jpeg" | "png" | "bmp") {
+        return Err(format!(
+            "Unsupported file type: {}. Only jpg/jpeg/png/bmp are allowed",
+            ext
+        ));
+    }
+
+    // 构建 multipart/form-data 请求
+    let token = match get_moetran_token().await {
+        Ok(Some(t)) => t,
+        Ok(None) => return Err("Missing Moetran token: Authorization required".to_string()),
+        Err(e) => return Err(format!("Failed to get Moetran token: {}", e)),
+    };
+
+    let form = reqwest::multipart::Form::new().part(
+        "file",
+        reqwest::multipart::Part::bytes(payload.file_bytes)
+            .file_name(payload.file_name.clone())
+            .mime_str("application/octet-stream")
+            .map_err(|err| format!("Failed to set file mime type: {}", err))?,
+    );
+
+    let base_url = std::env::var("MOETRAN_URL").unwrap_or("https://api.moetran.com".to_string());
+    let url = format!("{}/v1/projects/{}/files", base_url, payload.project_id);
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|err| format!("Failed to create HTTP client: {}", err))?;
+
+    let resp = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|err| format!("File upload failed: {}", err))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_else(|_| "<empty>".to_string());
+        return Err(format!(
+            "File upload failed with status {}: {}",
+            status, body
+        ));
+    }
+
+    tracing::info!(
+        project_id = %payload.project_id,
+        file_name = %payload.file_name,
+        "moetran.project.file.upload.ok"
     );
 
     defer.success();

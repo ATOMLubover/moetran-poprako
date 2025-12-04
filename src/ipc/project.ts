@@ -801,3 +801,34 @@ export async function proxyImage(url: string): Promise<{ b64: string; content_ty
     throw err;
   }
 }
+
+// 上传项目文件（漫画页）
+export async function uploadProjectFile(
+  projectId: string,
+  fileName: string,
+  fileBytes: Uint8Array
+): Promise<void> {
+  try {
+    console.debug('[ipc] invoke upload_project_file', {
+      projectId,
+      fileName,
+      size: fileBytes.length,
+    });
+
+    // 将 Uint8Array 转换为 number[] 以符合 Tauri invoke 序列化
+    const bytesArray = Array.from(fileBytes);
+
+    await invoke<void>('upload_project_file', {
+      payload: {
+        project_id: projectId,
+        file_name: fileName,
+        file_bytes: bytesArray,
+      },
+    });
+
+    console.debug('[ipc] upload_project_file success', { projectId, fileName });
+  } catch (err) {
+    console.error('[ipc] uploadProjectFile failed', { projectId, fileName, err });
+    throw err;
+  }
+}

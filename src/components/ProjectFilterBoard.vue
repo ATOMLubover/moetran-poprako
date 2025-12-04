@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { ref, watch, computed } from 'vue';
 import MemberSelector, { MemberInfo } from './MemberSelector.vue';
 import { getTeamPoprakoProjsets, type PoprakoProjsetInfo } from '../ipc/project';
 import { useToastStore } from '../stores/toast';
@@ -7,18 +7,30 @@ import { useToastStore } from '../stores/toast';
 // 发出 confirmOptions 事件供父组件应用过滤
 
 // 父组件传入的上下文：当前选中的团队 ID（用于成员搜索）
-const props = defineProps<{ teamId?: string }>();
+const props = defineProps<{
+  teamId?: string;
+  modelValue: FilterOption[]; // v-model 绑定的筛选条件
+}>();
+
+const emit = defineEmits<{
+  (e: 'update:modelValue', options: FilterOption[]): void;
+  (e: 'applyFilter'): void; // 通知父组件应用筛选（确认查询或清空时触发）
+}>();
 
 const toastStore = useToastStore();
 
 // 过滤条件项
-interface FilterOption {
+export interface FilterOption {
   label: string;
   key: string;
   value: string;
 }
 
-const filterOptions = ref<FilterOption[]>([]);
+// 使用 computed 访问父组件传入的 filterOptions
+const filterOptions = computed({
+  get: () => props.modelValue,
+  set: (val: FilterOption[]) => emit('update:modelValue', val),
+});
 
 // 高级成员选择（职位+多选）
 const advancedPickedMembers = ref<MemberInfo[]>([]);
@@ -55,6 +67,17 @@ function handleMemberSelectorClose(): void {
 
 // 控制筛选板是否启用的开关
 const filterEnabled = ref<boolean>(true);
+
+// 当前是否有 teamId（当无 teamId 时，除“筛选项目”外其余控件应被禁用）
+const teamAvailable = computed(() => !!props.teamId);
+
+// 是否可以执行确认查询：存在筛选项且面板启用，且 (有 team 或 包含 project 条件)
+const canConfirm = computed(() => {
+  if (!filterEnabled.value) return false;
+  if (!filterOptions.value.length) return false;
+  if (teamAvailable.value) return true;
+  return filterOptions.value.some(o => o.key === 'project');
+});
 
 // 项目集列表与加载状态
 const currentProjsets = ref<PoprakoProjsetInfo[]>([]);
@@ -213,8 +236,10 @@ function clearAllOptions() {
   selectedLabor.value = '';
   projsetPickedIds.value = [];
   advancedPickedMembers.value = [];
+  // 清空时立即通知父组件应用空筛选（触发列表刷新）
+  emit('applyFilter');
 }
-const emit = defineEmits<{ (e: 'confirmOptions', options: FilterOption[]): void }>();
+
 function onConfirm() {
   // protect: ignore confirm when no conditions
   if (!filterOptions.value.length) {
@@ -229,7 +254,8 @@ function onConfirm() {
     '[ProjectFilterBoard] confirmOptions ->',
     JSON.parse(JSON.stringify(filterOptions.value))
   );
-  emit('confirmOptions', filterOptions.value);
+  // 通知父组件应用当前筛选条件
+  emit('applyFilter');
 }
 </script>
 <template>
@@ -241,7 +267,7 @@ function onConfirm() {
 
     <!-- 第一行：项目名（模糊搜索） -->
     <div class="fb-row fb-row--tight">
-      <label class="fb-label">筛选项目</label>
+      <label class="fb-label">筛选项目名称</label>
       <input
         class="fb-input"
         placeholder="输入项目集号/序号/作者/标题 [Enter]"
@@ -258,7 +284,7 @@ function onConfirm() {
         <button
           class="fb-adv-btn"
           @click="openProjsetSelector"
-          :disabled="!props.teamId || projsetLoading"
+          :disabled="!filterEnabled || !props.teamId || projsetLoading"
         >
           选择项目集
         </button>
@@ -267,17 +293,28 @@ function onConfirm() {
       <div style="display: flex; align-items: center; gap: 8px; margin-left: 12px">
         <label class="fb-label fb-label--small">筛选成员</label>
         <div class="fb-member-role-btns">
-          <button type="button" class="fb-role-btn" @click="() => openMemberSelector('translator')">
+          <button
+            type="button"
+            class="fb-role-btn"
+            @click="() => openMemberSelector('translator')"
+            :disabled="!filterEnabled || !teamAvailable"
+          >
             翻译
           </button>
           <button
             type="button"
             class="fb-role-btn"
             @click="() => openMemberSelector('proofreader')"
+            :disabled="!filterEnabled || !teamAvailable"
           >
             校对
           </button>
-          <button type="button" class="fb-role-btn" @click="() => openMemberSelector('typesetter')">
+          <button
+            type="button"
+            class="fb-role-btn"
+            @click="() => openMemberSelector('typesetter')"
+            :disabled="!filterEnabled || !teamAvailable"
+          >
             嵌字
           </button>
         </div>
@@ -288,7 +325,13 @@ function onConfirm() {
     <div class="fb-status-block fb-row--tight">
       <label class="fb-label">筛选项目状态</label>
       <div v-if="!selectedLabor" class="fb-status-group">
-        <button v-for="s in statusList" :key="s" class="fb-status-btn" @click="selectedLabor = s">
+        <button
+          v-for="s in statusList"
+          :key="s"
+          class="fb-status-btn"
+          @click="selectedLabor = s"
+          :disabled="!filterEnabled || !teamAvailable"
+        >
           {{ s }}
         </button>
       </div>
@@ -298,10 +341,17 @@ function onConfirm() {
           :key="st"
           class="fb-status-btn"
           @click="onSelectStatus(st)"
+          :disabled="!filterEnabled || !teamAvailable"
         >
           {{ st }}
         </button>
-        <button class="fb-cancel-btn" @click="selectedLabor = ''">取消</button>
+        <button
+          class="fb-cancel-btn"
+          @click="selectedLabor = ''"
+          :disabled="!filterEnabled || !teamAvailable"
+        >
+          取消
+        </button>
       </div>
     </div>
 
@@ -320,12 +370,15 @@ function onConfirm() {
 
     <!-- 操作按钮 -->
     <div class="fb-actions">
-      <button v-if="filterOptions.length" class="fb-clear-btn" @click="clearAllOptions">
+      <button
+        v-if="filterOptions.length"
+        class="fb-clear-btn"
+        @click="clearAllOptions"
+        :disabled="!filterEnabled"
+      >
         清空条件
       </button>
-      <button class="fb-confirm-btn" @click="onConfirm" :disabled="!filterOptions.length">
-        确认查询
-      </button>
+      <button class="fb-confirm-btn" @click="onConfirm" :disabled="!canConfirm">确认查询</button>
     </div>
     <MemberSelector
       :show="memberSelectorOpen"
@@ -777,5 +830,38 @@ function onConfirm() {
 .fb-label--small {
   min-width: 0;
   width: auto;
+}
+
+/* Disabled state styling for interactive buttons */
+button:disabled,
+.fb-role-btn:disabled,
+.fb-status-btn:disabled,
+.fb-cancel-btn:disabled,
+.fb-clear-btn:disabled,
+.fb-confirm-btn:disabled,
+.fb-adv-btn:disabled,
+.selector-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+  filter: grayscale(20%);
+}
+
+/* Make disabled role/status buttons visually consistent */
+.fb-role-btn:disabled,
+.fb-status-btn:disabled {
+  background: #f3f5f9;
+  color: #9aa7b8;
+  border: 1px solid rgba(150, 180, 210, 0.2);
+}
+
+/* Ensure cancel/confirm/clear show disabled look when disabled */
+.fb-cancel-btn:disabled {
+  background: #f0f0f0;
+  color: #9aa7b8;
+}
+.fb-confirm-btn:disabled {
+  background: linear-gradient(135deg, #b7d8ff, #9abff0);
+  color: #ffffff;
 }
 </style>

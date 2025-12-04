@@ -3,12 +3,14 @@ import { ref, onMounted, computed } from 'vue';
 import type { ProjectSearchFilters } from '../ipc/project';
 import { useToastStore } from '../stores/toast';
 import { useUserStore } from '../stores/user';
+import { useRouterStore } from '../stores/router';
 import { getUserInfo } from '../ipc/user';
 import { getUserTeams } from '../ipc/team';
 import type { ResUser } from '../api/model/user';
 import type { ResTeam } from '../api/model/team';
 import type { ResMember } from '../api/model/member';
 import ProjectList from '../components/ProjectList.vue';
+import LoadingCircle from '../components/LoadingCircle.vue';
 // 使用共享的基本项目信息类型仅在本地过滤场景；当前不直接使用
 import ProjectFilterBoard from '../components/ProjectFilterBoard.vue';
 import ProjectCreatorView from '../views/ProjectCreatorView.vue';
@@ -70,6 +72,7 @@ const loadingProjects = ref<boolean>(false);
 
 // 依赖的 store
 const toastStore = useToastStore();
+const routerStore = useRouterStore();
 
 // 载入用户信息
 async function loadUser(): Promise<void> {
@@ -124,6 +127,11 @@ async function loadTeams(): Promise<void> {
 function selectUserProjects(): void {
   activeTeamId.value = null;
   // 留空：由 ProjectList 内部负责加载；这里仅标记 activeTeamId
+}
+
+// 重新登录：导航到登录视图
+function handleRelogin(): void {
+  routerStore.navigateToLogin();
 }
 
 // 选择某个汉化组：同时刷新当前用户在该组的成员信息（含 is_admin）
@@ -219,12 +227,15 @@ onMounted(() => {
 // ======================= 新过滤逻辑 =======================
 // 来自 ProjectFilterBoard 的选项结构
 // 筛选面板返回的单个筛选项
-interface FilterOption {
+export interface FilterOption {
   label: string;
   key: string;
   value: string;
 }
 const currentFilterOptions = ref<FilterOption[]>([]);
+
+// 控制是否应用筛选到 ProjectList（仅在确认查询或清空时触发）
+const shouldApplyFilters = ref(false);
 
 // 将 FilterOption[] 映射为后端可识别的 ProjectSearchFilters
 // 后端定义字段：
@@ -324,17 +335,11 @@ const currentSearchFilters = computed<PanelProjectSearchFilters | undefined>(() 
   return filters;
 });
 
-function handleConfirmOptions(options: FilterOption[]) {
-  currentFilterOptions.value = options;
-  // 由 ProjectList 根据 currentSearchFilters 调用 IPC 搜索，无需本地过滤
-  // diagnostic logs to help trace unexpected member_ids injection
-  // eslint-disable-next-line no-console
-  console.log('[PanelView] confirmOptions received:', JSON.parse(JSON.stringify(options)));
-  // eslint-disable-next-line no-console
-  console.log(
-    '[PanelView] computed currentSearchFilters:',
-    JSON.parse(JSON.stringify(currentSearchFilters.value))
-  );
+// 处理 applyFilter 事件：当用户点击确认或清空时，触发列表刷新
+function handleApplyFilter() {
+  // 切换 shouldApplyFilters 触发 watch，让 ProjectList 刷新
+  shouldApplyFilters.value = !shouldApplyFilters.value;
+  console.log('[PanelView] applyFilter triggered, shouldApplyFilters:', shouldApplyFilters.value);
 }
 
 // 最终传递给 ProjectList 的项目已由其内部管理；此处预留接口以备未来需要
@@ -427,6 +432,9 @@ function handleModifierBack(): void {
             <span class="team-item__name">缓存项目</span>
           </li>
         </ul>
+        <div class="teams-sidebar-footer">
+          <button class="relogin-button" @click="handleRelogin">重新登录</button>
+        </div>
       </aside>
 
       <!-- 主体区域 -->
@@ -451,7 +459,8 @@ function handleModifierBack(): void {
           <div class="filter-panel-wrapper">
             <ProjectFilterBoard
               :team-id="activeTeamId ?? undefined"
-              @confirmOptions="handleConfirmOptions"
+              v-model="currentFilterOptions"
+              @applyFilter="handleApplyFilter"
             />
           </div>
         </div>
@@ -461,6 +470,7 @@ function handleModifierBack(): void {
             <ProjectList
               :team-id="activeTeamId"
               :filters="currentSearchFilters"
+              :should-apply-filters="shouldApplyFilters"
               @open-detail="handleOpenDetail"
               @create="handleOpenCreator"
             />
@@ -580,12 +590,14 @@ function handleModifierBack(): void {
 .teams-sidebar {
   width: 200px; /* 减少宽度 */
   flex: 0 0 auto;
-  display: block;
+  display: flex;
+  flex-direction: column;
   background: #ffffff;
   border: 1px solid rgba(150, 180, 210, 0.35);
   border-radius: 16px;
   box-shadow: 0 8px 28px rgba(140, 180, 230, 0.18);
   overflow: hidden; /* 隐藏溢出部分 */
+  min-height: 0; /* allow children to flex/scroll properly */
 }
 
 /* 确保列表项在 flex 收缩时不会导致子元素溢出 */
@@ -600,6 +612,30 @@ function handleModifierBack(): void {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  flex: 1 1 auto; /* take remaining space so footer stays pinned to bottom */
+  overflow: auto;
+}
+
+/* 侧栏底部区域，用于操作按钮（如重新登录） */
+.teams-sidebar-footer {
+  padding: 10px;
+  border-top: 1px solid rgba(150, 180, 210, 0.08);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(250, 250, 250, 0.98));
+  display: flex;
+  justify-content: center;
+}
+.relogin-button {
+  background: transparent;
+  color: #2f6fb2; /* subtle blue */
+  border: 1px solid rgba(47, 111, 178, 0.16);
+  padding: 8px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+}
+.relogin-button:hover {
+  background: rgba(47, 111, 178, 0.06);
 }
 
 .team-item {

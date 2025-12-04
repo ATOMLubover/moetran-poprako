@@ -18,6 +18,7 @@ import { useRouterStore } from '../stores/router';
 import { useCacheStore } from '../stores/cache';
 import { getProjectTargets, getProjectFiles } from '../ipc/project';
 import LoadingCircle from '../components/LoadingCircle.vue';
+import FileUploader from '../components/FileUploader.vue';
 import {
   checkFileCache,
   downloadProjectFiles,
@@ -120,6 +121,9 @@ const cardRef = ref<HTMLElement | null>(null);
 const hasCachedFiles = ref(false);
 const isDownloading = ref(false);
 const isDeleting = ref(false);
+
+// 文件上传对话框状态
+const showUploader = ref(false);
 
 // 是否为项目管理员（后续可根据真实用户身份判断）
 // (已由 'principal' 角色控制关键编辑权限)
@@ -399,6 +403,17 @@ async function handleDeleteCache(): Promise<void> {
   } finally {
     isDeleting.value = false;
   }
+}
+
+// 处理上传完成事件
+function handleUploadComplete(successCount: number, failedCount: number): void {
+  if (failedCount === 0) {
+    toastStore.show(`成功上传 ${successCount} 个文件`);
+  } else {
+    toastStore.show(`上传完成：成功 ${successCount}，失败 ${failedCount}`, 'error');
+  }
+  // 可选：刷新项目文件列表
+  loadProject();
 }
 
 // 加载项目详情与标记分布
@@ -729,8 +744,24 @@ onBeforeUnmount(() => {
         >
           {{ isDeleting ? '删除中...' : '删除缓存' }}
         </button>
+        <button
+          v-if="isMeInProject"
+          type="button"
+          class="pd-btn pd-btn--secondary"
+          @click="showUploader = true"
+        >
+          上传图片
+        </button>
       </div>
     </div>
+
+    <FileUploader
+      :visible="showUploader"
+      :project-id="props.projectId"
+      :project-name="props.title"
+      @close="showUploader = false"
+      @upload-complete="handleUploadComplete"
+    />
 
     <div class="pd-card" ref="cardRef">
       <div class="pd-card__inner">

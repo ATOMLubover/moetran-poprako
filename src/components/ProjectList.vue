@@ -47,10 +47,12 @@ const emit = defineEmits<{
 }>();
 
 const props = defineProps<{
-  // 当前激活的汉化组 id，null/undefined 表示“仅看我自己的项目”
+  // 当前激活的汉化组 id，null/undefined 表示"仅看我自己的项目"
   teamId?: string | null;
   // 来自 PanelView 的筛选条件；空对象或 undefined 表示不启用筛选
   filters?: ProjectSearchFilters | undefined;
+  // 当此布尔值切换时，触发列表刷新（用于确认/清空筛选）
+  shouldApplyFilters?: boolean;
 }>();
 
 const userStore = useUserStore();
@@ -396,6 +398,17 @@ watch(
     });
   },
   { deep: true }
+);
+
+// 当 shouldApplyFilters 切换时，触发刷新（确认/清空筛选）
+watch(
+  () => props.shouldApplyFilters,
+  () => {
+    currentPage.value = 1;
+    requestAnimationFrame(() => {
+      void fetchAndClamp();
+    });
+  }
 );
 
 // 当 teamId 变化时也需重新拉取

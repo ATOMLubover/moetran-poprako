@@ -33,7 +33,7 @@ pub async fn sync_user(payload: ReqSync) -> Result<ResSync, String> {
 
     let mut defer = WarnDefer::new("poprako.sync.request");
 
-    let reply: PoprakoEnvelope<ResSync> = poprako_post_opt("user/sync", Some(payload))
+    let reply: PoprakoEnvelope<ResSync> = poprako_post_opt("sync", Some(payload))
         .await
         .map_err(|err| format!("Failed to sync user to Poprako: {}", err))?;
 
