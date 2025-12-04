@@ -14,10 +14,14 @@ import ProjectFilterBoard from '../components/ProjectFilterBoard.vue';
 import ProjectCreatorView from '../views/ProjectCreatorView.vue';
 import ProjectModifierView from '../views/ProjectModifierView.vue';
 import ProjectDetailView from '../views/ProjectDetailView.vue';
+import CachedProjectsModal from '../components/CachedProjectsModal.vue';
 
 // 用户信息 (local ref kept for template compatibility)
 const user = ref<ResUser | null>(null);
 const userStore = useUserStore();
+
+// 缓存项目管理
+const showCachedModal = ref(false);
 
 // 汉化组列表
 const teams = ref<ResTeam[]>([]);
@@ -418,6 +422,10 @@ function handleModifierBack(): void {
             <span class="team-item__avatar">…</span>
             <span class="team-item__name">载入汉化组...</span>
           </li>
+          <li class="team-item team-item--cache" @click="showCachedModal = true">
+            <span class="team-item__avatar cache-avatar">✔</span>
+            <span class="team-item__name">缓存项目</span>
+          </li>
         </ul>
       </aside>
 
@@ -515,6 +523,9 @@ function handleModifierBack(): void {
           />
         </div>
       </div>
+
+      <!-- 缓存项目管理悬浮窗 -->
+      <CachedProjectsModal v-if="showCachedModal" @close="showCachedModal = false" />
     </div>
   </div>
 </template>
@@ -677,6 +688,12 @@ function handleModifierBack(): void {
 .team-item--empty,
 .team-item--loading {
   opacity: 0.8;
+}
+
+.team-item--cache {
+  border-top: 1px solid rgba(150, 180, 210, 0.5);
+  padding-top: 10px;
+  margin-bottom: 8px;
 }
 
 .projects-main {

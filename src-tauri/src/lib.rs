@@ -1,6 +1,7 @@
 pub mod auth;
 mod defer;
 mod http;
+mod image_cache; // 图片缓存管理
 mod member; // 成员搜索等相关
 mod project; // 项目与项目集相关
 mod result_ex;
@@ -86,6 +87,7 @@ pub fn run() {
             crate::project::get_project_files,
             crate::project::get_page_sources,
             crate::project::create_source,
+            crate::project::update_source,
             crate::project::delete_source,
             crate::project::submit_translation,
             crate::project::update_translation,
@@ -102,6 +104,13 @@ pub fn run() {
             // member search
             crate::member::get_members,
             crate::member::get_member_info,
+            // image cache
+            crate::image_cache::check_file_cache,
+            crate::image_cache::download_project_files,
+            crate::image_cache::delete_file_cache,
+            crate::image_cache::load_cached_file,
+            crate::image_cache::get_all_cached_projects_list,
+            crate::image_cache::get_cached_project_info,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running tauri application");

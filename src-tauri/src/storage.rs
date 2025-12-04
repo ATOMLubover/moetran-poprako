@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::OnceLock;
 
+pub mod cache_metadata;
 pub mod token;
 
 pub struct LocalStorage {
@@ -29,6 +30,7 @@ impl LocalStorage {
             .map_err(|err| format!("Failed to connect to database: {}", err))?;
 
         token::migrate_token_table(&pool).await?;
+        cache_metadata::migrate_cache_metadata_table(&pool).await?;
 
         LOCAL_STORAGE
             .set(Self { pool })

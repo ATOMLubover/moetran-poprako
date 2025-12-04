@@ -9,7 +9,9 @@ import {
   proxyImage,
   submitTranslation,
   updateTranslation,
+  updateSource,
 } from '../ipc/project';
+import { loadCachedFile } from '../ipc/image_cache';
 import type { PageTranslation } from '../ipc/project';
 import LoadingCircle from '../components/LoadingCircle.vue';
 
@@ -129,6 +131,23 @@ async function fetchImageForFile(projectId: string, file: FileInfo): Promise<str
 
   if (!pending) {
     pending = (async () => {
+      // 优先尝试从本地缓存加载
+      try {
+        const fileIndex = props.files.findIndex(f => f.id === file.id);
+        if (fileIndex !== -1) {
+          const cachedData = await loadCachedFile(projectId, fileIndex);
+          const url = createObjectUrlFromBase64(cachedData.b64, cachedData.content_type);
+
+          cacheStore.storeImageCacheEntry(key, url);
+
+          return url;
+        }
+      } catch (err) {
+        // 本地缓存不存在或读取失败，回退到网络加载
+        console.debug('本地缓存不可用，使用网络加载', err);
+      }
+
+      // 回退到网络代理
       const reply = await proxyImage(file.url);
 
       const url = createObjectUrlFromBase64(reply.b64, reply.content_type);
@@ -2031,15 +2050,29 @@ function handleGlobalShortcuts(event: KeyboardEvent): void {
   }
 }
 
-// 切换标记类别
 // 切换标记类别（只读模式下禁止）
-function toggleSourceCategory(): void {
+async function toggleSourceCategory(): Promise<void> {
   if (!canEdit.value) return;
   if (!selectedSource.value) {
     return;
   }
 
-  selectedSource.value.category = selectedSource.value.category === 'inside' ? 'outside' : 'inside';
+  const oldCategory = selectedSource.value.category;
+  const newCategory = oldCategory === 'inside' ? 'outside' : 'inside';
+  const newPositionType = newCategory === 'inside' ? 1 : 2;
+
+  try {
+    await updateSource({
+      sourceId: selectedSource.value.id,
+      positionType: newPositionType,
+    });
+
+    selectedSource.value.category = newCategory;
+    showToast(`已切换为${newCategory === 'inside' ? '框内' : '框外'}标记`);
+  } catch (error) {
+    console.error('切换标记类别失败', error);
+    showToast('切换标记类别失败', 'error');
+  }
 }
 
 // 切换校对状态

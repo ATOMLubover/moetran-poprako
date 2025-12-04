@@ -1117,6 +1117,47 @@ pub async fn create_source(payload: CreateSourceReq) -> Result<MoetranSource, St
     Ok(reply)
 }
 
+// 更新 source（框内/框外切换）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UpdateSourceReq {
+    pub source_id: String,
+    pub position_type: i32,
+}
+
+#[tauri::command]
+pub async fn update_source(payload: UpdateSourceReq) -> Result<MoetranSource, String> {
+    tracing::info!(
+        source_id = %payload.source_id,
+        position_type = payload.position_type,
+        "moetran.source.update.start"
+    );
+
+    let mut defer = WarnDefer::new("moetran.source.update");
+
+    let path = format!("sources/{}", payload.source_id);
+
+    let mut body = serde_json::Map::new();
+    body.insert("id".to_string(), serde_json::Value::String(payload.source_id.clone()));
+    body.insert("position_type".to_string(), serde_json::Value::from(payload.position_type));
+
+    let reply = moetran_put_opt::<serde_json::Value, MoetranSource>(
+        &path,
+        Some(serde_json::Value::Object(body)),
+    )
+    .await
+    .map_err(|err| format!("更新 source 失败: {}", err))?;
+
+    tracing::info!(
+        source_id = %reply.id,
+        position_type = reply.position_type,
+        "moetran.source.update.ok"
+    );
+
+    defer.success();
+
+    Ok(reply)
+}
+
 // 删除 source
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DeleteSourceReq {

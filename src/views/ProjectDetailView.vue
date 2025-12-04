@@ -17,6 +17,13 @@ import { useUserStore } from '../stores/user';
 import { useRouterStore } from '../stores/router';
 import { useCacheStore } from '../stores/cache';
 import { getProjectTargets, getProjectFiles } from '../ipc/project';
+import LoadingCircle from '../components/LoadingCircle.vue';
+import {
+  checkFileCache,
+  downloadProjectFiles,
+  deleteFileCache,
+  type FileDownloadInfo,
+} from '../ipc/image_cache';
 
 // TODO: 后续接口可能扩展字段（如权限、进度来源），保持结构可扩展
 interface PageMarkerData {
@@ -105,8 +112,14 @@ const primaryFiles = ref<FileInfo[]>([]);
 
 // 详细标记数据加载状态
 const loadingMarkers = ref(false);
+const loadingMarkersFailed = ref(false);
 // 卡片容器引用（用于后续可能的动态高度微调）
 const cardRef = ref<HTMLElement | null>(null);
+
+// 图片缓存相关状态
+const hasCachedFiles = ref(false);
+const isDownloading = ref(false);
+const isDeleting = ref(false);
 
 // 是否为项目管理员（后续可根据真实用户身份判断）
 // (已由 'principal' 角色控制关键编辑权限)
@@ -332,6 +345,62 @@ function mapStatusNumberToProjectStatus(n: number | null): ProjectStatus {
   return 'pending';
 }
 
+// 检查项目的图片缓存是否存在
+async function checkCache(): Promise<void> {
+  try {
+    hasCachedFiles.value = await checkFileCache(props.projectId);
+  } catch (err) {
+    console.error('[ProjectDetail] checkFileCache failed', err);
+    hasCachedFiles.value = false;
+  }
+}
+
+// 下载项目的所有图片到本地缓存
+async function handleDownloadCache(): Promise<void> {
+  if (isDownloading.value || !primaryFiles.value.length) return;
+
+  isDownloading.value = true;
+
+  try {
+    const files: FileDownloadInfo[] = primaryFiles.value.map(f => ({ url: f.url }));
+
+    // 异步调用，不阻塞 UI
+    downloadProjectFiles(props.projectId, props.title, files)
+      .then(() => {
+        toastStore.show('图片缓存下载完成');
+        hasCachedFiles.value = true;
+      })
+      .catch(err => {
+        toastStore.show(`项目 "${props.title}" 图片缓存下载失败: ${err}`, 'error');
+      })
+      .finally(() => {
+        isDownloading.value = false;
+      });
+
+    toastStore.show('开始下载图片缓存...');
+  } catch (err) {
+    isDownloading.value = false;
+    toastStore.show('启动下载失败', 'error');
+  }
+}
+
+// 删除项目的图片缓存
+async function handleDeleteCache(): Promise<void> {
+  if (isDeleting.value) return;
+
+  isDeleting.value = true;
+
+  try {
+    await deleteFileCache(props.projectId);
+    hasCachedFiles.value = false;
+    toastStore.show('图片缓存已删除');
+  } catch (err) {
+    toastStore.show('删除图片缓存失败', 'error');
+  } finally {
+    isDeleting.value = false;
+  }
+}
+
 // 加载项目详情与标记分布
 async function loadProject(): Promise<void> {
   try {
@@ -366,6 +435,22 @@ async function loadProject(): Promise<void> {
     const cachedFiles = cacheStore.promoteProjectDetailCacheEntry(props.projectId);
     if (cachedFiles) {
       files = cachedFiles;
+      // 使用缓存数据时，仍需设置 targetId
+      // 如果是成员，尝试获取 targets 来设置 primaryTargetId
+      if (isMeInProject.value) {
+        try {
+          const targets = await getProjectTargets(props.projectId);
+          if (targets && targets.length > 0) {
+            primaryTargetId.value = targets[0].id;
+          }
+        } catch (e) {
+          console.warn('[ProjectDetail] Failed to get targets for cached files', e);
+          // 即使获取 targets 失败，也继续使用缓存的 files
+        }
+      } else {
+        // 非成员使用空字符串作为占位
+        primaryTargetId.value = '';
+      }
     } else {
       // Determine whether to fetch targets (only if current user is a member)
       if (isMeInProject.value) {
@@ -383,6 +468,7 @@ async function loadProject(): Promise<void> {
             error: e,
           });
           loadingMarkers.value = false;
+          loadingMarkersFailed.value = true;
           toastStore.show('加载项目 targets 失败: ' + (e?.toString?.() ?? String(e)), 'error');
           return;
         }
@@ -434,6 +520,7 @@ async function loadProject(): Promise<void> {
             error: e,
           });
           loadingMarkers.value = false;
+          loadingMarkersFailed.value = true;
           toastStore.show('加载项目 files 失败: ' + (e?.toString?.() ?? String(e)), 'error');
           return;
         }
@@ -454,6 +541,7 @@ async function loadProject(): Promise<void> {
             error: e,
           });
           loadingMarkers.value = false;
+          loadingMarkersFailed.value = true;
           toastStore.show('加载项目 files 失败: ' + (e?.toString?.() ?? String(e)), 'error');
           return;
         }
@@ -485,6 +573,7 @@ async function loadProject(): Promise<void> {
     loadingMarkers.value = false;
   } catch (err) {
     loadingMarkers.value = false;
+    loadingMarkersFailed.value = true;
     toastStore.show('加载项目详情失败', 'error');
   }
 }
@@ -538,6 +627,7 @@ function handleClose(): void {
 
 onMounted(() => {
   loadProject();
+  checkCache();
   window.addEventListener('resize', handleResize);
 });
 
@@ -550,8 +640,11 @@ watch(
     primaryTargetId.value = null;
     primaryFiles.value = [];
     loadingMarkers.value = false;
+    loadingMarkersFailed.value = false;
+    hasCachedFiles.value = false;
     // 重新加载新的 project 数据
     loadProject();
+    checkCache();
   }
 );
 
@@ -617,6 +710,24 @@ onBeforeUnmount(() => {
         </button>
         <button type="button" class="pd-btn pd-btn--secondary" @click="openTranslator(false)">
           阅读
+        </button>
+        <button
+          v-if="!hasCachedFiles"
+          type="button"
+          class="pd-btn pd-btn--secondary"
+          @click="handleDownloadCache"
+          :disabled="isDownloading || primaryFiles.length === 0"
+        >
+          {{ isDownloading ? '下载中...' : '缓存图片' }}
+        </button>
+        <button
+          v-if="hasCachedFiles"
+          type="button"
+          class="pd-btn pd-btn--danger"
+          @click="handleDeleteCache"
+          :disabled="isDeleting"
+        >
+          {{ isDeleting ? '删除中...' : '删除缓存' }}
         </button>
       </div>
     </div>
@@ -717,12 +828,12 @@ onBeforeUnmount(() => {
 
     <div class="pd-chart-block">
       <h2 class="pd-subtitle">每页标记分布</h2>
-      <div
-        class="pd-chart-canvas"
-        :class="{ 'pd-chart-canvas--loading': loadingMarkers }"
-        :style="{ height: chartDynamicHeight + 'px' }"
-      >
-        <Line v-if="chartData.labels.length > 0" :data="chartData" :options="chartOptions" />
+      <div class="pd-chart-canvas" :style="{ height: chartDynamicHeight + 'px' }">
+        <div v-if="loadingMarkers" class="pd-chart-loading">
+          <LoadingCircle />
+        </div>
+        <div v-else-if="loadingMarkersFailed" class="pd-chart-empty pd-chart-error">加载失败</div>
+        <Line v-else-if="chartData.labels.length > 0" :data="chartData" :options="chartOptions" />
         <div v-else class="pd-chart-empty">暂无标记数据</div>
       </div>
     </div>
@@ -876,6 +987,11 @@ onBeforeUnmount(() => {
 .pd-btn--secondary {
   border-color: rgba(140, 180, 210, 0.55);
   color: #32526d;
+}
+.pd-btn--danger {
+  border-color: rgba(210, 120, 120, 0.7);
+  color: #823c3c;
+  background: #fff3f3;
 }
 .pd-btn:hover {
   box-shadow: 0 8px 24px rgba(136, 190, 247, 0.28);
@@ -1194,13 +1310,24 @@ onBeforeUnmount(() => {
   box-shadow: 0 12px 36px rgba(140, 180, 230, 0.18);
   box-sizing: border-box;
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.pd-chart-canvas--loading {
-  opacity: 0.65;
+.pd-chart-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
 }
 .pd-chart-empty {
   font-size: 13px;
   color: #6b859d;
+}
+.pd-chart-error {
+  color: #c62828;
+  font-weight: 500;
 }
 
 @media (max-width: 1100px) {

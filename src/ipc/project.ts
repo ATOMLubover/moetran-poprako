@@ -600,6 +600,71 @@ export async function createSource(payload: CreateSourcePayload): Promise<PageSo
   }
 }
 
+export interface UpdateSourcePayload {
+  sourceId: string;
+  positionType: number;
+}
+
+export async function updateSource(payload: UpdateSourcePayload): Promise<PageSource> {
+  try {
+    console.debug('[ipc] invoke update_source', payload);
+
+    const raw = await invoke<{
+      id: string;
+      x: number;
+      y: number;
+      position_type: number;
+      my_translation?: {
+        id: string;
+        content: string;
+        proofread_content?: string | null;
+        selected: boolean;
+      };
+      translations?: {
+        id: string;
+        content: string;
+        proofread_content?: string | null;
+        selected: boolean;
+      }[];
+    }>('update_source', {
+      payload: {
+        source_id: payload.sourceId,
+        position_type: payload.positionType,
+      },
+    });
+
+    console.debug('[ipc] update_source result', { payload, raw });
+
+    return {
+      id: raw.id,
+      x: raw.x,
+      y: raw.y,
+      positionType: raw.position_type,
+      myTranslation: raw.my_translation
+        ? {
+            id: raw.my_translation.id,
+            content: raw.my_translation.content,
+            proofreadContent:
+              typeof raw.my_translation.proofread_content === 'string'
+                ? raw.my_translation.proofread_content
+                : undefined,
+            selected: raw.my_translation.selected,
+          }
+        : undefined,
+      translations: (raw.translations || []).map(item => ({
+        id: item.id,
+        content: item.content,
+        proofreadContent:
+          typeof item.proofread_content === 'string' ? item.proofread_content : undefined,
+        selected: item.selected,
+      })),
+    };
+  } catch (err) {
+    console.error('[ipc] updateSource failed', { payload, err });
+    throw err;
+  }
+}
+
 export async function deleteSource(sourceId: string): Promise<void> {
   try {
     console.debug('[ipc] invoke delete_source', { sourceId });

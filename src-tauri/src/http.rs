@@ -518,6 +518,46 @@ where
     ApiClient::http_get(&client, url, headers).await
 }
 
+pub async fn moetran_get_raw(url: &str) -> Result<Vec<u8>, String> {
+    let client = MOETRAN_API_CLIENT.with(|lazy| {
+        let api_client = lazy.deref();
+        api_client.client.clone()
+    });
+
+    let mut headers_map = reqwest::header::HeaderMap::new();
+
+    if let Some(token) = crate::token::cached_moetran_token() {
+        match HeaderValue::from_str(&format!("Bearer {}", token)) {
+            Ok(header_value) => {
+                headers_map.insert(header::AUTHORIZATION, header_value);
+                debug!("Authorization header added for moetran_get_raw");
+            }
+            Err(err) => {
+                warn!("Invalid token header value: {}", err);
+            }
+        }
+    }
+
+    let resp = client
+        .get(url)
+        .headers(headers_map)
+        .send()
+        .await
+        .map_err(|err| format!("request send error: {}", err))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        return Err(format!("http error: status {}", status));
+    }
+
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|err| format!("read response bytes error: {}", err))?;
+
+    Ok(bytes.to_vec())
+}
+
 pub async fn poprako_post_opt<B, R>(path: &str, body: Option<B>) -> Result<R, String>
 where
     B: Serialize,
