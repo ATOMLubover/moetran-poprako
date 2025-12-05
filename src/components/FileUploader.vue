@@ -108,34 +108,45 @@ async function processUploadQueue(
   files: Array<{ fileName: string; filePath: string; file: File }>
 ): Promise<void> {
   const CONCURRENCY = 5;
-  const tasks = uploadGroup.value?.tasks || [];
 
-  const uploaders: Array<Promise<void>> = [];
+  // 使用索引队列和 worker 池实现稳定的并发控制
+  let idx = 0;
 
-  for (let i = 0; i < files.length; i++) {
-    const fileData = files[i];
-    const task = tasks.find(t => t.fileName === fileData.fileName && t.status === 'pending');
-    if (!task) continue;
+  // 启动 worker 池
+  const workers: Promise<void>[] = [];
 
-    // 等待并发槽位
-    if (uploaders.length >= CONCURRENCY) {
-      await Promise.race(uploaders);
-      uploaders.splice(
-        uploaders.findIndex(p => p === undefined),
-        1
-      );
-    }
+  for (let w = 0; w < CONCURRENCY; w++) {
+    const worker = (async () => {
+      while (true) {
+        // 取下一个要上传的文件
+        const i = idx++;
+        if (i >= files.length) return;
 
-    const uploadPromise = uploadSingleFile(task.id, fileData.file).finally(() => {
-      const idx = uploaders.indexOf(uploadPromise);
-      if (idx !== -1) uploaders.splice(idx, 1);
-    });
+        const fileData = files[i];
 
-    uploaders.push(uploadPromise);
+        // 精确匹配任务：优先 match filePath + fileName，避免同名冲突
+        const task = uploadGroup.value?.tasks.find(
+          t =>
+            t.filePath === fileData.filePath &&
+            t.fileName === fileData.fileName &&
+            t.status === 'pending'
+        );
+
+        if (!task) {
+          // 若没找到 pending 任务，跳过该文件
+          continue;
+        }
+
+        // 执行单文件上传（内部会更新状态并维护 active 计数）
+        await uploadSingleFile(task.id, fileData.file);
+      }
+    })();
+
+    workers.push(worker);
   }
 
-  // 等待所有上传完成
-  await Promise.all(uploaders);
+  // 等待所有 worker 完成
+  await Promise.all(workers);
 }
 
 // 上传单个文件
@@ -214,7 +225,7 @@ function handleClose(): void {
   <div v-if="visible" class="uploader-overlay" @click.self="handleClose">
     <div class="uploader-dialog">
       <div class="dialog-header">
-        <h3>上传漫画页</h3>
+        <h3>上传漫画文件</h3>
         <button class="close-btn" @click="handleClose">✕</button>
       </div>
 
@@ -225,10 +236,10 @@ function handleClose(): void {
         </div>
 
         <div class="upload-section">
+          <span class="hint">支持 jpg/jpeg/png/bmp 格式</span>
           <button class="select-btn" @click="handleSelectFiles" :disabled="isUploading">
             选择文件
           </button>
-          <span class="hint">支持 jpg/jpeg/png/bmp 格式，最多5个文件同时上传</span>
         </div>
 
         <input
@@ -369,33 +380,44 @@ function handleClose(): void {
 .upload-section {
   display: flex;
   align-items: center;
+  justify-content: space-between; /* hint left, button right */
   gap: 12px;
   margin-bottom: 20px;
 }
 
 .select-btn {
-  padding: 10px 20px;
-  background: #2f6fb2;
-  color: white;
-  border: none;
-  border-radius: 4px;
+  border: 2px solid rgba(124, 205, 182, 0.25);
+  border-radius: 12px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
+  background: linear-gradient(135deg, rgba(124, 205, 182, 0.14), rgba(146, 214, 222, 0.06));
+  color: #114f45;
+  box-shadow: none;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.12s ease,
+    background 0.12s ease;
 }
 
 .select-btn:hover:not(:disabled) {
-  background: #255a8f;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(124, 205, 182, 0.08);
+  background: #eafaf6;
 }
 
 .select-btn:disabled {
-  background: #ccc;
+  opacity: 0.6;
   cursor: not-allowed;
+  box-shadow: none;
+  background: #e6f3ef;
+  color: #8aa79a;
 }
 
 .hint {
   font-size: 12px;
-  color: #999;
+  color: #666; /* slightly darker to match detail buttons */
 }
 
 .task-list {

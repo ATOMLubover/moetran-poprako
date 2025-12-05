@@ -483,7 +483,8 @@ pub async fn get_project_targets(
 
     let mut query = std::collections::HashMap::new();
     query.insert("page", "1".to_string());
-    query.insert("limit", "100000".to_string());
+    // 默认每页请求较小的数量，避免一次性拉取过多导致超时或 OOM
+    query.insert("limit", "5".to_string());
     query.insert("word", "".to_string());
     // 仅请求尨译项目（status=0）
     query.insert("status", "0".to_string());

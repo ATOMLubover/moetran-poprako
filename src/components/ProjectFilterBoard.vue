@@ -270,7 +270,7 @@ function onConfirm() {
       <label class="fb-label">筛选项目名称</label>
       <input
         class="fb-input"
-        placeholder="输入项目集号/序号/作者/标题 [Enter]"
+        placeholder="输入项目集号/序号/作者/标题 [Enter 确认]"
         v-model="projectInput"
         @keyup.enter="onEnterProject"
         :disabled="!filterEnabled"

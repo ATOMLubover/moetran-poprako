@@ -314,35 +314,33 @@ async function fetchAndClamp(): Promise<void> {
 
         const scroll = container.closest('.projects-scroll') as HTMLElement | null;
         const host = scroll ?? container;
-        const hostRect = host.getBoundingClientRect();
         const items = host.querySelectorAll('.project-list__item');
         if (!items.length) {
           console.log('[ProjectList] fetchAndClamp: no items rendered');
           return;
         }
 
-        const firstItemRect = (items[0] as HTMLElement).getBoundingClientRect();
-        const itemHeight = firstItemRect.height;
-        const verticalGap = 16; // 来自 .project-list__items 的 gap
+        // 使用每个项的下边缘 + 10px 与 window.innerHeight 比较，若超出则停止，确保裁剪更加直观可靠
+        let itemCount = 0;
 
-        // 使用窗口高度估算剩余空间，避免列表撑出滚动条
-        const totalItemBlock = itemHeight + verticalGap;
-        const safePadding = 24;
-        const availableHeight = Math.max(120, window.innerHeight - hostRect.top - safePadding);
-        const maxItems = Math.max(1, Math.floor(availableHeight / totalItemBlock));
-        const adjustedMaxItems = Math.max(1, maxItems - 1);
+        for (let i = 0; i < items.length; i++) {
+          const itemRect = (items[i] as HTMLElement).getBoundingClientRect();
+          const bottomWithPadding = itemRect.bottom + 20; // 下边缘 + 10px
+
+          // 如果下一项的下边缘超出窗口高度，则不包括该项
+          if (bottomWithPadding > window.innerHeight) {
+            break;
+          }
+
+          itemCount++;
+        }
+
+        // 至少保留一项
+        const adjustedMaxItems = Math.max(1, itemCount);
 
         console.log(
-          '[ProjectList] clamp: top=',
-          hostRect.top,
-          'availHeight=',
-          availableHeight,
-          'itemHeight=',
-          itemHeight,
-          'gap=',
-          verticalGap,
-          'maxItems=',
-          maxItems,
+          '[ProjectList] clamp by bottom: itemCount=',
+          itemCount,
           'adjustedMaxItems=',
           adjustedMaxItems
         );
@@ -719,23 +717,22 @@ onBeforeUnmount(() => {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 10px; /* 更紧凑的间距 */
 }
 
 .project-list__item {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 16px 18px 14px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.96);
-  border: 1px solid rgba(210, 220, 235, 0.7);
-  box-shadow: 0 10px 20px rgba(132, 166, 212, 0.16);
+  display: grid;
+  grid-template-columns: 1fr auto; /* 左侧内容自适应，右侧动作固定 */
+  gap: 12px; /* 减少左右内容间距 */
+  padding: 10px 12px; /* 缩小内边距以降低高度 */
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(210, 220, 235, 0.65);
+  box-shadow: 0 6px 12px rgba(132, 166, 212, 0.08);
   transition:
-    box-shadow 0.18s ease,
-    transform 0.18s ease,
-    border-color 0.18s ease;
+    box-shadow 0.14s ease,
+    transform 0.14s ease,
+    border-color 0.14s ease;
 }
 
 .project-list__item--poprako {
@@ -749,12 +746,25 @@ onBeforeUnmount(() => {
   transform: translateY(-2px);
 }
 
+.project-list__item-main {
+  display: flex;
+  flex-direction: column;
+}
+
 .project-list__item-title {
-  margin: 0 0 12px 0;
-  font-size: 15px;
+  margin: 0;
+  font-size: 14px; /* 稍微小一点 */
   font-weight: 600;
   color: #294061;
-  letter-spacing: 0.4px;
+  letter-spacing: 0.3px;
+  /* 强制单行显示标题，与右侧动作在同一行 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.project-list__chips {
+  margin-top: 8px; /* 确保 chips 在标题下方单独一行 */
 }
 
 .project-list__tag-poprako {
@@ -773,19 +783,19 @@ onBeforeUnmount(() => {
 .project-list__chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 10px;
+  gap: 6px 8px;
   align-items: center;
 }
 
 .project-list__chip {
-  padding: 4px 12px 5px;
+  padding: 3px 8px 4px; /* 更紧凑的 chip */
   border-radius: 999px;
-  font-size: 12px;
-  letter-spacing: 0.3px;
+  font-size: 11px;
+  letter-spacing: 0.2px;
   font-weight: 600;
   line-height: 1;
   border: 1px solid transparent;
-  background: rgba(240, 246, 255, 0.85);
+  background: rgba(240, 246, 255, 0.9);
   color: #2a4f7a;
   user-select: none;
 }
