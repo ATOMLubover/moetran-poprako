@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { ResProjectEnriched } from '../api/model/project';
 import type { ResMember } from '../api/model/member';
 import type { ResTeam } from '../api/model/team';
+import type { ResAssignment } from '../api/model/assignment';
 
 // Private raw (snake_case) interfaces from Rust/PopRaKo responses
 interface RawPoprakoMember {
@@ -48,7 +49,7 @@ function mapRawTeam(t: any): ResTeam {
 
 function mapRawMember(m: RawPoprakoMember): ResMember {
   return {
-    userId: m.user_id ?? (m as any).userId ?? '',
+    userId: m.user_id ?? '',
     memberId: m.member_id,
     username: m.username,
     isAdmin: !!m.is_admin,
@@ -326,6 +327,31 @@ export async function getTeamPoprakoProjsets(teamId: string): Promise<PoprakoPro
   }));
 }
 
+// 创建 PopRaKo 项目集
+export interface CreatePoprakoProjsetPayload {
+  projsetName: string;
+  projsetDescription?: string;
+  teamId: string;
+  mtrToken: string;
+}
+
+export async function createPoprakoProjset(
+  payload: CreatePoprakoProjsetPayload
+): Promise<{ projsetSerial: number }> {
+  const raw = await invoke<{ projset_serial: number }>('create_poprako_projset', {
+    payload: {
+      projset_name: payload.projsetName,
+      projset_description: payload.projsetDescription ?? null,
+      team_id: payload.teamId,
+      mtr_token: payload.mtrToken,
+    },
+  });
+
+  return {
+    projsetSerial: raw.projset_serial,
+  };
+}
+
 // 指派成员到 PopRaKo 项目
 export interface AssignMemberPayload {
   projId: string;
@@ -377,6 +403,41 @@ export async function publishProj(payload: PublishProjPayload): Promise<void> {
       proj_id: payload.projId,
     },
   });
+}
+
+// 获取 assignments（派活列表）
+interface RawResAssignment {
+  proj_id: string;
+  proj_name: string;
+  projset_serial: number;
+  projset_index: number;
+  member_id: string;
+  username: string;
+  is_translator: boolean;
+  is_proofreader: boolean;
+  is_typesetter: boolean;
+  updated_at: number;
+}
+
+export async function getAssignments(timeStart?: number): Promise<ResAssignment[]> {
+  const raw = await invoke<RawResAssignment[]>('get_assignments', {
+    payload: {
+      time_start: timeStart ?? 0,
+    },
+  });
+
+  return (raw || []).map(r => ({
+    projId: r.proj_id,
+    projName: r.proj_name,
+    projsetSerial: r.projset_serial,
+    projsetIndex: r.projset_index,
+    memberId: r.member_id,
+    username: r.username,
+    isTranslator: r.is_translator,
+    isProofreader: r.is_proofreader,
+    isTypesetter: r.is_typesetter,
+    updatedAt: r.updated_at,
+  }));
 }
 
 // ========== Moetran 项目 targets / files（供 ProjectDetail 使用） ==========

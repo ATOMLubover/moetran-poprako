@@ -1546,3 +1546,82 @@ pub async fn upload_project_file(payload: UploadProjectFileReq) -> Result<(), St
 
     Ok(())
 }
+
+// ==================== Assignment 相关 ====================
+
+// PopRaKo Assignment DTO（对应 API 文档中的 ProjAssignInfo）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PoprakoAssignment {
+    pub proj_id: String,
+    pub proj_name: String,
+    pub projset_serial: u32,
+    pub projset_index: u32,
+    pub member_id: String,
+    pub username: String,
+    pub is_translator: bool,
+    pub is_proofreader: bool,
+    pub is_typesetter: bool,
+    pub updated_at: i64, // Unix timestamp (seconds)
+}
+
+// 获取 assignments 请求
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GetAssignmentsReq {
+    #[serde(default)]
+    pub time_start: i64,
+}
+
+// 获取 assignments 列表（调用 PopRaKo GET /assigns）
+#[tauri::command]
+pub async fn get_assignments(payload: GetAssignmentsReq) -> Result<Vec<PoprakoAssignment>, String> {
+    tracing::info!(
+        time_start = payload.time_start,
+        "poprako.assigns.list.request.start"
+    );
+
+    let mut defer = WarnDefer::new("poprako.assigns.list");
+
+    let mut query = std::collections::HashMap::new();
+    query.insert("time_start", payload.time_start.to_string());
+
+    let reply = poprako_get::<PoprakoEnvelope<Vec<PoprakoAssignment>>>("assigns", Some(&query))
+        .await
+        .map_err(|err| format!("获取派活列表失败: {}", err))?;
+
+    if reply.code != 200 {
+        let msg = reply
+            .message
+            .unwrap_or_else(|| "PopRaKo 获取派活列表失败".to_string());
+
+        tracing::info!(
+            message = %msg,
+            code = reply.code,
+            "poprako.assigns.list.failed"
+        );
+
+        return Err(msg);
+    }
+
+    let data = reply
+        .data
+        .ok_or_else(|| "PopRaKo 获取派活列表返回空数据".to_string())?;
+
+    let count = data.len();
+    tracing::info!(
+        time_start = payload.time_start,
+        count = count,
+        "poprako.assigns.list.ok"
+    );
+
+    defer.success();
+
+    Ok(data)
+}
+
+// 创建 PopRaKo 项目集的别名命令（前端调用 create_poprako_projset）
+#[tauri::command]
+pub async fn create_poprako_projset(
+    payload: CreateProjsetReq,
+) -> Result<PoprakoProjSetCreateData, String> {
+    create_projset(payload).await
+}

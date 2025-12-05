@@ -44,6 +44,7 @@ const emit = defineEmits<{
     }
   ): void;
   (e: 'create'): void;
+  (e: 'view-change', view: 'projects' | 'assignments'): void;
 }>();
 
 const props = defineProps<{
@@ -53,6 +54,8 @@ const props = defineProps<{
   filters?: ProjectSearchFilters | undefined;
   // 当此布尔值切换时，触发列表刷新（用于确认/清空筛选）
   shouldApplyFilters?: boolean;
+  // 当前视图：'projects' 或 'assignments'
+  currentView?: 'projects' | 'assignments';
 }>();
 
 const userStore = useUserStore();
@@ -61,6 +64,17 @@ const canCreate = computed(() => {
   // allow create only when a team is selected and the user is admin for that team
   return !!props.teamId && userStore.isAdminFor(props.teamId);
 });
+
+// 视图模式：项目列表或派活列表
+const viewMode = computed(() => props.currentView ?? 'projects');
+
+// 切换视图
+function switchView(view: 'projects' | 'assignments'): void {
+  emit('view-change', view);
+}
+
+// 派活列表在无 teamId 时应禁用
+const canViewAssignments = computed(() => !!props.teamId);
 
 // 内部项目列表与加载状态
 type ProjectListItem = ProjectBasicInfo & { hasPoprako?: boolean } & {
@@ -437,7 +451,26 @@ onBeforeUnmount(() => {
 <template>
   <section class="project-list">
     <header class="project-list__header">
-      <h3 class="project-list__title">当前项目</h3>
+      <!-- 标题改为切换按钮 -->
+      <div class="project-list__view-toggle">
+        <button
+          type="button"
+          class="view-toggle-btn"
+          :class="{ 'view-toggle-btn--active': viewMode === 'projects' }"
+          @click="switchView('projects')"
+        >
+          项目列表
+        </button>
+        <button
+          type="button"
+          class="view-toggle-btn"
+          :class="{ 'view-toggle-btn--active': viewMode === 'assignments' }"
+          @click="switchView('assignments')"
+          :disabled="!canViewAssignments"
+        >
+          派活列表
+        </button>
+      </div>
       <div
         class="project-list__header-actions"
         :class="{ 'project-list__header-actions--locked': !canCreate }"
@@ -661,6 +694,47 @@ onBeforeUnmount(() => {
   font-weight: 600;
   letter-spacing: 0.5px;
   color: #1f2e43;
+}
+
+.project-list__view-toggle {
+  display: flex;
+  gap: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(118, 184, 255, 0.35);
+  background: #f4f9ff;
+}
+
+.view-toggle-btn {
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  background: transparent;
+  color: #2f5a8f;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.view-toggle-btn:not(:last-child) {
+  border-right: 1px solid rgba(118, 184, 255, 0.2);
+}
+
+.view-toggle-btn:hover:not(:disabled):not(.view-toggle-btn--active) {
+  background: #eef6ff;
+}
+
+.view-toggle-btn--active {
+  background: linear-gradient(135deg, #5ba3e0, #6db4f0);
+  color: #fff;
+}
+
+.view-toggle-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  color: #7a8796;
 }
 
 .project-list__create,

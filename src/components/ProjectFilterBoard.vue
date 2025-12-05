@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue';
 import MemberSelector, { MemberInfo } from './MemberSelector.vue';
+import ProjectSetCreatorView from '../views/ProjectSetCreatorView.vue';
 import { getTeamPoprakoProjsets, type PoprakoProjsetInfo } from '../ipc/project';
 import { useToastStore } from '../stores/toast';
 // 与示例逻辑对应的筛选面板，实现项目集/项目/成员/状态筛选
@@ -10,6 +11,7 @@ import { useToastStore } from '../stores/toast';
 const props = defineProps<{
   teamId?: string;
   modelValue: FilterOption[]; // v-model 绑定的筛选条件
+  disabled?: boolean; // 是否禁用整个筛选面板
 }>();
 
 const emit = defineEmits<{
@@ -85,6 +87,10 @@ const projsetLoading = ref(false);
 // projset 选择弹窗状态与临时选中项
 const projsetSelectorOpen = ref(false);
 const projsetPickedIds = ref<string[]>([]);
+// 创建项目集弹窗状态
+const projsetCreatorOpen = ref(false);
+// 时间筛选状态（time_start unix 时间戳）
+const selectedTimeRange = ref<'1day' | '1week' | '1month' | null>(null);
 
 // 监听 teamId 变化，重置并重新加载项目集列表
 watch(
@@ -198,6 +204,47 @@ function openProjsetSelector(): void {
   projsetSelectorOpen.value = true;
 }
 
+function openProjsetCreator(): void {
+  if (!props.teamId) return;
+  projsetCreatorOpen.value = true;
+}
+
+function closeProjsetCreator(): void {
+  projsetCreatorOpen.value = false;
+}
+
+function onProjsetCreated(): void {
+  // 创建成功后重新加载项目集列表
+  void loadProjsetsForCurrentTeam();
+}
+
+// 时间筛选：计算 time_start 并添加到筛选条件
+function selectTimeRange(range: '1day' | '1week' | '1month'): void {
+  selectedTimeRange.value = range;
+  const now = Math.floor(Date.now() / 1000);
+  let timeStart: number;
+  let label: string;
+
+  switch (range) {
+    case '1day':
+      timeStart = now - 86400;
+      label = '时间：近一天';
+      break;
+    case '1week':
+      timeStart = now - 604800;
+      label = '时间：近一周';
+      break;
+    case '1month':
+      timeStart = now - 2592000;
+      label = '时间：近一个月';
+      break;
+  }
+
+  // 移除已有的时间筛选条件，添加新的
+  filterOptions.value = filterOptions.value.filter(o => o.key !== 'time-start');
+  addOption({ label, key: 'time-start', value: String(timeStart) });
+}
+
 function onProjsetConfirm(): void {
   for (const id of projsetPickedIds.value) {
     const projset = currentProjsets.value.find(p => p.projsetId === id);
@@ -259,7 +306,7 @@ function onConfirm() {
 }
 </script>
 <template>
-  <div class="filter-board" :class="{ 'fb--disabled': !filterEnabled }">
+  <div class="filter-board" :class="{ 'fb--disabled': !filterEnabled || props.disabled }">
     <div class="fb-header">
       <h3 class="fb-title">PopRaKo 筛选控制板</h3>
       <!-- <RoundSwitch v-model="filterEnabled" /> -->
@@ -267,7 +314,7 @@ function onConfirm() {
 
     <!-- 第一行：项目名（模糊搜索） -->
     <div class="fb-row fb-row--tight">
-      <label class="fb-label">筛选项目名称</label>
+      <label class="fb-label">项目名称</label>
       <input
         class="fb-input"
         placeholder="输入项目集号/序号/作者/标题 [Enter 确认]"
@@ -280,18 +327,25 @@ function onConfirm() {
     <!-- 第二行：左侧为项目集选择；右侧为成员筛选按钮（右对齐） -->
     <div class="fb-row fb-row--tight" style="align-items: center">
       <div style="display: flex; align-items: center; gap: 8px; flex: 1">
-        <label class="fb-label">筛选项目集</label>
+        <label class="fb-label">项目集</label>
         <button
           class="fb-adv-btn"
           @click="openProjsetSelector"
           :disabled="!filterEnabled || !props.teamId || projsetLoading"
         >
-          选择项目集
+          选择
+        </button>
+        <button
+          class="fb-adv-btn"
+          @click="openProjsetCreator"
+          :disabled="!filterEnabled || !props.teamId"
+        >
+          创建
         </button>
       </div>
 
       <div style="display: flex; align-items: center; gap: 8px; margin-left: 12px">
-        <label class="fb-label fb-label--small">筛选成员</label>
+        <label class="fb-label fb-label--small">成员</label>
         <div class="fb-member-role-btns">
           <button
             type="button"
@@ -323,7 +377,7 @@ function onConfirm() {
 
     <!-- 第三行：状态选择 -->
     <div class="fb-status-block fb-row--tight">
-      <label class="fb-label">筛选项目状态</label>
+      <label class="fb-label">项目状态</label>
       <div v-if="!selectedLabor" class="fb-status-group">
         <button
           v-for="s in statusList"
@@ -357,6 +411,37 @@ function onConfirm() {
 
     <!-- 状态选择（强制单行填充） -->
 
+    <!-- 时间筛选 -->
+    <div class="fb-row fb-row--tight fb-time-filter">
+      <label class="fb-label">发布时间</label>
+      <div class="fb-time-btns">
+        <button
+          class="fb-time-btn"
+          :class="{ 'fb-time-btn--active': selectedTimeRange === '1day' }"
+          @click="selectTimeRange('1day')"
+          :disabled="!filterEnabled || !teamAvailable"
+        >
+          近一天
+        </button>
+        <button
+          class="fb-time-btn"
+          :class="{ 'fb-time-btn--active': selectedTimeRange === '1week' }"
+          @click="selectTimeRange('1week')"
+          :disabled="!filterEnabled || !teamAvailable"
+        >
+          近一周
+        </button>
+        <button
+          class="fb-time-btn"
+          :class="{ 'fb-time-btn--active': selectedTimeRange === '1month' }"
+          @click="selectTimeRange('1month')"
+          :disabled="!filterEnabled || !teamAvailable"
+        >
+          近一个月
+        </button>
+      </div>
+    </div>
+
     <!-- 条件预览：使用 transition-group 动画展示 -->
     <div class="fb-preview" v-if="filterOptions.length">
       <span class="fb-preview__label">筛选条件预览：</span>
@@ -389,6 +474,17 @@ function onConfirm() {
       @cancel="handleMemberSelectorCancel"
       @close="handleMemberSelectorClose"
     />
+
+    <!-- 创建项目集弹窗 -->
+    <div v-if="projsetCreatorOpen" class="projset-overlay">
+      <div class="projset-creator-modal">
+        <ProjectSetCreatorView
+          :team-id="props.teamId"
+          @close="closeProjsetCreator"
+          @created="onProjsetCreated"
+        />
+      </div>
+    </div>
 
     <!-- 项目集选择弹窗 -->
     <div v-if="projsetSelectorOpen" class="projset-overlay">
@@ -750,6 +846,48 @@ function onConfirm() {
   color: #3a6f4d;
   font-weight: 600;
 }
+/* 时间筛选按钮样式 */
+.fb-time-filter {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.fb-time-btns {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+}
+.fb-time-btn {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid rgba(180, 206, 238, 0.7);
+  background: rgba(246, 250, 255, 0.9);
+  color: #2b577e;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 8px;
+  cursor: pointer;
+  transition:
+    transform 0.16s ease,
+    background 0.12s ease,
+    box-shadow 0.12s ease,
+    border-color 0.12s ease;
+}
+.fb-time-btn:hover:not(:disabled) {
+  background: #eaf6ff;
+  box-shadow: 0 6px 18px rgba(118, 184, 255, 0.08);
+  transform: translateY(-2px);
+}
+.fb-time-btn--active {
+  background: linear-gradient(135deg, #5ba3e0, #6db4f0);
+  color: #fff;
+  border-color: rgba(118, 184, 255, 0.9);
+  box-shadow: 0 4px 12px rgba(118, 184, 255, 0.25);
+}
+.fb-time-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 /* 项目集弹窗样式 */
 .projset-overlay {
   position: fixed;
@@ -759,6 +897,14 @@ function onConfirm() {
   align-items: center;
   justify-content: center;
   z-index: 1200;
+}
+.projset-creator-modal {
+  width: 600px;
+  max-width: calc(100% - 40px);
+  max-height: calc(100vh - 80px);
+  overflow: hidden;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(30, 60, 100, 0.4);
 }
 .projset-panel {
   width: 420px;

@@ -102,6 +102,8 @@ pub fn run() {
             crate::project::update_proj_status,
             crate::project::publish_proj,
             crate::project::upload_project_file,
+            crate::project::create_poprako_projset,
+            crate::project::get_assignments,
             // member search
             crate::member::get_members,
             crate::member::get_member_info,

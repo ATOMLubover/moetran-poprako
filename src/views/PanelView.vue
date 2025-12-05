@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed, watch } from 'vue';
 import type { ProjectSearchFilters } from '../ipc/project';
 import { useToastStore } from '../stores/toast';
 import { useUserStore } from '../stores/user';
@@ -10,6 +10,7 @@ import type { ResUser } from '../api/model/user';
 import type { ResTeam } from '../api/model/team';
 import type { ResMember } from '../api/model/member';
 import ProjectList from '../components/ProjectList.vue';
+import AssignmentList from '../components/AssignmentList.vue';
 import LoadingCircle from '../components/LoadingCircle.vue';
 // 使用共享的基本项目信息类型仅在本地过滤场景；当前不直接使用
 import ProjectFilterBoard from '../components/ProjectFilterBoard.vue';
@@ -29,6 +30,9 @@ const showCachedModal = ref(false);
 const teams = ref<ResTeam[]>([]);
 // 当前选中的团队（用于成员筛选等场景；null 代表“仅看我的项目”）
 const activeTeamId = ref<string | null>(null);
+
+// 视图模式：项目列表或派活列表
+const viewMode = ref<'projects' | 'assignments'>('projects');
 
 // 主体“当前展示”的项目列表目前由 ProjectList 自行通过 IPC 拉取。
 // 这里预留 rawProjects / filteredProjects 以便后续若改回父组件统筹过滤时使用。
@@ -129,6 +133,11 @@ function selectUserProjects(): void {
   // 留空：由 ProjectList 内部负责加载；这里仅标记 activeTeamId
 }
 
+// 处理视图切换
+function handleViewChange(view: 'projects' | 'assignments'): void {
+  viewMode.value = view;
+}
+
 // 重新登录：导航到登录视图
 function handleRelogin(): void {
   routerStore.navigateToLogin();
@@ -223,6 +232,16 @@ onMounted(() => {
   loadTeams();
   loadAnnouncements();
 });
+
+// 当团队改变时，如果切换到“我”（null），强制切换到项目列表
+watch(
+  () => activeTeamId.value,
+  newTeamId => {
+    if (newTeamId === null && viewMode.value === 'assignments') {
+      viewMode.value = 'projects';
+    }
+  }
+);
 
 // ======================= 新过滤逻辑 =======================
 // 来自 ProjectFilterBoard 的选项结构
@@ -325,6 +344,15 @@ const currentSearchFilters = computed<PanelProjectSearchFilters | undefined>(() 
       if (targetField) {
         const num = mapPhaseTextToNumber(val);
         if (num !== undefined) (filters as PanelProjectSearchFilters)[targetField] = num;
+      }
+      continue;
+    }
+
+    // 时间筛选（time-start）
+    if (key === 'time-start') {
+      const timestamp = Number(val);
+      if (!isNaN(timestamp) && timestamp > 0) {
+        filters.timeStart = timestamp;
       }
       continue;
     }
@@ -460,6 +488,7 @@ function handleModifierBack(): void {
             <ProjectFilterBoard
               :team-id="activeTeamId ?? undefined"
               v-model="currentFilterOptions"
+              :disabled="viewMode === 'assignments'"
               @applyFilter="handleApplyFilter"
             />
           </div>
@@ -467,12 +496,22 @@ function handleModifierBack(): void {
         <div class="projects-content" ref="projectsContainerRef">
           <div v-if="loadingProjects" class="placeholder">载入项目...</div>
           <div class="projects-scroll" v-else>
+            <!-- 根据 viewMode 条件渲染 ProjectList 或 AssignmentList -->
             <ProjectList
+              v-if="viewMode === 'projects'"
               :team-id="activeTeamId"
               :filters="currentSearchFilters"
               :should-apply-filters="shouldApplyFilters"
+              :current-view="viewMode"
               @open-detail="handleOpenDetail"
               @create="handleOpenCreator"
+              @view-change="handleViewChange"
+            />
+            <AssignmentList
+              v-else-if="viewMode === 'assignments'"
+              :team-id="activeTeamId"
+              :current-view="viewMode"
+              @view-change="handleViewChange"
             />
           </div>
         </div>
