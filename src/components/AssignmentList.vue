@@ -299,26 +299,30 @@ watch(
               :key="`${assign.projId}-${assign.memberId}`"
               class="assign-card"
             >
+              <div class="assign-card__primary">
+                <div class="assign-card__left">
+                  <div class="assign-card__roles">{{ formatRoles(assign) }}</div>
+                  <div class="assign-card__member">{{ assign.username }}</div>
+                </div>
+                <div class="assign-card__time">
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <polyline points="12,6 12,12 16,14"></polyline>
+                  </svg>
+                  {{ formatTime(assign.updatedAt) }}
+                </div>
+              </div>
               <div class="assign-card__proj">
                 【{{ assign.projsetSerial }}-{{ assign.projsetIndex }}】{{ assign.projName }}
-              </div>
-              <div class="assign-card__member">成员：{{ assign.username }}</div>
-              <div class="assign-card__roles">{{ formatRoles(assign) }}</div>
-              <div class="assign-card__time">
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <circle cx="12" cy="12" r="10"></circle>
-                  <polyline points="12,6 12,12 16,14"></polyline>
-                </svg>
-                {{ formatTime(assign.updatedAt) }}
               </div>
             </div>
           </div>
@@ -523,7 +527,7 @@ watch(
 }
 
 .assign-card {
-  padding: 12px;
+  padding: 10px;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.98);
   border: 1px solid rgba(210, 220, 235, 0.65);
@@ -534,7 +538,7 @@ watch(
     border-color 0.14s ease;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .assign-card:hover {
@@ -544,20 +548,33 @@ watch(
 }
 
 .assign-card__proj {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: #294061;
   line-height: 1.4;
   word-break: break-word;
 }
 
+.assign-card__primary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.assign-card__left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .assign-card__member {
-  font-size: 12px;
+  font-size: 14px;
   color: #4a5f7d;
+  font-weight: 600;
 }
 
 .assign-card__roles {
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 600;
   color: #5ba3e0;
   padding: 4px 8px;
@@ -572,6 +589,5 @@ watch(
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-top: 4px;
 }
 </style>
