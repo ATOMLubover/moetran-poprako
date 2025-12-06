@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import type { ResAssignment } from '../api/model/assignment';
 import { useToastStore } from '../stores/toast';
+import { getAssignments } from '../ipc/project';
 
 // 时间区域定义
 type TimeRange = '1day' | '1week' | '1month';
@@ -42,17 +43,17 @@ const allAssignments = ref<ResAssignment[]>([]);
 const isLoading = ref(false);
 
 // 根据选择的时间范围计算 timeStart（暂时保留，用于后续真实API调用）
-// const currentTimeStart = computed(() => {
-//   const now = Math.floor(Date.now() / 1000);
-//   switch (selectedTimeRange.value) {
-//     case '1day':
-//       return now - 86400;
-//     case '1week':
-//       return now - 604800;
-//     case '1month':
-//       return now - 2592000;
-//   }
-// });
+const currentTimeStart = computed(() => {
+  const now = Math.floor(Date.now() / 1000);
+  switch (selectedTimeRange.value) {
+    case '1day':
+      return now - 86400;
+    case '1week':
+      return now - 604800;
+    case '1month':
+      return now - 2592000;
+  }
+});
 
 // 时间区域定义（分段显示）
 // interface TimeSection {
@@ -176,67 +177,8 @@ function goNextPage(): void {
 async function fetchAssignments(): Promise<void> {
   isLoading.value = true;
   try {
-    // 暂时注释：真实数据获取逻辑
-    // const data = await getAssignments(currentTimeStart.value);
-    // allAssignments.value = data;
-
-    // Mock 数据：足量数据覆盖各种时间、职位、成员组合（固定生成，无随机）
-    const now = Math.floor(Date.now() / 1000);
-    const mockData: ResAssignment[] = [];
-    const members = [
-      'Alice',
-      'Bob',
-      'Charlie',
-      'Diana',
-      'Eve',
-      'Frank',
-      'Grace',
-      'Henry',
-      'Ivy',
-      'Jack',
-    ];
-    const projects = [
-      'Project A',
-      'Project B',
-      'Project C',
-      'Project D',
-      'Project E',
-      'Project F',
-      'Project G',
-      'Project H',
-      'Project I',
-      'Project J',
-    ];
-
-    for (let i = 0; i < 100; i++) {
-      const member = members[i % members.length];
-      const project = projects[i % projects.length];
-      const timeOffset = (i % 30) * 86400; // 0 to 29 days, fixed
-      const updatedAt = now - timeOffset;
-
-      const roles = ['translator', 'proofreader', 'typesetter', 'redrawer'];
-      const roleIndex = i % roles.length;
-      const isTranslator = roleIndex === 0;
-      const isProofreader = roleIndex === 1;
-      const isTypesetter = roleIndex === 2;
-      const isRedrawer = roleIndex === 3;
-
-      mockData.push({
-        projId: `proj-${i}`,
-        memberId: `member-${i % members.length}`,
-        username: member,
-        projName: project,
-        projsetSerial: (i % 10) + 1,
-        projsetIndex: (i % 10) + 1,
-        isTranslator,
-        isProofreader,
-        isTypesetter,
-        isRedrawer,
-        updatedAt,
-      });
-    }
-
-    allAssignments.value = mockData;
+    const data = await getAssignments(currentTimeStart.value);
+    allAssignments.value = data;
   } catch (err) {
     console.error('[AssignmentList] 获取派活列表失败:', err);
     toastStore.show(`获取派活列表失败：${String(err)}`);
