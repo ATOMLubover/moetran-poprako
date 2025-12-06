@@ -256,7 +256,7 @@ async function handleCreateProject(): Promise<void> {
       targetLanguages: ['zh-CN'],
       allowApplyType: projectInfo.value.allowAutoJoin ? 1 : 0,
       applicationCheckType: 0,
-      defaultRole: '63d87c24b8bebd75ff934267',
+      defaultRole: '63d87c24b8bebd75ff934265',
     });
 
     const projId = created.projId;

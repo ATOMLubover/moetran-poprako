@@ -457,10 +457,11 @@ function handleOpenModifier(): void {
   detailReady.value = true;
 }
 
-// Cancel from modifier: close the sidebar
+// Cancel from modifier: back to detail view
 function handleModifierBack(): void {
-  detailOpen.value = false;
+  detailMode.value = 'detail';
   detailReady.value = false;
+  detailReady.value = true;
 }
 </script>
 

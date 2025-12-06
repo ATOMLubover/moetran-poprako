@@ -641,6 +641,49 @@ curl -X PUT https://api.example.com/api/v1/projs/proj_id_1/status \
 curl -X PUT https://api.example.com/api/v1/projs/proj_id_1/publish \
     -H "Authorization: Bearer <jwt>"
 ```
+---
+
+---
+
+## Notify 部分
+
+### 检查服务更新
+
+用于客户端或运维检查后端是否有可用的更新通知（例如新版本、重要配置变更等）。
+
+| 方法 | 路径                          | 认证 |
+| ---- | ----------------------------- | ---- |
+| GET  | `/api/v1/notify/update`       | 需要 |
+
+成功响应（200）：
+
+```json
+{
+    "code": 200,
+    "data": {
+        "has_update": false
+    }
+}
+```
+
+字段说明：
+- `has_update`（boolean）: 表示服务端是否检测到可用更新（true/false）。
+
+错误响应：
+
+| 场景       | code |
+| ---------- | ---- |
+| 未认证     | 401  |
+| 内部错误   | 500  |
+
+示例 cURL：
+
+```bash
+curl -H "Authorization: Bearer <jwt>" \
+    https://api.example.com/api/v1/notify/update
+```
+
+说明：该路由在服务端注册为 `GET /api/v1/notify/update` 并受通用认证中间件保护。
 
 ---
 
@@ -681,7 +724,7 @@ curl -X PUT https://api.example.com/api/v1/projs/proj_id_1/publish \
 - `is_translator`（可选，默认 false）：是否分配翻译角色
 - `is_proofreader`（可选，默认 false）：是否分配校对角色
 - `is_typesetter`（可选，默认 false）：是否分配排版角色
-- `is_redrawer`（可选，默认 false）：是否分配美工角色
+- `is_redrawer`（可选，默认 false）：是否分配修图/美工角色
 
 成功响应（204）：
 
@@ -719,8 +762,7 @@ curl -X POST https://api.example.com/api/v1/projs/proj_id_1/assign \
       "mtr_auth":"<moetran-token>",
       "is_translator":true,
       "is_proofreader":false,
-      "is_typesetter":false,
-      "is_redrawer":false
+      "is_typesetter":false
     }'
 ```
 
@@ -747,7 +789,7 @@ ProjAssignInfo 字段：
 - `is_translator` (boolean) - 是否为翻译
 - `is_proofreader` (boolean) - 是否为校对
 - `is_typesetter` (boolean) - 是否为排版
-- `is_redrawer` (boolean) - 是否为美工
+- `is_redrawer` (boolean) - 是否为修图/美工
 - `updated_at` (integer, unix timestamp) - 分配记录更新时间（秒）
 
 示例响应：

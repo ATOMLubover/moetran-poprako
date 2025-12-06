@@ -16,7 +16,7 @@ import { useToastStore } from '../stores/toast';
 import { useUserStore } from '../stores/user';
 import { useRouterStore } from '../stores/router';
 import { useCacheStore } from '../stores/cache';
-import { getProjectTargets, getProjectFiles } from '../ipc/project';
+import { getProjectTargets, getProjectFiles, proxyImage } from '../ipc/project';
 import LoadingCircle from '../components/LoadingCircle.vue';
 import FileUploader from '../components/FileUploader.vue';
 import {
@@ -119,8 +119,6 @@ const primaryFiles = ref<FileInfo[]>([]);
 // 详细标记数据加载状态
 const loadingMarkers = ref(false);
 const loadingMarkersFailed = ref(false);
-// 卡片容器引用（用于后续可能的动态高度微调）
-const cardRef = ref<HTMLElement | null>(null);
 
 // 图片缓存相关状态
 const hasCachedFiles = ref(false);
@@ -129,6 +127,10 @@ const isDeleting = ref(false);
 
 // 文件上传对话框状态
 const showUploader = ref(false);
+
+// 封面图片加载状态
+const coverImageData = ref<string | null>(null);
+const loadingCover = ref(false);
 
 // 是否为项目管理员（后续可根据真实用户身份判断）
 // (已由 'principal' 角色控制关键编辑权限)
@@ -227,13 +229,7 @@ const isMeProofreader = computed(() => {
 // --- 进度相关计算 ---
 // (per-page and totals are displayed as raw numbers; percent progress computations removed)
 
-// 状态文本与配色（简约风格）
-const statusText: Record<ProjectStatus, string> = {
-  pending: '未开始',
-  in_progress: '进行中',
-  completed: '已完成',
-};
-
+// 状态配色（简约风格）
 const statusColorMap: Record<ProjectStatus, string> = {
   pending: '#95A8BC',
   in_progress: '#2F6FAE',
@@ -303,9 +299,9 @@ function handleResize() {
 
 // 预留顶部/其他板块空间，动态计算图表高度（在给定范围内）
 const chartDynamicHeight = computed(() => {
-  const reserved = 620; // 估算其他内容占用高度
+  const reserved = 550; // 估算其他内容占用高度
   const available = windowHeight.value - reserved;
-  return Math.max(180, Math.min(300, available));
+  return Math.max(200, Math.min(240, available));
 });
 
 // Chart.js 数据
@@ -425,6 +421,23 @@ function handleUploadComplete(successCount: number, failedCount: number): void {
   }
   // 可选：刷新项目文件列表
   loadProject();
+}
+
+// 加载封面图片（files 数组的第一个）
+async function loadCoverImage(): Promise<void> {
+  if (!primaryFiles.value.length || loadingCover.value) return;
+
+  loadingCover.value = true;
+  try {
+    const firstFile = primaryFiles.value[0];
+    const result = await proxyImage(firstFile.url);
+    coverImageData.value = `data:${result.content_type};base64,${result.b64}`;
+  } catch (err) {
+    console.error('[ProjectDetail] loadCoverImage failed', err);
+    coverImageData.value = null;
+  } finally {
+    loadingCover.value = false;
+  }
 }
 
 // 加载项目详情与标记分布
@@ -593,6 +606,8 @@ async function loadProject(): Promise<void> {
         if (!primaryTargetId.value && !isMeInProject.value) {
           primaryTargetId.value = ''; // 允许非成员进入阅读模式
         }
+        // 加载封面图片
+        loadCoverImage();
       }
     }
 
@@ -774,39 +789,51 @@ onBeforeUnmount(() => {
       @upload-complete="handleUploadComplete"
     />
 
-    <div class="pd-card" ref="cardRef">
-      <div class="pd-card__inner">
-        <!-- <div class="pd-card__left">
-          <CircularProgress
-            :progress="translationProgress"
-            color="yellow"
-            label="翻译进度"
-            class="pd-circ"
+    <div class="pd-main-layout">
+      <!-- 左列：封面图片 -->
+      <div class="pd-cover-column">
+        <div class="pd-card__cover">
+          <div v-if="loadingCover" class="pd-cover-loading">
+            <LoadingCircle />
+          </div>
+          <img
+            v-else-if="coverImageData"
+            :src="coverImageData"
+            alt="项目封面"
+            class="pd-cover-image"
           />
-          <CircularProgress
-            :progress="proofreadProgress"
-            color="pink"
-            label="校对进度"
-            class="pd-circ"
-          />
-        </div> -->
-        <div class="pd-card__right">
-          <h2 class="pd-block-title">项目概况</h2>
-          <!-- 状态卡片栅格 -->
+          <div v-else class="pd-cover-placeholder">暂无封面</div>
+        </div>
+      </div>
+
+      <!-- 右列：所有内容 -->
+      <div class="pd-content-column">
+        <!-- 项目概况 -->
+        <div class="pd-overview-card">
+          <h2 class="pd-section-title">项目概况</h2>
           <div class="pd-status-cards">
             <div
               v-for="blk in statusBlocks"
               :key="blk.label"
               class="pd-status-card"
-              :style="{ borderColor: statusColorMap[blk.status] }"
+              :style="{
+                borderColor: statusColorMap[blk.status],
+                backgroundColor: statusColorMap[blk.status] + '10',
+              }"
             >
               <div class="pd-status-card__label">{{ blk.label }}</div>
-              <div class="pd-status-card__state" :style="{ color: statusColorMap[blk.status] }">
-                {{ statusText[blk.status] }}
+              <div class="pd-status-card__members">
+                <template v-if="blk.members && blk.members.length > 0">
+                  {{ blk.members.join('、') }}
+                </template>
+                <template v-else>未分配</template>
               </div>
             </div>
           </div>
-          <!-- 指标统计栅格 -->
+        </div>
+
+        <!-- 指标统计 -->
+        <div class="pd-metrics-card">
           <div class="pd-metrics-grid">
             <div class="pd-metric-box">
               <span class="pd-metric-box__label">总页数</span>
@@ -829,54 +856,26 @@ onBeforeUnmount(() => {
               }}</span>
             </div>
           </div>
-          <!-- 成员标签行 -->
-          <div class="pd-members-tags">
-            <div v-for="blk in statusBlocks" :key="blk.label + '-members'" class="pd-member-chip">
-              <span class="pd-member-chip__role">[{{ blk.label }}]</span>
-              <span class="pd-member-chip__list">
-                <template v-if="blk.members && blk.members.length > 0">
-                  {{ blk.members.join('、') }}
-                </template>
-                <template v-else>未分配</template>
-              </span>
-            </div>
-          </div>
-          <!-- 指标统计栅格 -->
-          <!-- <div class="pd-metrics-grid">
-            <div class="pd-metric-box">
-              <span class="pd-metric-box__label">总页数</span>
-              <span class="pd-metric-box__value">{{ project.totalPages }}</span>
-            </div>
-            <div class="pd-metric-box">
-              <span class="pd-metric-box__label">总标记数</span>
-              <span class="pd-metric-box__value">{{ project.totalMarkers }}</span>
-            </div>
-            <div class="pd-metric-box">
-              <span class="pd-metric-box__label">已翻译标记数</span>
-              <span class="pd-metric-box__value pd-metric-box__value--yellow">{{
-                project.totalTranslatedMarkers
-              }}</span>
-            </div>
-            <div class="pd-metric-box">
-              <span class="pd-metric-box__label">已校对标记数</span>
-              <span class="pd-metric-box__value pd-metric-box__value--pink">{{
-                project.totalProofreadMarkers
-              }}</span>
-            </div>
-          </div> -->
         </div>
-      </div>
-    </div>
 
-    <div class="pd-chart-block">
-      <h2 class="pd-subtitle">每页标记分布</h2>
-      <div class="pd-chart-canvas" :style="{ height: chartDynamicHeight + 'px' }">
-        <div v-if="loadingMarkers" class="pd-chart-loading">
-          <LoadingCircle />
+        <!-- 标记分布图表 -->
+        <div class="pd-chart-card">
+          <h2 class="pd-section-title">每页标记分布</h2>
+          <div class="pd-chart-canvas" :style="{ height: chartDynamicHeight + 'px' }">
+            <div v-if="loadingMarkers" class="pd-chart-loading">
+              <LoadingCircle />
+            </div>
+            <div v-else-if="loadingMarkersFailed" class="pd-chart-empty pd-chart-error">
+              加载失败
+            </div>
+            <Line
+              v-else-if="chartData.labels.length > 0"
+              :data="chartData"
+              :options="chartOptions"
+            />
+            <div v-else class="pd-chart-empty">暂无标记数据</div>
+          </div>
         </div>
-        <div v-else-if="loadingMarkersFailed" class="pd-chart-empty pd-chart-error">加载失败</div>
-        <Line v-else-if="chartData.labels.length > 0" :data="chartData" :options="chartOptions" />
-        <div v-else class="pd-chart-empty">暂无标记数据</div>
       </div>
     </div>
   </section>
@@ -1218,119 +1217,122 @@ onBeforeUnmount(() => {
   color: #6b859d;
 }
 
-/* === 新增：卡片与二维布局样式，修复重叠与无分割问题 === */
-.pd-card {
-  background: #ffffff;
-  border: 1px solid rgba(150, 180, 210, 0.45);
-  border-radius: 18px;
-  padding: 14px 18px;
-  box-shadow: 0 10px 32px rgba(140, 180, 230, 0.18);
-}
-.pd-card__inner {
+/* === 主布局：左列封面 + 右列内容 === */
+.pd-main-layout {
   display: flex;
-  align-items: stretch;
-  gap: 32px;
+  gap: 18px;
+  align-items: flex-start;
 }
-.pd-card__left {
-  flex: 0 0 150px;
+
+/* 左列：封面 */
+.pd-cover-column {
+  flex: 0 0 180px;
+  width: 180px;
+}
+.pd-card__cover {
+  width: 180px;
+  height: 250px;
+  background: #fff;
+  border: 1px solid rgba(150, 180, 210, 0.4);
+  border-radius: 12px;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 22px;
-  padding: 0 0 4px;
-  border-right: 1px solid rgba(150, 180, 210, 0.35);
-  box-sizing: border-box;
+  justify-content: center;
+  overflow: hidden;
+  box-shadow: 0 6px 20px rgba(140, 180, 230, 0.16);
 }
-.pd-card__right {
+.pd-cover-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.pd-cover-placeholder {
+  font-size: 13px;
+  color: #7a8fa5;
+}
+.pd-cover-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 右列：内容区 */
+.pd-content-column {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 8px;
   min-width: 0;
 }
-.pd-block-title {
-  margin: 0;
-  font-size: 20px;
+
+/* 通用卡片样式 */
+.pd-overview-card,
+.pd-metrics-card,
+.pd-chart-card {
+  background: #ffffff;
+  border: 1px solid rgba(150, 180, 210, 0.4);
+  border-radius: 14px;
+  padding: 12px 16px;
+  box-shadow: 0 6px 18px rgba(140, 180, 230, 0.16);
+}
+
+/* 章节标题 */
+.pd-section-title {
+  margin: 0 0 10px 0;
+  font-size: 16px;
   font-weight: 600;
-  padding-bottom: 10px;
-  border-bottom: 1px solid rgba(150, 180, 210, 0.35);
   color: #23415b;
 }
 .pd-status-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
 }
 .pd-status-card {
   background: #f8fbff;
   border: 2px solid;
-  border-radius: 14px;
-  padding: 10px 12px 12px;
+  border-radius: 10px;
+  padding: 8px 10px;
   text-align: center;
-  box-shadow: 0 6px 18px rgba(140, 180, 230, 0.16);
+  box-shadow: 0 4px 12px rgba(140, 180, 230, 0.12);
 }
 .pd-status-card__label {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
-  color: #2d4a63;
+  color: #2a4a63;
   margin-bottom: 4px;
 }
-.pd-status-card__state {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.6px;
-}
-.pd-members-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.pd-member-chip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: #ffffff;
-  border: 1px solid rgba(150, 180, 210, 0.4);
-  border-radius: 999px;
-  padding: 6px 14px 6px 16px;
-  font-size: 12px;
-  box-shadow: 0 4px 14px rgba(140, 180, 230, 0.14);
-}
-.pd-member-chip__role {
-  font-weight: 700;
-  color: #2d4a63;
-}
-.pd-member-chip__list {
-  font-weight: 500;
-  color: #466079;
+.pd-status-card__members {
+  font-size: 11px;
+  color: #4a5f7a;
+  line-height: 1.4;
 }
 .pd-metrics-grid {
-  display: flex;
-  flex-direction: row;
-  align-items: stretch;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
 }
 .pd-metric-box {
-  flex: 1 1 0;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: #eef5fc;
-  border: 2px solid #d5e3f1;
-  padding: 12px 16px;
-  border-radius: 14px;
-  font-size: 13px;
-  font-weight: 500;
-  color: #345067;
-  transition: background 0.25s ease;
+  flex-direction: column;
+  gap: 4px;
+  background: #f8fbff;
+  border: 1px solid rgba(150, 180, 210, 0.3);
+  padding: 10px 12px;
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(140, 180, 230, 0.12);
+  transition: background 0.2s ease;
 }
 .pd-metric-box:hover {
-  background: #e4f0fa;
+  background: #eef6ff;
+}
+.pd-metric-box__label {
+  font-size: 11px;
+  color: #5b768e;
 }
 .pd-metric-box__value {
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
+  font-size: 20px;
+  font-weight: 600;
   color: #23415b;
 }
 .pd-metric-box__value--yellow {
@@ -1341,15 +1343,12 @@ onBeforeUnmount(() => {
 }
 
 /* Chart block adjustments */
-.pd-chart-block {
-  margin-top: 8px;
-}
 .pd-chart-canvas {
-  background: #ffffff;
-  border: 1px solid rgba(150, 180, 210, 0.45);
-  border-radius: 18px;
-  padding: 16px 20px;
-  box-shadow: 0 12px 36px rgba(140, 180, 230, 0.18);
+  background: #f8fbff;
+  border: 1px solid rgba(150, 180, 210, 0.3);
+  border-radius: 10px;
+  padding: 12px 14px;
+  box-shadow: 0 4px 12px rgba(140, 180, 230, 0.12);
   box-sizing: border-box;
   position: relative;
   display: flex;
@@ -1373,21 +1372,19 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1100px) {
-  .pd-card__inner {
+  .pd-main-layout {
     flex-direction: column;
   }
-  .pd-card__left {
-    flex: none;
+  .pd-cover-column {
     width: 100%;
-    flex-direction: row;
+    display: flex;
     justify-content: center;
-    border-right: none;
-    border-bottom: 1px solid rgba(150, 180, 210, 0.35);
-    padding-bottom: 18px;
-    gap: 46px;
   }
-  .pd-card__right {
-    padding-top: 4px;
+  .pd-status-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .pd-metrics-grid {
+    grid-template-columns: repeat(2, 1fr);
   }
 }
 
