@@ -1112,8 +1112,14 @@ async function ensureImageCachedByIndex(index: number, promoteWhenCached = true)
   }
 }
 
+// 私有类型：预加载任务
+interface _PreloadTask {
+  index: number;
+  promote: boolean;
+}
+
 function preloadAdjacent(pageIndex: number, direction: -1 | 0 | 1): void {
-  const tasks: Array<{ index: number; promote: boolean }> = [];
+  const tasks: _PreloadTask[] = [];
 
   if (direction === 1 && pageIndex + 2 < props.files.length) {
     tasks.push({ index: pageIndex + 2, promote: true });

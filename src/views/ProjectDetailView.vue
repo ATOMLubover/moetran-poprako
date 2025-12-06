@@ -58,6 +58,11 @@ interface ProjectDetail {
   pageMarkers: PageMarkerData[];
 }
 
+// 私有类型：Moetran 原生项目中可能带回的 role 结构，前端仅用作存在性检查
+interface _ProjectRole {
+  [key: string]: unknown;
+}
+
 const props = defineProps<{
   projectId: string;
   title: string;
@@ -83,7 +88,7 @@ const props = defineProps<{
   // publish state
   isPublished?: boolean;
   // Moetran 原生项目可能返回的 role 字段；若非 null 表示当前用户在该项目中
-  role?: any | null;
+  role?: _ProjectRole | null;
 }>();
 
 interface FileInfo {
@@ -134,7 +139,7 @@ const isMeInProject = computed(() => {
   if (!uid) return false;
   // For native Moetran projects (no PopRaKo backing), Moetran may include a
   // top-level `role` field indicating the current user's role in the project.
-  // If `hasPoprako === false`, treat `props.role !== null` as membership.
+  // If `hasPoprako === false`, treat a non-null `props.role` as membership (实际结构未具体描述)
   if (props.hasPoprako === false) {
     // props.role may be undefined if backend didn't provide it; treat undefined as not-in-project
     return (props.role ?? null) !== null;
@@ -236,9 +241,15 @@ const statusColorMap: Record<ProjectStatus, string> = {
 };
 
 // 汇总四类工作状态
+// 私有类型：状态块
+interface _StatusBlock {
+  label: string;
+  members: string[];
+  status: ProjectStatus;
+}
+
 const statusBlocks = computed(() => {
-  if (!project.value)
-    return [] as Array<{ label: string; members: string[]; status: ProjectStatus }>;
+  if (!project.value) return [] as _StatusBlock[];
   // If PopRaKo `members` prop is provided, prefer extracting roles from the members' flags.
   if (props.members && Array.isArray(props.members) && props.members.length > 0) {
     const members = props.members as ResMember[];

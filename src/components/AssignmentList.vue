@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
-import { getAssignments } from '../ipc/project';
 import type { ResAssignment } from '../api/model/assignment';
 import { useToastStore } from '../stores/toast';
 
@@ -14,10 +13,7 @@ interface PageSection {
   assignments: ResAssignment[];
 }
 
-// 一页的数据结构
-interface PageData {
-  sections: PageSection[];
-}
+// 一页的数据结构（PageData 不再单独声明，直接使用 PageSection[]）
 
 const emit = defineEmits<{
   (e: 'view-change', view: 'projects' | 'assignments'): void;
@@ -254,14 +250,7 @@ function selectTimeRange(range: TimeRange): void {
   currentPage.value = 1;
 }
 
-// 格式化角色标签
-function formatRoles(assign: ResAssignment): string {
-  const roles: string[] = [];
-  if (assign.isTranslator) roles.push('翻译');
-  if (assign.isProofreader) roles.push('校对');
-  if (assign.isTypesetter) roles.push('嵌字');
-  return roles.join(' / ') || '无';
-}
+// 格式化角色标签（模板内直接构造，无需函数）
 
 // 格式化时间
 function formatTime(timestamp: number): string {

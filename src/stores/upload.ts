@@ -1,6 +1,12 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 
+// 私有类型：上传文件简要信息
+interface _UploadFileRef {
+  fileName: string;
+  filePath: string;
+}
+
 // 单个上传任务状态
 export interface UploadTask {
   id: string; // 任务唯一标识（通常为文件路径或随机生成）
@@ -31,11 +37,7 @@ export const useUploadStore = defineStore('upload', () => {
   const activeUploads = ref<number>(0);
 
   // 添加上传任务
-  function addTasks(
-    projectId: string,
-    projectName: string,
-    files: Array<{ fileName: string; filePath: string }>
-  ): void {
+  function addTasks(projectId: string, projectName: string, files: _UploadFileRef[]): void {
     if (!uploadGroups.value.has(projectId)) {
       uploadGroups.value.set(projectId, {
         projectId,

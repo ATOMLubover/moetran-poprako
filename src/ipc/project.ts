@@ -22,8 +22,8 @@ interface RawResProject {
   source_count: number;
   translated_source_count: number;
   checked_source_count: number;
-  team: any;
-  project_set?: { id: string; name: string } | null;
+  team?: RawTeam | null;
+  project_set?: RawProjectSet | null;
   has_poprako: boolean;
   projset_index?: number | null;
   translating_status?: number | null;
@@ -34,16 +34,36 @@ interface RawResProject {
   members?: RawPoprakoMember[] | null;
   principals?: string[] | null;
   // Moetran 原生项目可能返回的 role 字段（object | null）
-  role?: any | null;
+  role?: RawProjectRole | null;
 }
 
-function mapRawTeam(t: any): ResTeam {
+// 私有类型：Raw team shape from backend (snake_case or camelCase tolerant)
+interface RawTeam {
+  id: string;
+  avatar?: string;
+  has_avatar?: boolean;
+  hasAvatar?: boolean;
+  name?: string;
+}
+
+// 私有类型：raw project_set shape
+interface RawProjectSet {
+  id: string;
+  name: string;
+}
+
+// 私有类型：project role passthrough（结构不确定；使用索引签名替代 any）
+interface RawProjectRole {
+  [key: string]: unknown;
+}
+
+function mapRawTeam(t?: RawTeam | null): ResTeam {
   if (!t) return { id: '', avatar: '', hasAvatar: false, name: '' };
   return {
     id: t.id,
-    avatar: t.avatar,
+    avatar: t.avatar ?? '',
     hasAvatar: typeof t.has_avatar !== 'undefined' ? !!t.has_avatar : !!t.hasAvatar,
-    name: t.name,
+    name: t.name ?? '',
   };
 }
 
@@ -69,10 +89,8 @@ function mapRawProject(r: RawResProject): ResProjectEnriched {
     sourceCount: r.source_count,
     translatedSourceCount: r.translated_source_count,
     checkedSourceCount: r.checked_source_count,
-    team: mapRawTeam(r.team) as any,
-    projectSet: r.project_set
-      ? { id: r.project_set.id, name: r.project_set.name }
-      : (undefined as any),
+    team: mapRawTeam(r.team),
+    projectSet: r.project_set ? { id: r.project_set.id, name: r.project_set.name } : undefined,
     hasPoprako: r.has_poprako,
     projsetIndex: r.projset_index ?? undefined,
     translatingStatus: r.translating_status ?? undefined,
@@ -87,7 +105,7 @@ function mapRawProject(r: RawResProject): ResProjectEnriched {
         .filter(m => m.is_principal)
         .map(m => m.user_id ?? m.member_id),
     // passthrough Moetran `role` for native projects; frontend will only check null/non-null
-    role: (r as any).role ?? null,
+    role: r.role ?? null,
   } as ResProjectEnriched;
 }
 

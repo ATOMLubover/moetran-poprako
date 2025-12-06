@@ -1,12 +1,25 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 
+// 私有类型：文件信息（用于 TranslatorViewParams.files）
+interface _RouterFileInfo {
+  id: string;
+  name: string;
+  sourceCount: number;
+  url: string;
+}
+
+// 私有类型：项目详情传递中的 role（结构未知；前端仅检测是否为 null，避免使用 any）
+interface _RouterProjectRole {
+  [key: string]: unknown;
+}
+
 export type ViewName = 'login' | 'panel' | 'projectDetail' | 'translator';
 
 export interface TranslatorViewParams {
   projectId: string;
   targetId: string;
-  files: Array<{ id: string; name: string; sourceCount: number; url: string }>;
+  files: _RouterFileInfo[];
   enabled: boolean;
   initialMode: 'translate' | 'read';
   hasPoprako: boolean;
@@ -24,7 +37,7 @@ export interface ProjectDetailViewParams {
   translatingStatus: number | null;
   proofreadingStatus: number | null;
   // optional passthroughs for detail view (role for native Moetran projects)
-  role?: any | null;
+  role?: _RouterProjectRole | null;
   hasPoprako?: boolean | null;
 }
 

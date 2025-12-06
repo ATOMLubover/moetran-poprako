@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue';
+import type { ComponentPublicInstance } from 'vue';
 import type { ProjectSearchFilters } from '../ipc/project';
 import { useToastStore } from '../stores/toast';
 import { useUserStore } from '../stores/user';
@@ -17,6 +18,7 @@ import ProjectFilterBoard from '../components/ProjectFilterBoard.vue';
 import ProjectCreatorView from '../views/ProjectCreatorView.vue';
 import ProjectModifierView from '../views/ProjectModifierView.vue';
 import ProjectDetailView from '../views/ProjectDetailView.vue';
+import ProjectSetCreatorView from '../views/ProjectSetCreatorView.vue';
 import CachedProjectsModal from '../components/CachedProjectsModal.vue';
 
 // 用户信息 (local ref kept for template compatibility)
@@ -60,7 +62,12 @@ const selectedProjectLetterers = ref<string[]>([]);
 const selectedProjectReviewers = ref<string[]>([]);
 const selectedProjectPrincipals = ref<string[]>([]);
 const selectedProjectMembers = ref<ResMember[] | undefined>(undefined);
-const selectedProjectRole = ref<any | null>(null);
+// 私有类型：panel 中仅用于标记/传递 role 值（未知结构；避免使用不安全的 any 类型）
+interface _PanelSelectedRole {
+  [key: string]: unknown;
+}
+
+const selectedProjectRole = ref<_PanelSelectedRole | null>(null);
 const selectedProjectHasPoprako = ref<boolean | undefined>(undefined);
 const selectedProjectTranslatingStatus = ref<number | null>(null);
 const selectedProjectProofreadingStatus = ref<number | null>(null);
@@ -68,6 +75,15 @@ const selectedProjectTypesettingStatus = ref<number | null>(null);
 const selectedProjectReviewingStatus = ref<number | null>(null);
 const selectedProjectIsPublished = ref<boolean>(false);
 const selectedProjectTeamId = ref<string>('');
+
+// 项目集创建弹窗状态
+const projsetCreatorOpen = ref(false);
+// 私有类型：暴露给父组件的筛选板实例方法（只需 reloadProjsets）
+interface _PanelFilterBoardRef extends ComponentPublicInstance {
+  reloadProjsets?: () => void;
+}
+
+const filterBoardRef = ref<_PanelFilterBoardRef | null>(null);
 
 // 加载状态
 const loadingUser = ref<boolean>(false);
@@ -181,11 +197,11 @@ function handleOpenDetail(payload: {
   members?: ResMember[];
   isPublished?: boolean;
   hasPoprako?: boolean;
-  role?: any | null;
+  role?: _PanelSelectedRole | null;
   teamId?: string;
 }): void {
   // 在 PanelView 中打开全屏详情视图
-  detailMode.value = 'detail' as any; // 设置为 detail 模式
+  detailMode.value = 'detail'; // 设置为 detail 模式
   selectedProjectId.value = payload.id;
   selectedProjectTitle.value = payload.title;
   selectedProjectProjsetName.value = payload.projsetName;
@@ -203,7 +219,7 @@ function handleOpenDetail(payload: {
   selectedProjectReviewers.value = payload.reviewers;
   selectedProjectPrincipals.value = payload.principals ?? [];
   selectedProjectMembers.value = payload.members ?? undefined;
-  selectedProjectRole.value = (payload as any).role ?? null;
+  selectedProjectRole.value = payload.role ?? null;
   selectedProjectHasPoprako.value = payload.hasPoprako ?? undefined;
   selectedProjectIsPublished.value = payload.isPublished ?? false;
   selectedProjectTeamId.value = payload.teamId ?? activeTeamId.value ?? '';
@@ -220,6 +236,25 @@ function handleCloseDetail(): void {
   selectedProjectMembers.value = undefined;
   selectedProjectRole.value = null;
   selectedProjectHasPoprako.value = undefined;
+}
+
+// 打开项目集创建弹窗
+function handleOpenProjsetCreator(): void {
+  if (!activeTeamId.value) return;
+  projsetCreatorOpen.value = true;
+}
+
+// 关闭项目集创建弹窗
+function handleCloseProjsetCreator(): void {
+  projsetCreatorOpen.value = false;
+}
+
+// 项目集创建成功后刷新筛选板的项目集列表
+function handleProjsetCreated(): void {
+  if (filterBoardRef.value?.reloadProjsets) {
+    filterBoardRef.value.reloadProjsets();
+  }
+  projsetCreatorOpen.value = false;
 }
 
 // 初始化加载（仅在拥有 moetran token 时进行）
@@ -490,6 +525,7 @@ function handleModifierBack(): void {
               v-model="currentFilterOptions"
               :disabled="viewMode === 'assignments'"
               @applyFilter="handleApplyFilter"
+              ref="filterBoardRef"
             />
           </div>
         </div>
@@ -506,6 +542,7 @@ function handleModifierBack(): void {
               @open-detail="handleOpenDetail"
               @create="handleOpenCreator"
               @view-change="handleViewChange"
+              @create-projset="handleOpenProjsetCreator"
             />
             <AssignmentList
               v-else-if="viewMode === 'assignments'"
@@ -575,6 +612,17 @@ function handleModifierBack(): void {
 
       <!-- 缓存项目管理悬浮窗 -->
       <CachedProjectsModal v-if="showCachedModal" @close="showCachedModal = false" />
+
+      <!-- 项目集创建弹窗 -->
+      <div v-if="projsetCreatorOpen" class="projset-overlay">
+        <div class="projset-creator-modal">
+          <ProjectSetCreatorView
+            :team-id="activeTeamId"
+            @close="handleCloseProjsetCreator"
+            @created="handleProjsetCreated"
+          />
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -1015,5 +1063,25 @@ function handleModifierBack(): void {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* 项目集创建弹窗样式 */
+.projset-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 20, 40, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+
+.projset-creator-modal {
+  width: 600px;
+  max-width: calc(100% - 40px);
+  max-height: calc(100vh - 80px);
+  overflow: hidden;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(30, 60, 100, 0.4);
 }
 </style>

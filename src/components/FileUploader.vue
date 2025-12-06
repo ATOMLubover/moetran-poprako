@@ -24,6 +24,13 @@ const isUploading = ref(false);
 // 获取当前项目的上传组
 const uploadGroup = computed(() => uploadStore.uploadGroups.get(props.projectId));
 
+// 私有类型：上传文件描述
+interface _UploadFile {
+  fileName: string;
+  filePath: string;
+  file: File;
+}
+
 // 监听visible变化，关闭时清理状态
 watch(
   () => props.visible,
@@ -53,7 +60,8 @@ async function handleFilesSelected(event: Event): Promise<void> {
 
   // 验证文件类型
   const allowedExts = ['jpg', 'jpeg', 'png', 'bmp'];
-  const validFiles: Array<{ fileName: string; filePath: string; file: File }> = [];
+
+  const validFiles: _UploadFile[] = [];
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
@@ -104,9 +112,7 @@ async function handleFilesSelected(event: Event): Promise<void> {
 }
 
 // 处理上传队列（5并发）
-async function processUploadQueue(
-  files: Array<{ fileName: string; filePath: string; file: File }>
-): Promise<void> {
+async function processUploadQueue(files: _UploadFile[]): Promise<void> {
   const CONCURRENCY = 5;
 
   // 使用索引队列和 worker 池实现稳定的并发控制
@@ -167,12 +173,13 @@ async function uploadSingleFile(taskId: string, file: File): Promise<void> {
 
     // 上传成功
     uploadStore.updateTask(taskId, { status: 'success', progress: 100 });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('Upload failed:', err);
+    const msg = err instanceof Error ? err.message : String(err);
     uploadStore.updateTask(taskId, {
       status: 'failed',
       progress: 0,
-      error: err?.message || String(err),
+      error: msg,
     });
   } finally {
     uploadStore.decrementActive();

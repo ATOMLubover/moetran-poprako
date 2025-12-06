@@ -26,13 +26,30 @@ interface MemberInfo {
   name: string;
 }
 
+// 私有类型：本视图使用的表单数据
+interface _ModifierProjectInfo {
+  name: string;
+  description: string;
+}
+
+// 私有类型：pickedAll 列表项
+interface _ModifierPickedItem {
+  id: string;
+  name: string;
+  position: 'translator' | 'proofreader' | 'typesetter';
+}
+
+// 私有类型：状态更新条目
+interface _StatusUpdate {
+  type: 'translating' | 'proofreading' | 'typesetting' | 'reviewing';
+  oldVal: number;
+  newVal: number;
+}
+
 const emit = defineEmits<{ (e: 'close'): void; (e: 'back'): void }>();
 
 // Form data
-const projectInfo = ref<{
-  name: string;
-  description: string;
-}>({
+const projectInfo = ref<_ModifierProjectInfo>({
   name: props.projectName,
   description: props.projectDescription ?? '',
 });
@@ -86,9 +103,7 @@ onMounted(() => {
 // Member selector state
 const selectorOpen = ref(false);
 const selectorRole = ref<'translator' | 'proofreader' | 'typesetter' | null>(null);
-const pickedAll = ref<
-  { id: string; name: string; position: 'translator' | 'proofreader' | 'typesetter' }[]
->([]);
+const pickedAll = ref<_ModifierPickedItem[]>([]);
 
 function openSelector(role: 'translator' | 'proofreader' | 'typesetter'): void {
   selectorRole.value = role;
@@ -172,11 +187,7 @@ async function handleUpdateProject(): Promise<void> {
 
   try {
     // 1. Update phase statuses (if changed)
-    const statusUpdates: Array<{
-      type: 'translating' | 'proofreading' | 'typesetting' | 'reviewing';
-      oldVal: number;
-      newVal: number;
-    }> = [
+    const statusUpdates: _StatusUpdate[] = [
       {
         type: 'translating',
         oldVal: props.translatingStatus ?? 0,

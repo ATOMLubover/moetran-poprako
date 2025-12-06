@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue';
 import MemberSelector, { MemberInfo } from './MemberSelector.vue';
-import ProjectSetCreatorView from '../views/ProjectSetCreatorView.vue';
 import { getTeamPoprakoProjsets, type PoprakoProjsetInfo } from '../ipc/project';
 import { useToastStore } from '../stores/toast';
 // 与示例逻辑对应的筛选面板，实现项目集/项目/成员/状态筛选
@@ -17,6 +16,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:modelValue', options: FilterOption[]): void;
   (e: 'applyFilter'): void; // 通知父组件应用筛选（确认查询或清空时触发）
+  (e: 'openProjsetCreator'): void; // 通知父组件打开项目集创建弹窗
 }>();
 
 const toastStore = useToastStore();
@@ -37,10 +37,8 @@ const filterOptions = computed({
 // 高级成员选择（职位+多选）
 const advancedPickedMembers = ref<MemberInfo[]>([]);
 const memberSelectorOpen = ref(false);
-const memberSelectorRole = ref<MemberInfo['position'] | null>(null);
 
-function openMemberSelector(role: MemberInfo['position']): void {
-  memberSelectorRole.value = role;
+function openMemberSelector(): void {
   memberSelectorOpen.value = true;
 }
 
@@ -57,6 +55,7 @@ function handleMemberSelectorConfirm(): void {
       filterOptions.value.push({ label, key, value: m.id });
     }
   }
+  advancedPickedMembers.value = [];
 }
 
 function handleMemberSelectorCancel(): void {
@@ -87,8 +86,6 @@ const projsetLoading = ref(false);
 // projset 选择弹窗状态与临时选中项
 const projsetSelectorOpen = ref(false);
 const projsetPickedIds = ref<string[]>([]);
-// 创建项目集弹窗状态
-const projsetCreatorOpen = ref(false);
 // 时间筛选状态（time_start unix 时间戳）
 const selectedTimeRange = ref<'1day' | '1week' | '1month' | null>(null);
 
@@ -204,19 +201,15 @@ function openProjsetSelector(): void {
   projsetSelectorOpen.value = true;
 }
 
-function openProjsetCreator(): void {
-  if (!props.teamId) return;
-  projsetCreatorOpen.value = true;
-}
-
-function closeProjsetCreator(): void {
-  projsetCreatorOpen.value = false;
-}
-
-function onProjsetCreated(): void {
-  // 创建成功后重新加载项目集列表
+// 重新加载项目集列表的公开方法（供父组件在创建项目集后调用）
+function reloadProjsets(): void {
   void loadProjsetsForCurrentTeam();
 }
+
+// 暴露给父组件
+defineExpose({
+  reloadProjsets,
+});
 
 // 时间筛选：计算 time_start 并添加到筛选条件
 function selectTimeRange(range: '1day' | '1week' | '1month'): void {
@@ -312,8 +305,8 @@ function onConfirm() {
       <button class="fb-confirm-btn" @click="onConfirm" :disabled="!canConfirm">确认查询</button>
     </div>
 
-    <!-- 第一行：项目名（模糊搜索） -->
-    <div class="fb-row fb-row--tight">
+    <!-- 第一行：项目名（模糊搜索）+ 项目集选择（右对齐） -->
+    <div class="fb-row fb-row--tight" style="align-items: center">
       <label class="fb-label">项目名称</label>
       <input
         class="fb-input"
@@ -322,12 +315,8 @@ function onConfirm() {
         @keyup.enter="onEnterProject"
         :disabled="!filterEnabled"
       />
-    </div>
-
-    <!-- 第二行：左侧为项目集选择；右侧为成员筛选按钮（右对齐） -->
-    <div class="fb-row fb-row--tight" style="align-items: center">
-      <div style="display: flex; align-items: center; gap: 8px; flex: 1">
-        <label class="fb-label">项目集</label>
+      <div style="display: flex; align-items: center; gap: 8px; margin-left: auto">
+        <label class="fb-label fb-label--small">项目集</label>
         <button
           class="fb-adv-btn"
           @click="openProjsetSelector"
@@ -335,43 +324,6 @@ function onConfirm() {
         >
           选择
         </button>
-        <button
-          class="fb-adv-btn"
-          @click="openProjsetCreator"
-          :disabled="!filterEnabled || !props.teamId"
-        >
-          创建
-        </button>
-      </div>
-
-      <div style="display: flex; align-items: center; gap: 8px; margin-left: 12px">
-        <label class="fb-label fb-label--small">成员</label>
-        <div class="fb-member-role-btns">
-          <button
-            type="button"
-            class="fb-role-btn"
-            @click="() => openMemberSelector('translator')"
-            :disabled="!filterEnabled || !teamAvailable"
-          >
-            翻译
-          </button>
-          <button
-            type="button"
-            class="fb-role-btn"
-            @click="() => openMemberSelector('proofreader')"
-            :disabled="!filterEnabled || !teamAvailable"
-          >
-            校对
-          </button>
-          <button
-            type="button"
-            class="fb-role-btn"
-            @click="() => openMemberSelector('typesetter')"
-            :disabled="!filterEnabled || !teamAvailable"
-          >
-            嵌字
-          </button>
-        </div>
       </div>
     </div>
 
@@ -411,10 +363,10 @@ function onConfirm() {
 
     <!-- 状态选择（强制单行填充） -->
 
-    <!-- 时间筛选 -->
-    <div class="fb-row fb-row--tight fb-time-filter">
+    <!-- 时间筛选 + 成员筛选 -->
+    <div class="fb-row fb-row--tight fb-time-filter" style="align-items: center">
       <label class="fb-label">发布时间</label>
-      <div class="fb-time-btns">
+      <div class="fb-time-btns" style="flex: 1; display: flex; gap: 8px">
         <button
           class="fb-time-btn"
           :class="{ 'fb-time-btn--active': selectedTimeRange === '1day' }"
@@ -438,6 +390,17 @@ function onConfirm() {
           :disabled="!filterEnabled || !teamAvailable"
         >
           近一个月
+        </button>
+      </div>
+      <div class="fb-member-compact">
+        <label class="fb-label fb-label--small">成员</label>
+        <button
+          type="button"
+          class="fb-adv-btn"
+          @click="openMemberSelector"
+          :disabled="!filterEnabled || !teamAvailable"
+        >
+          选择
         </button>
       </div>
     </div>
@@ -468,22 +431,10 @@ function onConfirm() {
       :show="memberSelectorOpen"
       :picked="advancedPickedMembers"
       :team-id="props.teamId"
-      :initial-role="memberSelectorRole ?? undefined"
       @confirm="handleMemberSelectorConfirm"
       @cancel="handleMemberSelectorCancel"
       @close="handleMemberSelectorClose"
     />
-
-    <!-- 创建项目集弹窗 -->
-    <div v-if="projsetCreatorOpen" class="projset-overlay">
-      <div class="projset-creator-modal">
-        <ProjectSetCreatorView
-          :team-id="props.teamId"
-          @close="closeProjsetCreator"
-          @created="onProjsetCreated"
-        />
-      </div>
-    </div>
 
     <!-- 项目集选择弹窗 -->
     <div v-if="projsetSelectorOpen" class="projset-overlay">
@@ -810,6 +761,7 @@ function onConfirm() {
     transform 0.16s ease,
     background 0.12s ease,
     box-shadow 0.12s ease;
+  min-width: 138px; /* Ensure member/projset buttons keep a readable width */
 }
 .fb-adv-btn:hover {
   background: #eaf6ff;
@@ -854,11 +806,13 @@ function onConfirm() {
 .fb-time-btns {
   display: flex;
   gap: 8px;
-  flex: 1;
+  flex: 1 1 auto; /* 占据发布时间标签右侧的剩余宽度 */
+  min-width: 0; /* 允许子项在窄容器中正确收缩 */
 }
 .fb-time-btn {
-  flex: 1;
-  padding: 8px 12px;
+  padding: 6px 10px; /* 缩减高度 */
+  height: 30px;
+  line-height: 1;
   border: 1px solid rgba(180, 206, 238, 0.7);
   background: rgba(246, 250, 255, 0.9);
   color: #2b577e;
@@ -871,6 +825,18 @@ function onConfirm() {
     background 0.12s ease,
     box-shadow 0.12s ease,
     border-color 0.12s ease;
+  flex: 1 1 0; /* 三个按钮等分父容器宽度 */
+  min-width: 0; /* 避免溢出导致布局被破坏 */
+}
+
+.fb-member-compact {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto; /* 右对齐到整行末端，参考项目集一行的实现 */
+  flex: 0 0 auto;
+  min-width: 140px; /* 在窄屏下仍保留基本空间 */
+  justify-content: flex-end; /* 内容靠右，使按钮贴近右侧边缘 */
 }
 .fb-time-btn:hover:not(:disabled) {
   background: #eaf6ff;

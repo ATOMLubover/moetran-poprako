@@ -23,20 +23,30 @@ interface MemberInfo {
   name: string;
 }
 
-const emit = defineEmits<{ (e: 'close'): void }>();
-
-// 作者名输入
-const authorName = ref<string>('');
-
-// 表单主体数据
-const projectInfo = ref<{
+// 私有类型：创建项目表单数据
+interface _ProjectCreateInfo {
   title: string;
   description: string;
   allowAutoJoin: boolean;
   isHidden: boolean;
   applicantMemberId: number;
   worksetId: number;
-}>({
+}
+
+// 私有类型：pickedAll 列表项
+interface _PickedAllItem {
+  id: string;
+  name: string;
+  position: 'translator' | 'proofreader' | 'typesetter';
+}
+
+const emit = defineEmits<{ (e: 'close'): void }>();
+
+// 作者名输入
+const authorName = ref<string>('');
+
+// 表单主体数据
+const projectInfo = ref<_ProjectCreateInfo>({
   title: '',
   description: '',
   allowAutoJoin: false,
@@ -118,9 +128,7 @@ const invitedTypesetters = ref<MemberInfo[]>([]);
 // that includes position so the component can manage picks across roles.
 const selectorOpen = ref(false);
 const selectorRole = ref<'translator' | 'proofreader' | 'typesetter' | null>(null);
-const pickedAll = ref<
-  { id: string; name: string; position: 'translator' | 'proofreader' | 'typesetter' }[]
->([]);
+const pickedAll = ref<_PickedAllItem[]>([]);
 
 function openSelector(role: 'translator' | 'proofreader' | 'typesetter'): void {
   selectorRole.value = role;
@@ -267,11 +275,14 @@ async function handleCreateProject(): Promise<void> {
       })
     );
 
-    const failedDetails = assignResults.filter(r => !r.ok) as Array<{
+    // 私有类型：指派失败明细
+    interface _AssignFailure {
       invite: { id: string; role: 'translator' | 'proofreader' | 'typesetter' };
       ok: false;
       error: unknown;
-    }>;
+    }
+
+    const failedDetails = assignResults.filter(r => !r.ok) as _AssignFailure[];
 
     if (failedDetails.length > 0) {
       const brief = failedDetails

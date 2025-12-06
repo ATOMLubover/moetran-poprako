@@ -15,36 +15,42 @@ import type { ResMember } from '../api/model/member';
 
 // 使用共享类型定义（见 src/api/model/displayProject.ts）
 
+// 私有类型：用于 open-detail 事件的负载，避免匿名结构体
+interface _ProjectListOpenDetailPayload {
+  id: string;
+  title: string;
+  projsetName: string | null;
+  projsetIndex: number | null;
+  totalMarkers: number | null;
+  totalTranslated: number | null;
+  totalChecked: number | null;
+  translatingStatus: number | null;
+  proofreadingStatus: number | null;
+  typesettingStatus: number | null;
+  reviewingStatus: number | null;
+  translators: string[];
+  proofreaders: string[];
+  letterers: string[];
+  reviewers: string[];
+  principals?: string[];
+  members?: ResMember[];
+  isPublished?: boolean;
+  hasPoprako?: boolean;
+  role?: _ProjectRole | null;
+  teamId?: string;
+}
+
+// 私有类型：通用 role passthrough
+interface _ProjectRole {
+  [key: string]: unknown;
+}
+
 // 组件事件：打开详情 / 创建项目
 const emit = defineEmits<{
-  (
-    e: 'open-detail',
-    payload: {
-      id: string;
-      title: string;
-      projsetName: string | null;
-      projsetIndex: number | null;
-      totalMarkers: number | null;
-      totalTranslated: number | null;
-      totalChecked: number | null;
-      translatingStatus: number | null;
-      proofreadingStatus: number | null;
-      typesettingStatus: number | null;
-      reviewingStatus: number | null;
-      translators: string[];
-      proofreaders: string[];
-      letterers: string[];
-      reviewers: string[];
-      principals?: string[];
-      members?: ResMember[];
-      isPublished?: boolean;
-      hasPoprako?: boolean;
-      role?: any | null;
-      teamId?: string;
-    }
-  ): void;
+  (e: 'open-detail', payload: _ProjectListOpenDetailPayload): void;
   (e: 'create'): void;
   (e: 'view-change', view: 'projects' | 'assignments'): void;
+  (e: 'create-projset'): void;
 }>();
 
 const props = defineProps<{
@@ -94,7 +100,7 @@ type ProjectListItem = ProjectBasicInfo & { hasPoprako?: boolean } & {
   principals?: string[];
   projectSetName?: string | null;
   members?: ResMember[];
-  role?: any | null;
+  role?: _ProjectRole | null;
 };
 
 const innerProjects = ref<ProjectListItem[]>([]);
@@ -258,7 +264,7 @@ function mapEnrichedToBasic(apiRes: ResProjectEnriched[]): ProjectListItem[] {
       isPublished: p.isPublished ?? false,
       principals: p.principals ?? [],
       members: (p.members ?? []) as ResMember[],
-      role: (p as any).role ?? null,
+      role: p.role ?? null,
       phases,
     };
 
@@ -501,14 +507,10 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="project-list__publish"
-          @click="
-            () => {
-              /* TODO: 发布项目回调 */
-            }
-          "
+          @click="$emit('create-projset')"
           :disabled="isLoading || !canCreate"
         >
-          发布项目
+          创建项目集
         </button>
         <button
           type="button"
