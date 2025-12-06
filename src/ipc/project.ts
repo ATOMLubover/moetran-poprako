@@ -13,6 +13,7 @@ interface RawPoprakoMember {
   is_translator?: boolean;
   is_proofreader?: boolean;
   is_typesetter?: boolean;
+  is_redrawer?: boolean;
   is_principal?: boolean;
 }
 
@@ -76,6 +77,7 @@ function mapRawMember(m: RawPoprakoMember): ResMember {
     isTranslator: !!m.is_translator,
     isProofreader: !!m.is_proofreader,
     isTypesetter: !!m.is_typesetter,
+    isRedrawer: !!m.is_redrawer,
     isPrincipal: !!m.is_principal,
   };
 }
@@ -377,6 +379,7 @@ export interface AssignMemberPayload {
   isTranslator: boolean;
   isProofreader: boolean;
   isTypesetter: boolean;
+  isRedrawer: boolean;
   isPrincipal: boolean;
 }
 
@@ -388,6 +391,7 @@ export async function assignMemberToProj(payload: AssignMemberPayload): Promise<
       is_translator: payload.isTranslator,
       is_proofreader: payload.isProofreader,
       is_typesetter: payload.isTypesetter,
+      is_redrawer: payload.isRedrawer,
       is_principal: payload.isPrincipal,
     },
   });
@@ -434,6 +438,7 @@ interface RawResAssignment {
   is_translator: boolean;
   is_proofreader: boolean;
   is_typesetter: boolean;
+  is_redrawer: boolean;
   updated_at: number;
 }
 
@@ -454,6 +459,7 @@ export async function getAssignments(timeStart?: number): Promise<ResAssignment[
     isTranslator: r.is_translator,
     isProofreader: r.is_proofreader,
     isTypesetter: r.is_typesetter,
+    isRedrawer: r.is_redrawer,
     updatedAt: r.updated_at,
   }));
 }

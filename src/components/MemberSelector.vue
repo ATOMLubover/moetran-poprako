@@ -7,7 +7,7 @@ import { ResMemberBrief } from '../api/model/member';
 export interface MemberInfo {
   id: string;
   name: string;
-  position: 'translator' | 'proofreader' | 'typesetter';
+  position: 'translator' | 'proofreader' | 'typesetter' | 'redrawer' | 'principal';
 }
 
 // Props 设计：
@@ -42,6 +42,8 @@ const ROLE_LABEL: Record<MemberInfo['position'], string> = {
   translator: '翻译',
   proofreader: '校对',
   typesetter: '嵌字',
+  redrawer: '美工',
+  principal: '监修',
 };
 
 // 默认实现：通过 IPC 调用后端成员搜索接口
@@ -165,6 +167,8 @@ const pickedDisplayByRole = computed(() => {
     translator: [],
     proofreader: [],
     typesetter: [],
+    redrawer: [],
+    principal: [],
   };
   for (const m of props.picked) {
     groups[m.position].push(m.name);
@@ -179,7 +183,7 @@ const pickedDisplayByRole = computed(() => {
       <header class="ms-header">
         <nav class="ms-roles">
           <button
-            v-for="r in ['translator', 'proofreader', 'typesetter']"
+            v-for="r in ['translator', 'proofreader', 'typesetter', 'redrawer', 'principal']"
             :key="r"
             type="button"
             class="ms-role-btn"
@@ -247,6 +251,14 @@ const pickedDisplayByRole = computed(() => {
           <div class="ms-picked-row" v-if="pickedDisplayByRole.typesetter.length">
             <span class="ms-picked-label">嵌字：</span>
             <span class="ms-picked-names">{{ pickedDisplayByRole.typesetter.join('、') }}</span>
+          </div>
+          <div class="ms-picked-row" v-if="pickedDisplayByRole.redrawer.length">
+            <span class="ms-picked-label">美工：</span>
+            <span class="ms-picked-names">{{ pickedDisplayByRole.redrawer.join('、') }}</span>
+          </div>
+          <div class="ms-picked-row" v-if="pickedDisplayByRole.principal.length">
+            <span class="ms-picked-label">监修：</span>
+            <span class="ms-picked-names">{{ pickedDisplayByRole.principal.join('、') }}</span>
           </div>
         </div>
 

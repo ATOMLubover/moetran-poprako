@@ -37,7 +37,7 @@ interface _ProjectCreateInfo {
 interface _PickedAllItem {
   id: string;
   name: string;
-  position: 'translator' | 'proofreader' | 'typesetter';
+  position: 'translator' | 'proofreader' | 'typesetter' | 'redrawer';
 }
 
 const emit = defineEmits<{ (e: 'close'): void }>();
@@ -123,14 +123,15 @@ async function loadProjsetsForCurrentTeam(): Promise<void> {
 const invitedTranslators = ref<MemberInfo[]>([]);
 const invitedProofreaders = ref<MemberInfo[]>([]);
 const invitedTypesetters = ref<MemberInfo[]>([]);
+const invitedRedrawers = ref<MemberInfo[]>([]);
 
 // Use the shared MemberSelector component: maintain a single picked list
 // that includes position so the component can manage picks across roles.
 const selectorOpen = ref(false);
-const selectorRole = ref<'translator' | 'proofreader' | 'typesetter' | null>(null);
+const selectorRole = ref<'translator' | 'proofreader' | 'typesetter' | 'redrawer' | null>(null);
 const pickedAll = ref<_PickedAllItem[]>([]);
 
-function openSelector(role: 'translator' | 'proofreader' | 'typesetter'): void {
+function openSelector(role: 'translator' | 'proofreader' | 'typesetter' | 'redrawer'): void {
   selectorRole.value = role;
   // build pickedAll from existing invited lists
   pickedAll.value = [
@@ -148,6 +149,11 @@ function openSelector(role: 'translator' | 'proofreader' | 'typesetter'): void {
       id: m.id,
       name: m.name,
       position: 'typesetter' as const,
+    })),
+    ...invitedRedrawers.value.map(m => ({
+      id: m.id,
+      name: m.name,
+      position: 'redrawer' as const,
     })),
   ];
   selectorOpen.value = true;
@@ -170,6 +176,9 @@ function onMemberSelectorConfirm(): void {
   invitedTypesetters.value = pickedAll.value
     .filter(p => p.position === 'typesetter')
     .map(p => ({ id: p.id, name: p.name }));
+  invitedRedrawers.value = pickedAll.value
+    .filter(p => p.position === 'redrawer')
+    .map(p => ({ id: p.id, name: p.name }));
 
   closeSelector();
 }
@@ -184,6 +193,9 @@ function onMemberSelectorCancel(): void {
     .map(p => ({ id: p.id, name: p.name }));
   invitedTypesetters.value = pickedAll.value
     .filter(p => p.position === 'typesetter')
+    .map(p => ({ id: p.id, name: p.name }));
+  invitedRedrawers.value = pickedAll.value
+    .filter(p => p.position === 'redrawer')
     .map(p => ({ id: p.id, name: p.name }));
 
   closeSelector();
@@ -249,10 +261,14 @@ async function handleCreateProject(): Promise<void> {
 
     const projId = created.projId;
 
-    const allInvites: { id: string; role: 'translator' | 'proofreader' | 'typesetter' }[] = [
+    const allInvites: {
+      id: string;
+      role: 'translator' | 'proofreader' | 'typesetter' | 'redrawer';
+    }[] = [
       ...invitedTranslators.value.map(m => ({ id: m.id, role: 'translator' as const })),
       ...invitedProofreaders.value.map(m => ({ id: m.id, role: 'proofreader' as const })),
       ...invitedTypesetters.value.map(m => ({ id: m.id, role: 'typesetter' as const })),
+      ...invitedRedrawers.value.map(m => ({ id: m.id, role: 'redrawer' as const })),
     ];
 
     // 按照异常（reject）来检测每个指派操作的失败，并收集失败明细以便展示或重试
@@ -265,6 +281,7 @@ async function handleCreateProject(): Promise<void> {
             isTranslator: invite.role === 'translator',
             isProofreader: invite.role === 'proofreader',
             isTypesetter: invite.role === 'typesetter',
+            isRedrawer: invite.role === 'redrawer',
             isPrincipal: false,
           });
 
@@ -277,7 +294,7 @@ async function handleCreateProject(): Promise<void> {
 
     // 私有类型：指派失败明细
     interface _AssignFailure {
-      invite: { id: string; role: 'translator' | 'proofreader' | 'typesetter' };
+      invite: { id: string; role: 'translator' | 'proofreader' | 'typesetter' | 'redrawer' };
       ok: false;
       error: unknown;
     }
@@ -455,6 +472,18 @@ async function handleCreateProject(): Promise<void> {
             </span>
           </div>
           <button type="button" class="creator-invite-btn" @click="openSelector('typesetter')">
+            邀请
+          </button>
+        </div>
+
+        <div class="creator-invite-item">
+          <div class="creator-invite-text">
+            美工：
+            <span class="creator-invite-names">
+              {{ invitedRedrawers.length ? invitedRedrawers.map(m => m.name).join('、') : '暂无' }}
+            </span>
+          </div>
+          <button type="button" class="creator-invite-btn" @click="openSelector('redrawer')">
             邀请
           </button>
         </div>

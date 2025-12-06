@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ResMemberBrief, ResMemberInfo } from '../api/model/member';
 
-export type MemberPosition = 'translator' | 'proofreader' | 'typesetter' | 'principal';
+export type MemberPosition = 'translator' | 'proofreader' | 'typesetter' | 'principal' | 'redrawer';
 
 export interface GetMembersParams {
   teamId: string;
@@ -52,6 +52,7 @@ export async function getMemberInfo(teamId: string): Promise<ResMemberInfo> {
     is_proofreader?: boolean;
     is_typesetter?: boolean;
     is_principal?: boolean;
+    is_redrawer?: boolean;
   }
 
   const raw = await invoke<RawMemberInfo>('get_member_info', { payload: { team_id: teamId } });
@@ -62,5 +63,6 @@ export async function getMemberInfo(teamId: string): Promise<ResMemberInfo> {
     isProofreader: raw.is_proofreader === true,
     isTypesetter: raw.is_typesetter === true,
     isPrincipal: raw.is_principal === true,
+    isRedrawer: raw.is_redrawer === true,
   };
 }

@@ -147,6 +147,7 @@ curl -H "Authorization: Bearer <jwt>" \
         "is_translator": true,
         "is_proofreader": false,
         "is_typesetter": false,
+        "is_redrawer": false,
         "is_principal": false
     }
 }
@@ -194,7 +195,7 @@ curl -G https://api.example.com/api/v1/members/info \
 字段说明（接受 camelCase 别名）：
 
 - `team_id`（必填）：所属团队 ID
-- `position`（可选）：职位过滤，取值：`translator` / `proofreader` / `typesetter` / `principal`
+- `position`（可选）：职位过滤，取值：`translator` / `proofreader` / `typesetter` / `principal` / `redrawer`
 - `fuzzy_name`（可选）：用户名模糊匹配关键字
 - `page`：页码，从 1 开始，默认 1
 - `limit`：每页条数，默认 10
@@ -486,7 +487,7 @@ curl -X POST https://api.example.com/api/v1/projs \
 - `projset_ids`（可选）：按项目集 ID 列表过滤
 - `translating_status`（可选）：翻译流程状态（0/1/2）
 - `proofreading_status`（可选）：校对流程状态（0/1/2）
-- `typesetting_status`（可选）：排版流程状态（0/1/2）
+- `typesetting_status`（可选）：嵌字流程状态（0/1/2）
 - `reviewing_status`（可选）：评审流程状态（0/1/2）
 - `is_published`（可选）：是否已发布
 - `member_ids`（可选）：仅返回包含指定成员的项目
@@ -520,6 +521,7 @@ curl -X POST https://api.example.com/api/v1/projs \
                     "is_translator": true,
                     "is_proofreader": false,
                     "is_typesetter": false,
+                    "is_redrawer": false,
                     "is_principal": true
                 }
             ]
@@ -666,7 +668,8 @@ curl -X PUT https://api.example.com/api/v1/projs/proj_id_1/publish \
     "mtr_auth": "<moetran-access-token>",
     "is_translator": true,
     "is_proofreader": false,
-    "is_typesetter": false
+    "is_typesetter": false,
+    "is_redrawer": false,
 }
 ```
 
@@ -677,7 +680,8 @@ curl -X PUT https://api.example.com/api/v1/projs/proj_id_1/publish \
 - `mtr_auth`（必填）：Moetran 访问 token
 - `is_translator`（可选，默认 false）：是否分配翻译角色
 - `is_proofreader`（可选，默认 false）：是否分配校对角色
-- `is_typesetter`（可选，默认 false）：是否分配排版角色
+- `is_typesetter`（可选，默认 false）：是否分配嵌字角色
+- `is_redrawer`（可选，默认 false）：是否分配美工角色
 
 成功响应（204）：
 
@@ -741,7 +745,8 @@ ProjAssignInfo 字段：
 - `username` (string) - 成员用户名
 - `is_translator` (boolean) - 是否为翻译
 - `is_proofreader` (boolean) - 是否为校对
-- `is_typesetter` (boolean) - 是否为排版
+- `is_typesetter` (boolean) - 是否为嵌字
+- `is_redrawer` (boolean) - 是否是美工
 - `updated_at` (integer, unix timestamp) - 分配记录更新时间（秒）
 
 示例响应：
@@ -816,7 +821,7 @@ ProjAssignInfo 字段：
 - `"63d87c24b8bebd75ff934265"`：`PRINCIPAL`（负责人）
 - `"63d87c24b8bebd75ff934266"`：`PROOFREADER`（校对）
 - `"63d87c24b8bebd75ff934267"`：`TRANSLATOR`（翻译）
-- `"63d87c24b8bebd75ff934268"`：`TYPESETTER`（排版）
+- `"63d87c24b8bebd75ff934268"`：`TYPESETTER`（嵌字）
 - `"63d87c24b8bebd75ff934269"`：`INTERN`（实习）
 
 ### 语言代码
@@ -954,6 +959,7 @@ curl -X POST https://api.example.com/api/v1/projs/search \
                     "is_translator": true,
                     "is_proofreader": false,
                     "is_typesetter": false,
+                    "is_redrawer": false,
                     "is_principal": true
                 }
             ]

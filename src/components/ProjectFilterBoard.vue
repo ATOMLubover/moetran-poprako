@@ -47,6 +47,8 @@ function handleMemberSelectorConfirm(): void {
     translator: '翻译',
     proofreader: '校对',
     typesetter: '嵌字',
+    redrawer: '美工',
+    principal: '监修',
   };
   for (const m of advancedPickedMembers.value) {
     const key = `member-${m.position}`;

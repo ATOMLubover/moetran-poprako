@@ -214,11 +214,12 @@ async function fetchAssignments(): Promise<void> {
       const timeOffset = (i % 30) * 86400; // 0 to 29 days, fixed
       const updatedAt = now - timeOffset;
 
-      const roles = ['translator', 'proofreader', 'typesetter'];
+      const roles = ['translator', 'proofreader', 'typesetter', 'redrawer'];
       const roleIndex = i % roles.length;
       const isTranslator = roleIndex === 0;
       const isProofreader = roleIndex === 1;
       const isTypesetter = roleIndex === 2;
+      const isRedrawer = roleIndex === 3;
 
       mockData.push({
         projId: `proj-${i}`,
@@ -230,6 +231,7 @@ async function fetchAssignments(): Promise<void> {
         isTranslator,
         isProofreader,
         isTypesetter,
+        isRedrawer,
         updatedAt,
       });
     }
@@ -407,6 +409,9 @@ watch(
                       class="assign-role-badge assign-role--typesetter"
                     >
                       嵌字
+                    </span>
+                    <span v-if="assign.isRedrawer" class="assign-role-badge assign-role--redrawer">
+                      美工
                     </span>
                   </div>
                   <div class="assign-card__member">{{ assign.username }}</div>
@@ -717,6 +722,12 @@ watch(
   background: rgba(214, 189, 239, 0.95); /* 淡紫色 */
   color: #4a2a6a;
   border: 1px solid rgba(205, 180, 255, 0.6);
+}
+
+.assign-role--redrawer {
+  background: rgba(180, 220, 160, 0.95); /* 草绿色 */
+  color: #3a5a2a;
+  border: 1px solid rgba(160, 200, 140, 0.6);
 }
 
 .assign-card__primary {

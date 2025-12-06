@@ -10,5 +10,6 @@ export interface ResAssignment {
   isTranslator: boolean;
   isProofreader: boolean;
   isTypesetter: boolean;
+  isRedrawer: boolean;
   updatedAt: number; // Unix timestamp (seconds)
 }

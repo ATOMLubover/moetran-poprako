@@ -36,7 +36,7 @@ interface _ModifierProjectInfo {
 interface _ModifierPickedItem {
   id: string;
   name: string;
-  position: 'translator' | 'proofreader' | 'typesetter';
+  position: 'translator' | 'proofreader' | 'typesetter' | 'redrawer';
 }
 
 // 私有类型：状态更新条目
@@ -77,6 +77,7 @@ const existingMembers = ref<MemberInfo[]>([]);
 const currentTranslators = ref<MemberInfo[]>([]);
 const currentProofreaders = ref<MemberInfo[]>([]);
 const currentTypesetters = ref<MemberInfo[]>([]);
+const currentRedrawers = ref<MemberInfo[]>([]);
 
 onMounted(() => {
   // Map props.members to local lists by role
@@ -97,21 +98,26 @@ onMounted(() => {
     currentTypesetters.value = props.members
       .filter(m => m.isTypesetter)
       .map(m => ({ id: m.memberId, name: m.username || m.userId || m.memberId }));
+
+    currentRedrawers.value = props.members
+      .filter(m => m.isRedrawer)
+      .map(m => ({ id: m.memberId, name: m.username || m.userId || m.memberId }));
   }
 });
 
 // Member selector state
 const selectorOpen = ref(false);
-const selectorRole = ref<'translator' | 'proofreader' | 'typesetter' | null>(null);
+const selectorRole = ref<'translator' | 'proofreader' | 'typesetter' | 'redrawer' | null>(null);
 const pickedAll = ref<_ModifierPickedItem[]>([]);
 
-function openSelector(role: 'translator' | 'proofreader' | 'typesetter'): void {
+function openSelector(role: 'translator' | 'proofreader' | 'typesetter' | 'redrawer'): void {
   selectorRole.value = role;
   // build pickedAll from current lists
   pickedAll.value = [
     ...currentTranslators.value.map(m => ({ ...m, position: 'translator' as const })),
     ...currentProofreaders.value.map(m => ({ ...m, position: 'proofreader' as const })),
     ...currentTypesetters.value.map(m => ({ ...m, position: 'typesetter' as const })),
+    ...currentRedrawers.value.map(m => ({ ...m, position: 'redrawer' as const })),
   ];
   selectorOpen.value = true;
 }
@@ -133,6 +139,9 @@ function onMemberSelectorConfirm(): void {
   currentTypesetters.value = pickedAll.value
     .filter(p => p.position === 'typesetter')
     .map(p => ({ id: p.id, name: p.name }));
+  currentRedrawers.value = pickedAll.value
+    .filter(p => p.position === 'redrawer')
+    .map(p => ({ id: p.id, name: p.name }));
 
   closeSelector();
 }
@@ -147,6 +156,9 @@ function onMemberSelectorCancel(): void {
     .map(p => ({ id: p.id, name: p.name }));
   currentTypesetters.value = pickedAll.value
     .filter(p => p.position === 'typesetter')
+    .map(p => ({ id: p.id, name: p.name }));
+  currentRedrawers.value = pickedAll.value
+    .filter(p => p.position === 'redrawer')
     .map(p => ({ id: p.id, name: p.name }));
 
   closeSelector();
@@ -231,11 +243,15 @@ async function handleUpdateProject(): Promise<void> {
     const newTypesetters = currentTypesetters.value.filter(
       m => !existingMembers.value.some(em => em.id === m.id)
     );
+    const newRedrawers = currentRedrawers.value.filter(
+      m => !existingMembers.value.some(em => em.id === m.id)
+    );
 
     const allNewMembers = new Set([
       ...newTranslators.map(m => m.id),
       ...newProofreaders.map(m => m.id),
       ...newTypesetters.map(m => m.id),
+      ...newRedrawers.map(m => m.id),
     ]);
 
     for (const memberId of allNewMembers) {
@@ -245,6 +261,7 @@ async function handleUpdateProject(): Promise<void> {
         isTranslator: newTranslators.some(m => m.id === memberId),
         isProofreader: newProofreaders.some(m => m.id === memberId),
         isTypesetter: newTypesetters.some(m => m.id === memberId),
+        isRedrawer: newRedrawers.some(m => m.id === memberId),
         isPrincipal: false,
       });
     }
@@ -415,6 +432,19 @@ async function handleUpdateProject(): Promise<void> {
               </span>
             </div>
             <button type="button" class="modifier-invite-btn" @click="openSelector('typesetter')">
+              管理
+            </button>
+          </div>
+
+          <!-- Redrawers -->
+          <div class="modifier-invite-item">
+            <div class="modifier-invite-text">
+              美工:
+              <span class="modifier-invite-names">
+                {{ currentRedrawers.map(m => m.name).join('、') || '未分配' }}
+              </span>
+            </div>
+            <button type="button" class="modifier-invite-btn" @click="openSelector('redrawer')">
               管理
             </button>
           </div>

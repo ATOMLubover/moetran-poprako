@@ -7,6 +7,7 @@ export interface ResMember {
   isTranslator: boolean;
   isProofreader: boolean;
   isTypesetter: boolean;
+  isRedrawer: boolean;
   isPrincipal: boolean;
 }
 
@@ -21,5 +22,6 @@ export interface ResMemberInfo {
   isTranslator: boolean;
   isProofreader: boolean;
   isTypesetter: boolean;
+  isRedrawer: boolean;
   isPrincipal: boolean;
 }
