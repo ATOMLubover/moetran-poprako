@@ -3,6 +3,7 @@ mod defer;
 mod http;
 mod image_cache; // 图片缓存管理
 mod member; // 成员搜索等相关
+mod notify; // 更新检查相关
 mod project; // 项目与项目集相关
 mod result_ex;
 mod storage; // 本地存储与数据目录管理
@@ -114,6 +115,8 @@ pub fn run() {
             crate::image_cache::load_cached_file,
             crate::image_cache::get_all_cached_projects_list,
             crate::image_cache::get_cached_project_info,
+            // notify
+            crate::notify::update,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running tauri application");

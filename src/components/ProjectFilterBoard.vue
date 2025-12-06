@@ -763,7 +763,7 @@ function onConfirm() {
     transform 0.16s ease,
     background 0.12s ease,
     box-shadow 0.12s ease;
-  min-width: 138px; /* Ensure member/projset buttons keep a readable width */
+  min-width: 110px; /* Ensure member/projset buttons keep a readable width */
 }
 .fb-adv-btn:hover {
   background: #eaf6ff;
@@ -837,7 +837,7 @@ function onConfirm() {
   gap: 8px;
   margin-left: auto; /* 右对齐到整行末端，参考项目集一行的实现 */
   flex: 0 0 auto;
-  min-width: 140px; /* 在窄屏下仍保留基本空间 */
+  min-width: 110px; /* 在窄屏下仍保留基本空间 */
   justify-content: flex-end; /* 内容靠右，使按钮贴近右侧边缘 */
 }
 .fb-time-btn:hover:not(:disabled) {

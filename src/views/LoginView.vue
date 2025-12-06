@@ -5,6 +5,7 @@ import { useTokenStore } from '../stores/token';
 import { getUserInfo, syncUser } from '../ipc/user';
 import { useToastStore } from '../stores/toast';
 import { aquireMoetranToken, getCaptcha } from '../ipc/auth';
+import { checkAppUpdate } from '../ipc/notify';
 
 // 使用全局 toast store
 
@@ -151,6 +152,18 @@ async function handleLogin(): Promise<void> {
 
     // 全部成功
     toastStore.show('登录成功', 'success');
+
+    // 检查应用更新
+    try {
+      const hasUpdate = await checkAppUpdate();
+      if (hasUpdate) {
+        toastStore.show('应用有更新，请前往 GitHub 下载最新版本', 'success');
+      }
+    } catch (e) {
+      // 静默忽略更新检查失败
+      console.warn('检查应用更新时出错', e);
+    }
+
     emit('logged');
   } catch (err) {
     console.error('登录失败', err);

@@ -215,7 +215,7 @@ async function handleCreateProject(): Promise<void> {
     teamId: props.teamId,
     title: projectInfo.value.title,
   });
-  if (!authorName.value || !projectInfo.value.title || !projectInfo.value.description) {
+  if (!authorName.value || !projectInfo.value.title) {
     toastStore.show('请完整填写作者、标题和描述');
 
     return;
@@ -247,7 +247,7 @@ async function handleCreateProject(): Promise<void> {
 
     const created = await createProj({
       projName: projName,
-      projDescription: projectInfo.value.description,
+      projDescription: '',
       teamId: props.teamId,
       projsetId: selectedProjsetId.value,
       mtrAuth: moetranToken.value,
@@ -360,10 +360,10 @@ async function handleCreateProject(): Promise<void> {
               placeholder="无须输入序号"
               class="creator-input"
             />
-            <div v-if="finalTitlePreview" class="creator-title-preview">
+            <!-- <div v-if="finalTitlePreview" class="creator-title-preview">
               <span class="creator-title-preview__label">最终标题预览：</span>
               <span class="creator-title-preview__text">{{ finalTitlePreview }}</span>
-            </div>
+            </div> -->
           </div>
         </div>
 
@@ -387,7 +387,7 @@ async function handleCreateProject(): Promise<void> {
           </div>
         </div>
 
-        <div class="creator-field">
+        <!-- <div class="creator-field">
           <label for="creator-desc" class="creator-label">描述</label>
           <textarea
             id="creator-desc"
@@ -397,7 +397,7 @@ async function handleCreateProject(): Promise<void> {
             placeholder="项目描述"
             class="creator-textarea"
           ></textarea>
-        </div>
+        </div> -->
 
         <!-- <div class="creator-field">
           <div class="creator-label">权限控制</div>
