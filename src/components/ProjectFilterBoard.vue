@@ -309,7 +309,7 @@ function onConfirm() {
   <div class="filter-board" :class="{ 'fb--disabled': !filterEnabled || props.disabled }">
     <div class="fb-header">
       <h3 class="fb-title">PopRaKo 筛选控制板</h3>
-      <!-- <RoundSwitch v-model="filterEnabled" /> -->
+      <button class="fb-confirm-btn" @click="onConfirm" :disabled="!canConfirm">确认查询</button>
     </div>
 
     <!-- 第一行：项目名（模糊搜索） -->
@@ -463,7 +463,6 @@ function onConfirm() {
       >
         清空条件
       </button>
-      <button class="fb-confirm-btn" @click="onConfirm" :disabled="!canConfirm">确认查询</button>
     </div>
     <MemberSelector
       :show="memberSelectorOpen"
@@ -773,7 +772,7 @@ function onConfirm() {
   background: #ff9b9b;
 }
 .fb-confirm-btn {
-  padding: 8px 18px;
+  padding: 6px 10px;
   border-radius: 10px; /* 方正却圆滑 */
   border: 1px solid rgba(118, 184, 255, 0.35);
   background: #f4f9ff; /* 轻色背景，去掉渐变 */

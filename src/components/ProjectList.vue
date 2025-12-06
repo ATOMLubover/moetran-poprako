@@ -701,7 +701,7 @@ onBeforeUnmount(() => {
   gap: 0;
   border-radius: 10px;
   overflow: hidden;
-  border: 1px solid rgba(118, 184, 255, 0.35);
+  border: 2px solid rgba(118, 184, 255, 0.25);
   background: #f4f9ff;
 }
 
@@ -719,7 +719,7 @@ onBeforeUnmount(() => {
 }
 
 .view-toggle-btn:not(:last-child) {
-  border-right: 1px solid rgba(118, 184, 255, 0.2);
+  border-right: 2px solid rgba(118, 184, 255, 0.15);
 }
 
 .view-toggle-btn:hover:not(:disabled):not(.view-toggle-btn--active) {
