@@ -139,6 +139,7 @@ pub struct PoprakoAssignReq {
     pub is_translator: bool,
     pub is_proofreader: bool,
     pub is_typesetter: bool,
+    pub is_redrawer: bool,
 }
 
 // enriched 项目 DTO（Moetran + PopRaKo）
@@ -433,6 +434,7 @@ pub struct AssignMemberReq {
     pub is_translator: bool,
     pub is_proofreader: bool,
     pub is_typesetter: bool,
+    pub is_redrawer: bool,
 }
 
 #[tauri::command]
@@ -456,6 +458,7 @@ pub async fn assign_member_to_proj(payload: AssignMemberReq) -> Result<(), Strin
         is_translator: payload.is_translator,
         is_proofreader: payload.is_proofreader,
         is_typesetter: payload.is_typesetter,
+        is_redrawer: payload.is_redrawer,
     };
 
     let path = format!("projs/{}/assign", payload.proj_id);

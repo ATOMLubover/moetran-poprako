@@ -282,7 +282,6 @@ async function handleCreateProject(): Promise<void> {
             isProofreader: invite.role === 'proofreader',
             isTypesetter: invite.role === 'typesetter',
             isRedrawer: invite.role === 'redrawer',
-            isPrincipal: false,
           });
 
           return { invite, ok: true } as const;

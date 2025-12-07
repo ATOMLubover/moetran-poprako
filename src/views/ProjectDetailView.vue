@@ -87,6 +87,8 @@ const props = defineProps<{
   principals?: string[];
   // publish state
   isPublished?: boolean;
+  // team id for member management
+  teamId?: string;
   // Moetran 原生项目可能返回的 role 字段；若非 null 表示当前用户在该项目中
   role?: _ProjectRole | null;
 }>();
@@ -729,12 +731,21 @@ onBeforeUnmount(() => {
       </div>
       <div class="pd-actions">
         <button
-          v-if="isMePrincipal && props.hasPoprako !== false"
+          v-if="isMePrincipal && props.hasPoprako !== false && props.teamId"
           type="button"
           class="pd-btn pd-btn--primary"
           @click="handleToggleModifier"
           :disabled="props.isPublished"
           :title="props.isPublished ? '已发布的项目无法修改' : '修改项目信息'"
+        >
+          修改项目信息
+        </button>
+        <button
+          v-else-if="isMePrincipal && props.hasPoprako !== false && !props.teamId"
+          type="button"
+          class="pd-btn pd-btn--primary"
+          disabled
+          title="缺少团队信息，无法修改项目"
         >
           修改项目信息
         </button>

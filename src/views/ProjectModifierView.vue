@@ -36,7 +36,7 @@ interface _ModifierProjectInfo {
 interface _ModifierPickedItem {
   id: string;
   name: string;
-  position: 'translator' | 'proofreader' | 'typesetter' | 'redrawer';
+  position: 'translator' | 'proofreader' | 'typesetter' | 'redrawer' | 'principal';
 }
 
 // 私有类型：状态更新条目
@@ -78,6 +78,8 @@ const currentTranslators = ref<MemberInfo[]>([]);
 const currentProofreaders = ref<MemberInfo[]>([]);
 const currentTypesetters = ref<MemberInfo[]>([]);
 const currentRedrawers = ref<MemberInfo[]>([]);
+// 监修角色仅显示，不允许通过此界面修改（PopRaKo API 不支持 assign principal）
+const displayPrincipals = ref<MemberInfo[]>([]);
 
 onMounted(() => {
   // Map props.members to local lists by role
@@ -102,6 +104,10 @@ onMounted(() => {
     currentRedrawers.value = props.members
       .filter(m => m.isRedrawer)
       .map(m => ({ id: m.memberId, name: m.username || m.userId || m.memberId }));
+
+    displayPrincipals.value = props.members
+      .filter(m => m.isPrincipal)
+      .map(m => ({ id: m.memberId, name: m.username || m.userId || m.memberId }));
   }
 });
 
@@ -111,6 +117,12 @@ const selectorRole = ref<'translator' | 'proofreader' | 'typesetter' | 'redrawer
 const pickedAll = ref<_ModifierPickedItem[]>([]);
 
 function openSelector(role: 'translator' | 'proofreader' | 'typesetter' | 'redrawer'): void {
+  console.log('[ProjectModifier] openSelector called', {
+    role,
+    teamId: props.teamId,
+    pickedAllCount: pickedAll.value.length,
+  });
+
   selectorRole.value = role;
   // build pickedAll from current lists
   pickedAll.value = [
@@ -120,6 +132,11 @@ function openSelector(role: 'translator' | 'proofreader' | 'typesetter' | 'redra
     ...currentRedrawers.value.map(m => ({ ...m, position: 'redrawer' as const })),
   ];
   selectorOpen.value = true;
+
+  console.log('[ProjectModifier] selector opened', {
+    selectorOpen: selectorOpen.value,
+    pickedAll: pickedAll.value,
+  });
 }
 
 function closeSelector(): void {
@@ -147,20 +164,7 @@ function onMemberSelectorConfirm(): void {
 }
 
 function onMemberSelectorCancel(): void {
-  // restore from current lists
-  currentTranslators.value = pickedAll.value
-    .filter(p => p.position === 'translator')
-    .map(p => ({ id: p.id, name: p.name }));
-  currentProofreaders.value = pickedAll.value
-    .filter(p => p.position === 'proofreader')
-    .map(p => ({ id: p.id, name: p.name }));
-  currentTypesetters.value = pickedAll.value
-    .filter(p => p.position === 'typesetter')
-    .map(p => ({ id: p.id, name: p.name }));
-  currentRedrawers.value = pickedAll.value
-    .filter(p => p.position === 'redrawer')
-    .map(p => ({ id: p.id, name: p.name }));
-
+  // MemberSelector 内部已回滚 picked 数组，无需额外处理
   closeSelector();
 }
 
@@ -262,7 +266,6 @@ async function handleUpdateProject(): Promise<void> {
         isProofreader: newProofreaders.some(m => m.id === memberId),
         isTypesetter: newTypesetters.some(m => m.id === memberId),
         isRedrawer: newRedrawers.some(m => m.id === memberId),
-        isPrincipal: false,
       });
     }
 
@@ -448,6 +451,17 @@ async function handleUpdateProject(): Promise<void> {
               管理
             </button>
           </div>
+
+          <!-- Principals (仅显示，不可编辑) -->
+          <div class="modifier-invite-item modifier-invite-item--readonly">
+            <div class="modifier-invite-text">
+              监修:
+              <span class="modifier-invite-names">
+                {{ displayPrincipals.map(m => m.name).join('、') || '未分配' }}
+              </span>
+              <span class="modifier-invite-note">(仅创建时指定)</span>
+            </div>
+          </div>
         </div>
       </form>
     </div>
@@ -468,18 +482,15 @@ async function handleUpdateProject(): Promise<void> {
     </footer>
 
     <!-- Member selector modal -->
-    <div v-if="selectorOpen" class="selector-overlay" @click.self="closeSelector">
-      <div class="selector-panel">
-        <MemberSelector
-          :show="selectorOpen"
-          :team-id="teamId"
-          :role="selectorRole!"
-          v-model:picked="pickedAll"
-          @confirm="onMemberSelectorConfirm"
-          @cancel="onMemberSelectorCancel"
-        />
-      </div>
-    </div>
+    <MemberSelector
+      :show="selectorOpen"
+      :team-id="props.teamId"
+      :initial-role="selectorRole!"
+      :picked="pickedAll"
+      @confirm="onMemberSelectorConfirm"
+      @cancel="onMemberSelectorCancel"
+      @close="closeSelector"
+    />
   </section>
 </template>
 
@@ -656,6 +667,11 @@ async function handleUpdateProject(): Promise<void> {
   border: 1px solid rgba(170, 190, 215, 0.9);
 }
 
+.modifier-invite-item--readonly {
+  background: #f9fafb;
+  opacity: 0.85;
+}
+
 .modifier-invite-text {
   font-size: 13px;
   color: #23415b;
@@ -664,6 +680,12 @@ async function handleUpdateProject(): Promise<void> {
 .modifier-invite-names {
   margin-left: 4px;
   color: #4a5f7a;
+}
+
+.modifier-invite-note {
+  margin-left: 6px;
+  font-size: 11px;
+  color: #7a8b99;
 }
 
 .modifier-invite-btn {

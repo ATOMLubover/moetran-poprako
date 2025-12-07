@@ -16,6 +16,6 @@ fmt:
 dev:
 	@echo === starting development server... ===
 
-	pnpm tauri dev
+	pnpm tauri dev --no-watch
 
 	@echo --- development server exited ---

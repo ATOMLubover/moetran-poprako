@@ -583,6 +583,7 @@ function handleModifierBack(): void {
             :is-published="selectedProjectIsPublished"
             :role="selectedProjectRole"
             :has-poprako="selectedProjectHasPoprako"
+            :team-id="selectedProjectTeamId"
             @close="handleCloseDetail"
             @open-modifier="handleOpenModifier"
           />

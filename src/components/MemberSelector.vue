@@ -52,7 +52,10 @@ async function defaultFetchMembers(
   kw: string,
   teamId?: string
 ): Promise<MemberInfo[]> {
+  console.log('[MemberSelector] defaultFetchMembers called', { role, kw, teamId });
+
   if (!teamId) {
+    console.warn('[MemberSelector] teamId is missing, returning empty list');
     return [];
   }
 
@@ -70,8 +73,13 @@ async function defaultFetchMembers(
     limit?: number;
   };
 
+  console.log('[MemberSelector] calling searchMembersByName with params', params);
+
   const { searchMembersByName } = await import('../ipc/member');
   const list = await searchMembersByName(params);
+
+  console.log('[MemberSelector] searchMembersByName returned', list);
+
   return list.map((m: ResMemberBrief) => ({
     id: m.memberId,
     name: m.username,
@@ -83,6 +91,12 @@ async function defaultFetchMembers(
 watch(
   () => props.show,
   show => {
+    console.log('[MemberSelector] show changed to', show, 'props:', {
+      teamId: props.teamId,
+      initialRole: props.initialRole,
+      pickedCount: props.picked.length,
+    });
+
     if (show) {
       snapshot.value = props.picked.map(m => ({ ...m }));
       // 初始展示：当前角色已选成员
@@ -100,6 +114,12 @@ watch(
 );
 
 async function refreshResults() {
+  console.log('[MemberSelector] refreshResults called', {
+    show: props.show,
+    currentRole: currentRole.value,
+    teamId: props.teamId,
+  });
+
   if (!props.show) return;
   loading.value = true;
   try {
@@ -112,6 +132,7 @@ async function refreshResults() {
     const pickedMembers = props.picked.filter(m => m.position === currentRole.value);
     const extra = fetched.filter(m => !pickedIds.has(m.id));
     results.value = [...pickedMembers, ...extra];
+    console.log('[MemberSelector] results updated', { resultCount: results.value.length });
   } finally {
     loading.value = false;
   }

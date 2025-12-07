@@ -380,7 +380,6 @@ export interface AssignMemberPayload {
   isProofreader: boolean;
   isTypesetter: boolean;
   isRedrawer: boolean;
-  isPrincipal: boolean;
 }
 
 export async function assignMemberToProj(payload: AssignMemberPayload): Promise<void> {
@@ -392,7 +391,6 @@ export async function assignMemberToProj(payload: AssignMemberPayload): Promise<
       is_proofreader: payload.isProofreader,
       is_typesetter: payload.isTypesetter,
       is_redrawer: payload.isRedrawer,
-      is_principal: payload.isPrincipal,
     },
   });
 }
