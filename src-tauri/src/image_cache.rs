@@ -235,6 +235,11 @@ pub async fn load_cached_file(
 
     let cache_dir = get_cache_dir(&project_id);
 
+    // 检查缓存目录是否存在
+    if !cache_dir.exists() {
+        return Err(format!("缓存目录不存在: {}", cache_dir.display()));
+    }
+
     // 查找对应索引的文件（不确定扩展名）
     let entries = fs::read_dir(&cache_dir)
         .await

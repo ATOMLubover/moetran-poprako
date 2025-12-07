@@ -135,15 +135,17 @@ async function fetchImageForFile(projectId: string, file: FileInfo): Promise<str
         const fileIndex = props.files.findIndex(f => f.id === file.id);
         if (fileIndex !== -1) {
           const cachedData = await loadCachedFile(projectId, fileIndex);
-          const url = createObjectUrlFromBase64(cachedData.b64, cachedData.content_type);
+          if (cachedData) {
+            const url = createObjectUrlFromBase64(cachedData.b64, cachedData.content_type);
 
-          cacheStore.storeImageCacheEntry(key, url);
+            cacheStore.storeImageCacheEntry(key, url);
 
-          return url;
+            return url;
+          }
         }
       } catch (err) {
-        // 本地缓存不存在或读取失败，回退到网络加载
-        console.debug('本地缓存不可用，使用网络加载', err);
+        // 本地缓存读取失败，回退到网络加载
+        console.debug('本地缓存读取失败，使用网络加载', err);
       }
 
       // 回退到网络代理
@@ -304,28 +306,76 @@ async function addSourceAtPointer(
   }
 }
 
-const SHORTCUT_HINTS = [
-  {
-    combo: 'Ctrl + L',
-    description: '收起或展开源列表',
-  },
-  {
-    combo: 'Ctrl + `',
-    description: '显示/隐藏编辑器',
-  },
-  {
-    combo: 'Ctrl + ↑ / ↓ / ← / →',
-    description: '按当前缩放比例平移画布视图',
-  },
-  {
-    combo: 'Ctrl + + / Ctrl + -',
-    description: '一次调整 25% 的缩放比例',
-  },
-  // {
-  //   combo: 'Ctrl + Esc',
-  //   description: '返回项目详情',
-  // },
-];
+const SHORTCUT_HINTS = computed(() => {
+  const baseHints = [
+    {
+      combo: 'Ctrl + ↑ / ↓ / ← / →',
+      description: '按当前缩放比例平移画布视图',
+    },
+    {
+      combo: 'Ctrl + + / Ctrl + -',
+      description: '一次调整 25% 的缩放比例',
+    },
+  ];
+
+  // 阅览模式：只有基本导航快捷键
+  if (!canEdit.value) {
+    return [
+      ...baseHints,
+      {
+        combo: 'Ctrl + D',
+        description: '下一页',
+      },
+      {
+        combo: 'Ctrl + U',
+        description: '上一页',
+      },
+    ];
+  }
+
+  // 翻校模式：所有编辑快捷键
+  const editHints = [
+    {
+      combo: 'Tab',
+      description: '切换到下一个标记',
+    },
+    {
+      combo: 'Ctrl + L',
+      description: '收起或展开源列表',
+    },
+    {
+      combo: 'Ctrl + `',
+      description: '显示/隐藏编辑器',
+    },
+    {
+      combo: 'Ctrl + P',
+      description: '切换翻译/校对模式',
+    },
+    {
+      combo: 'Ctrl + F',
+      description: '切换自动重定位',
+    },
+    {
+      combo: 'Ctrl + D',
+      description: '下一页',
+    },
+    {
+      combo: 'Ctrl + U',
+      description: '上一页',
+    },
+    ...baseHints,
+  ];
+
+  // 在校对模式下添加校对专用快捷键
+  if (isProofMode.value) {
+    editHints.push({
+      combo: 'Ctrl + Enter',
+      description: '提交校对',
+    });
+  }
+
+  return editHints;
+});
 
 const SPECIAL_SYMBOLS = ['★', '✰', '❤', '♥', '♡', '♂', '♁', '❈', '•', '♩', '♪', '♫'];
 
@@ -423,6 +473,10 @@ const pendingProofreadUpdates = new Map<string, string>();
 const pendingSelectedUpdates = new Map<string, boolean>();
 
 let autoSyncTimer: number | null = null;
+
+let pendingFlushTimeout: number | null = null;
+
+const FLUSH_DELAY = 500; // 0.5秒后自动提交
 
 const hasEditorBeenDragged = ref(false);
 
@@ -788,81 +842,6 @@ watch(selectedSource, (source, previousSource) => {
   }
 });
 
-watch(editorTranslationText, value => {
-  if (!selectedSource.value) {
-    return;
-  }
-
-  selectedSource.value.translationText = value;
-
-  if (selectedSource.value.status === 'proofed') {
-    return;
-  }
-
-  if (value.trim().length === 0) {
-    selectedSource.value.status = 'empty';
-    return;
-  }
-
-  selectedSource.value.status = 'translated';
-
-  // 如果还没有 myTranslationId，需要先创建翻译记录
-  if (!selectedSource.value.myTranslationId) {
-    if (!canEdit.value || !props.targetId) {
-      return;
-    }
-
-    // 异步创建翻译记录
-    void (async () => {
-      const currentSource = selectedSource.value;
-      if (!currentSource) return;
-
-      try {
-        const result = await submitTranslation({
-          sourceId: currentSource.id,
-          targetId: props.targetId,
-          content: value,
-        });
-
-        const record = toTranslationRecord(result, true);
-        applyRecordToSource(currentSource, record);
-        currentSource.serverTranslationText = value;
-
-        persistPageSources(currentPageIndex.value);
-      } catch (err) {
-        console.error('[TranslatorView] 自动创建翻译失败', err);
-      }
-    })();
-  } else {
-    // 已有翻译记录，标记为待更新
-    const translationId = selectedSource.value.myTranslationId;
-    if (value !== selectedSource.value.serverTranslationText) {
-      pendingContentUpdates.set(translationId, value);
-      console.log('[TranslatorView] 标记翻译文本为待更新:', translationId, value.substring(0, 50));
-    }
-  }
-
-  nextTick(() => adjustTextareaHeight(translationTextareaRef.value));
-});
-
-watch(editorProofText, value => {
-  if (!selectedSource.value) {
-    return;
-  }
-
-  selectedSource.value.proofText = value;
-
-  // 标记校对文本为待更新
-  const translationId =
-    selectedSource.value.selectedTranslationId || selectedSource.value.myTranslationId;
-  if (translationId && value !== selectedSource.value.serverProofText) {
-    pendingProofreadUpdates.set(translationId, value);
-    console.log('[TranslatorView] 标记校对文本为待更新:', translationId, value.substring(0, 50));
-  }
-
-  nextTick(() => adjustTextareaHeight(proofTextareaRef.value));
-});
-
 watch(activeMode, mode => {
   if (!selectedSource.value) {
     return;
@@ -932,9 +911,6 @@ async function initPage(pageIndex: number): Promise<void> {
   const requestToken = ++latestPageLoadToken;
 
   isLoading.value = true;
-
-  // 缓存项目详情
-  cacheStore.storeProjectDetailCacheEntry(props.projectId, props.files);
 
   try {
     // 获取当前页对应的文件 ID
@@ -1031,6 +1007,9 @@ async function initPage(pageIndex: number): Promise<void> {
     };
 
     projectPage.value = result;
+
+    // 缓存项目详情 - 移除：不应该缓存除了图片以外的内容
+    // cacheStore.storeProjectDetailCacheEntry(props.projectId, props.files);
 
     // 通过共享缓存获取图片
     try {
@@ -1273,10 +1252,14 @@ async function flushPendingUpdates(): Promise<void> {
       if (source) {
         if (updates.content !== undefined) {
           source.serverTranslationText = updates.content;
+          source.translationText = updates.content;
         }
         if (updates.proofreadContent !== undefined) {
           source.serverProofText = updates.proofreadContent;
+          source.proofText = updates.proofreadContent;
         }
+
+        // 注意：状态更新应该在专门的状态管理逻辑中处理，不在这里
       }
     } catch (err) {
       // 如果是 source_id 无效（404 等），自动从待更新列表中移除
@@ -1301,6 +1284,122 @@ async function flushPendingUpdates(): Promise<void> {
     totalAttempts: updateMap.size,
     successful: successfulIds.length,
   });
+}
+
+// 处理翻译文本输入
+function handleTranslationInput(event: Event): void {
+  const textarea = event.target as HTMLTextAreaElement;
+  const value = textarea.value;
+
+  if (!selectedSource.value) {
+    return;
+  }
+
+  selectedSource.value.translationText = value;
+
+  // 注意：状态不应该因为文本内容的变化而改变
+  // 状态（selected/proofed）与文本内容是完全独立的
+
+  console.log('[TranslatorView] 检查myTranslationId:', {
+    myTranslationId: selectedSource.value.myTranslationId,
+    isFalsy: !selectedSource.value.myTranslationId,
+    type: typeof selectedSource.value.myTranslationId,
+  });
+
+  // 如果还没有 myTranslationId，需要先创建翻译记录
+  if (!selectedSource.value.myTranslationId) {
+    if (!canEdit.value || !props.targetId) {
+      return;
+    }
+
+    // 异步创建翻译记录
+    void (async () => {
+      const currentSource = selectedSource.value;
+      if (!currentSource) return;
+
+      try {
+        const result = await submitTranslation({
+          sourceId: currentSource.id,
+          targetId: props.targetId,
+          content: value,
+        });
+
+        const record = toTranslationRecord(result, true);
+        applyRecordToSource(currentSource, record);
+        currentSource.serverTranslationText = value;
+
+        persistPageSources(currentPageIndex.value);
+      } catch (err) {
+        console.error('[TranslatorView] 自动创建翻译失败', err);
+      }
+    })();
+  } else {
+    // 已有翻译记录，标记为待更新
+    const translationId = selectedSource.value.myTranslationId;
+    console.log('[TranslatorView] 检查翻译更新:', {
+      translationId,
+      currentValue: value.substring(0, 50),
+      serverValue: selectedSource.value.serverTranslationText?.substring(0, 50),
+      isDifferent: value !== selectedSource.value.serverTranslationText,
+      valueLength: value.length,
+      serverLength: selectedSource.value.serverTranslationText?.length,
+      valueEqualsServer: value === selectedSource.value.serverTranslationText,
+    });
+
+    if (value !== selectedSource.value.serverTranslationText) {
+      console.log('[TranslatorView] 进入更新条件，准备设置pendingContentUpdates');
+      pendingContentUpdates.set(translationId, value);
+      console.log('[TranslatorView] 已设置pendingContentUpdates', {
+        translationId,
+        value: value.substring(0, 50),
+        pendingSize: pendingContentUpdates.size,
+      });
+      console.log('[TranslatorView] 标记翻译文本为待更新:', translationId, value.substring(0, 50));
+
+      // 节流提交：清除之前的timeout，设置新的
+      if (pendingFlushTimeout !== null) {
+        clearTimeout(pendingFlushTimeout);
+      }
+      pendingFlushTimeout = window.setTimeout(() => {
+        console.log('[TranslatorView] 触发自动提交');
+        void flushPendingUpdates();
+        pendingFlushTimeout = null;
+      }, FLUSH_DELAY);
+    }
+  }
+
+  nextTick(() => adjustTextareaHeight(translationTextareaRef.value));
+}
+
+// 处理校对文本输入
+function handleProofInput(event: Event): void {
+  const textarea = event.target as HTMLTextAreaElement;
+  const value = textarea.value;
+
+  if (!selectedSource.value) {
+    return;
+  }
+
+  selectedSource.value.proofText = value;
+
+  // 标记校对文本为待更新
+  const translationId =
+    selectedSource.value.selectedTranslationId || selectedSource.value.myTranslationId;
+  if (translationId && value !== selectedSource.value.serverProofText) {
+    pendingProofreadUpdates.set(translationId, value);
+    console.log('[TranslatorView] 标记校对文本为待更新:', translationId, value.substring(0, 50));
+
+    // 节流提交：清除之前的timeout，设置新的
+    if (pendingFlushTimeout !== null) {
+      clearTimeout(pendingFlushTimeout);
+    }
+    pendingFlushTimeout = window.setTimeout(() => {
+      void flushPendingUpdates();
+      pendingFlushTimeout = null;
+    }, FLUSH_DELAY);
+  }
+
+  nextTick(() => adjustTextareaHeight(proofTextareaRef.value));
 }
 
 // 收起 / 展开源列表（只读模式下禁止）
@@ -2318,6 +2417,12 @@ onBeforeUnmount(() => {
   // 停止自动同步定时器
   stopAutoSyncTimer();
 
+  // 清除节流提交timeout
+  if (pendingFlushTimeout !== null) {
+    clearTimeout(pendingFlushTimeout);
+    pendingFlushTimeout = null;
+  }
+
   window.removeEventListener('pointermove', updateDraggingSourcePosition);
 
   window.removeEventListener('pointermove', updateEditorPosition);
@@ -2437,27 +2542,6 @@ onBeforeUnmount(() => {
             <circle cx="12" cy="12" r="5.2" fill="none" stroke="currentColor" stroke-width="1.8" />
             <path
               d="M12 4V6.4M12 17.6V20M6.4 12H4M20 12H17.6"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.8"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-          </svg>
-        </button>
-        <button
-          type="button"
-          class="toolbox__button"
-          :class="{ 'toolbox__button--active': isProofMode }"
-          :title="isProofMode ? '切换为翻译模式' : '切换为校对模式'"
-          @click="handleToggleMode"
-          :aria-pressed="isProofMode"
-          v-if="canEdit"
-        >
-          <span class="sr-only">{{ isProofMode ? '切换为翻译模式' : '切换为校对模式' }}</span>
-          <svg class="toolbox__icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              d="M6 12.5L10 16.5L18 8.5M11 4H7A3 3 0 0 0 4 7V17A3 3 0 0 0 7 20H17A3 3 0 0 0 20 17V13"
               fill="none"
               stroke="currentColor"
               stroke-width="1.8"
@@ -2691,6 +2775,7 @@ onBeforeUnmount(() => {
             class="editor__textarea"
             placeholder="待翻译..."
             ref="translationTextareaRef"
+            @input="handleTranslationInput"
           ></textarea>
         </div>
         <div v-if="isProofMode" class="editor__field editor__field--readonly">
@@ -2709,6 +2794,7 @@ onBeforeUnmount(() => {
             placeholder="待校对..."
             ref="proofTextareaRef"
             @keydown="handleProofShortcut"
+            @input="handleProofInput"
           ></textarea>
         </div>
       </div>

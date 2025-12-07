@@ -83,13 +83,18 @@ export async function deleteFileCache(projectId: string): Promise<void> {
 export async function loadCachedFile(
   projectId: string,
   fileIndex: number
-): Promise<CachedFileData> {
+): Promise<CachedFileData | null> {
   try {
     return await invoke<CachedFileData>('load_cached_file', {
       projectId,
       fileIndex,
     });
-  } catch (error) {
+  } catch (error: any) {
+    // 如果是缓存目录不存在，这是正常的，不应该抛出错误
+    if (error && typeof error === 'string' && error.includes('缓存目录不存在')) {
+      console.debug('缓存目录不存在，使用网络加载', { projectId, fileIndex });
+      return null;
+    }
     console.error('Error in loadCachedFile:', { projectId, fileIndex, error });
     throw error;
   }

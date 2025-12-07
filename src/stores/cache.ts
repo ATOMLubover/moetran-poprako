@@ -1,21 +1,12 @@
 import { defineStore } from 'pinia';
 import { reactive } from 'vue';
 
-interface FileInfo {
-  id: string;
-  name: string;
-  sourceCount: number;
-  url: string; // 图片URL（Moetran API 总是返回）
-}
-
 export const useCacheStore = defineStore('cache', () => {
   const IMAGE_CACHE_LIMIT = 8;
-  const PROJECT_DETAIL_CACHE_LIMIT = 5;
 
   const state = reactive({
     imageCache: new Map<string, string>(),
     imageFetches: new Map<string, Promise<string>>(),
-    projectDetailCache: new Map<string, FileInfo[]>(),
   });
 
   // Image cache functions
@@ -54,37 +45,34 @@ export const useCacheStore = defineStore('cache', () => {
     enforceImageCacheLimit();
   }
 
-  // Project detail cache functions
-  function promoteProjectDetailCacheEntry(key: string): FileInfo[] | null {
-    const cached = state.projectDetailCache.get(key);
-    if (!cached) return null;
-    state.projectDetailCache.delete(key);
-    state.projectDetailCache.set(key, cached);
-    return cached;
-  }
+  // Project detail cache functions - removed: should not cache content other than images
+  // function promoteProjectDetailCacheEntry(key: string): FileInfo[] | null {
+  //   const cached = state.projectDetailCache.get(key);
+  //   if (!cached) return null;
+  //   state.projectDetailCache.delete(key);
+  //   state.projectDetailCache.set(key, cached);
+  //   return cached;
+  // }
 
-  function enforceProjectDetailCacheLimit(): void {
-    while (state.projectDetailCache.size > PROJECT_DETAIL_CACHE_LIMIT) {
-      const iterator = state.projectDetailCache.keys();
-      const oldestKey = iterator.next().value as string | undefined;
-      if (!oldestKey) break;
-      state.projectDetailCache.delete(oldestKey);
-    }
-  }
+  // function enforceProjectDetailCacheLimit(): void {
+  //   while (state.projectDetailCache.size > PROJECT_DETAIL_CACHE_LIMIT) {
+  //     const iterator = state.projectDetailCache.keys();
+  //     const oldestKey = iterator.next().value as string | undefined;
+  //     if (!oldestKey) break;
+  //     state.projectDetailCache.delete(oldestKey);
+  //   }
+  // }
 
-  function storeProjectDetailCacheEntry(key: string, data: FileInfo[]): void {
-    state.projectDetailCache.delete(key);
-    state.projectDetailCache.set(key, data);
-    enforceProjectDetailCacheLimit();
-  }
+  // function storeProjectDetailCacheEntry(key: string, data: FileInfo[]): void {
+  //   state.projectDetailCache.delete(key);
+  //   state.projectDetailCache.set(key, data);
+  //   enforceProjectDetailCacheLimit();
+  // }
 
   return {
     ...state,
     promoteImageCacheEntry,
     enforceImageCacheLimit,
     storeImageCacheEntry,
-    promoteProjectDetailCacheEntry,
-    enforceProjectDetailCacheLimit,
-    storeProjectDetailCacheEntry,
   };
 });
