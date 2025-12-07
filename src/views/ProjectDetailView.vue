@@ -384,7 +384,8 @@ async function handleDownloadCache(): Promise<void> {
         hasCachedFiles.value = true;
       })
       .catch(err => {
-        toastStore.show(`项目 "${props.title}" 图片缓存下载失败: ${err}`, 'error');
+        console.error('图片缓存下载失败', err);
+        toastStore.show('图片缓存下载失败', 'error');
       })
       .finally(() => {
         isDownloading.value = false;
@@ -510,7 +511,7 @@ async function loadProject(): Promise<void> {
           });
           loadingMarkers.value = false;
           loadingMarkersFailed.value = true;
-          toastStore.show('加载项目 targets 失败: ' + (e?.toString?.() ?? String(e)), 'error');
+          toastStore.show('加载项目 targets 失败', 'error');
           return;
         }
 
@@ -562,7 +563,7 @@ async function loadProject(): Promise<void> {
           });
           loadingMarkers.value = false;
           loadingMarkersFailed.value = true;
-          toastStore.show('加载项目 files 失败: ' + (e?.toString?.() ?? String(e)), 'error');
+          toastStore.show('加载项目 files 失败', 'error');
           return;
         }
       } else {
@@ -583,7 +584,7 @@ async function loadProject(): Promise<void> {
           });
           loadingMarkers.value = false;
           loadingMarkersFailed.value = true;
-          toastStore.show('加载项目 files 失败: ' + (e?.toString?.() ?? String(e)), 'error');
+          toastStore.show('加载项目 files 失败', 'error');
           return;
         }
       }

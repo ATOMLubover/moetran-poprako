@@ -33,9 +33,14 @@ interface RawCachedProjectMetadata {
  * 检查项目的图片缓存是否存在
  */
 export async function checkFileCache(projectId: string): Promise<boolean> {
-  return await invoke<boolean>('check_file_cache', {
-    projectId,
-  });
+  try {
+    return await invoke<boolean>('check_file_cache', {
+      projectId,
+    });
+  } catch (error) {
+    console.error('Error in checkFileCache:', { projectId, error });
+    throw error;
+  }
 }
 
 /**
@@ -46,20 +51,30 @@ export async function downloadProjectFiles(
   projectName: string,
   files: FileDownloadInfo[]
 ): Promise<void> {
-  await invoke('download_project_files', {
-    projectId,
-    projectName,
-    files,
-  });
+  try {
+    await invoke('download_project_files', {
+      projectId,
+      projectName,
+      files,
+    });
+  } catch (error) {
+    console.error('Error in downloadProjectFiles:', { projectId, projectName, files, error });
+    throw error;
+  }
 }
 
 /**
  * 删除项目的图片缓存
  */
 export async function deleteFileCache(projectId: string): Promise<void> {
-  await invoke('delete_file_cache', {
-    projectId,
-  });
+  try {
+    await invoke('delete_file_cache', {
+      projectId,
+    });
+  } catch (error) {
+    console.error('Error in deleteFileCache:', { projectId, error });
+    throw error;
+  }
 }
 
 /**
@@ -69,26 +84,36 @@ export async function loadCachedFile(
   projectId: string,
   fileIndex: number
 ): Promise<CachedFileData> {
-  return await invoke<CachedFileData>('load_cached_file', {
-    projectId,
-    fileIndex,
-  });
+  try {
+    return await invoke<CachedFileData>('load_cached_file', {
+      projectId,
+      fileIndex,
+    });
+  } catch (error) {
+    console.error('Error in loadCachedFile:', { projectId, fileIndex, error });
+    throw error;
+  }
 }
 
 /**
  * 获取所有缓存项目列表
  */
 export async function getAllCachedProjects(): Promise<CachedProjectMetadata[]> {
-  const raw = await invoke<RawCachedProjectMetadata[]>('get_all_cached_projects_list');
+  try {
+    const raw = await invoke<RawCachedProjectMetadata[]>('get_all_cached_projects_list');
 
-  return (raw || []).map(r => ({
-    projectId: r.project_id,
-    projectName: r.project_name,
-    status: r.status,
-    fileCount: r.file_count,
-    totalSizeBytes: r.total_size_bytes,
-    cachedAt: r.cached_at,
-  }));
+    return (raw || []).map(r => ({
+      projectId: r.project_id,
+      projectName: r.project_name,
+      status: r.status,
+      fileCount: r.file_count,
+      totalSizeBytes: r.total_size_bytes,
+      cachedAt: r.cached_at,
+    }));
+  } catch (error) {
+    console.error('Error in getAllCachedProjects:', error);
+    throw error;
+  }
 }
 
 /**
@@ -97,7 +122,12 @@ export async function getAllCachedProjects(): Promise<CachedProjectMetadata[]> {
 export async function getCachedProjectInfo(
   projectId: string
 ): Promise<CachedProjectMetadata | null> {
-  return await invoke<CachedProjectMetadata | null>('get_cached_project_info', {
-    projectId,
-  });
+  try {
+    return await invoke<CachedProjectMetadata | null>('get_cached_project_info', {
+      projectId,
+    });
+  } catch (error) {
+    console.error('Error in getCachedProjectInfo:', { projectId, error });
+    throw error;
+  }
 }

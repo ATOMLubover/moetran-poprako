@@ -286,7 +286,7 @@ async function handleUpdateProject(): Promise<void> {
     emit('close');
   } catch (err) {
     console.error('[ProjectModifier] update failed', err);
-    toastStore.show('项目更新失败: ' + (err?.toString?.() ?? String(err)), 'error');
+    toastStore.show('项目更新失败，请稍后重试', 'error');
   } finally {
     loading.value = false;
   }

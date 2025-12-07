@@ -120,16 +120,21 @@ export async function getUserProjectsEnriched(params: {
   page: number;
   limit: number;
 }): Promise<ResProjectEnriched[]> {
-  console.log('Invoking getUserProjectsEnriched with params', params);
+  try {
+    console.log('Invoking getUserProjectsEnriched with params', params);
 
-  const raw = await invoke<RawResProject[]>('get_user_projects_enriched', {
-    payload: {
-      page: params.page,
-      limit: params.limit,
-    },
-  });
+    const raw = await invoke<RawResProject[]>('get_user_projects_enriched', {
+      payload: {
+        page: params.page,
+        limit: params.limit,
+      },
+    });
 
-  return (raw || []).map(r => mapRawProject(r));
+    return (raw || []).map(r => mapRawProject(r));
+  } catch (error) {
+    console.error('Error in getUserProjectsEnriched:', { params, error });
+    throw error;
+  }
 }
 
 // PopRaKo 主导的项目搜索参数（与 PoprakoProjFilterReq 对应的前端版本）
@@ -152,26 +157,31 @@ export interface ProjectSearchFilters {
 export async function searchUserProjectsEnriched(
   filters: ProjectSearchFilters
 ): Promise<ResProjectEnriched[]> {
-  const payload = {
-    fuzzy_proj_name: filters.fuzzyProjName,
-    translating_status: filters.translatingStatus,
-    proofreading_status: filters.proofreadingStatus,
-    typesetting_status: filters.typesettingStatus,
-    reviewing_status: filters.reviewingStatus,
-    is_published: filters.isPublished,
-    member_ids: filters.memberIds,
-    projset_ids: filters.projsetIds,
-    time_start: filters.timeStart,
-    page: filters.page,
-    limit: filters.limit,
-  };
-  // Rust expects a single argument named `filter: PoprakoProjFilterReq`,
-  // so pass the snake_cased object as the top-level `filter` key.
-  const raw = await invoke<RawResProject[]>('search_user_projects_enriched', {
-    filter: payload,
-  });
+  try {
+    const payload = {
+      fuzzy_proj_name: filters.fuzzyProjName,
+      translating_status: filters.translatingStatus,
+      proofreading_status: filters.proofreadingStatus,
+      typesetting_status: filters.typesettingStatus,
+      reviewing_status: filters.reviewingStatus,
+      is_published: filters.isPublished,
+      member_ids: filters.memberIds,
+      projset_ids: filters.projsetIds,
+      time_start: filters.timeStart,
+      page: filters.page,
+      limit: filters.limit,
+    };
+    // Rust expects a single argument named `filter: PoprakoProjFilterReq`,
+    // so pass the snake_cased object as the top-level `filter` key.
+    const raw = await invoke<RawResProject[]>('search_user_projects_enriched', {
+      filter: payload,
+    });
 
-  return (raw || []).map(r => mapRawProject(r));
+    return (raw || []).map(r => mapRawProject(r));
+  } catch (error) {
+    console.error('Error in searchUserProjectsEnriched:', { filters, error });
+    throw error;
+  }
 }
 
 // 基于 PopRaKo /projs/search + Moetran /teams/:team_id/projects?word= 的团队项目搜索
@@ -180,39 +190,44 @@ export async function searchTeamProjectsEnriched(
     team_id: string;
   } & ProjectSearchFilters
 ): Promise<ResProjectEnriched[]> {
-  const payload = {
-    fuzzy_proj_name: params.fuzzyProjName,
-    translating_status: params.translatingStatus,
-    proofreading_status: params.proofreadingStatus,
-    typesetting_status: params.typesettingStatus,
-    reviewing_status: params.reviewingStatus,
-    is_published: params.isPublished,
-    member_ids: params.memberIds,
-    projset_ids: params.projsetIds,
-    time_start: params.timeStart,
-    page: params.page,
-    limit: params.limit,
-  };
-  // Pass a single `payload` object with `team_id` and nested `filter` (snake_case).
-  const raw = await invoke<RawResProject[]>('search_team_projects_enriched', {
-    payload: {
-      team_id: params.team_id,
-      filter: {
-        fuzzy_proj_name: payload.fuzzy_proj_name,
-        translating_status: payload.translating_status,
-        proofreading_status: payload.proofreading_status,
-        typesetting_status: payload.typesetting_status,
-        reviewing_status: payload.reviewing_status,
-        is_published: payload.is_published,
-        member_ids: payload.member_ids,
-        time_start: payload.time_start,
-        page: payload.page,
-        limit: payload.limit,
+  try {
+    const payload = {
+      fuzzy_proj_name: params.fuzzyProjName,
+      translating_status: params.translatingStatus,
+      proofreading_status: params.proofreadingStatus,
+      typesetting_status: params.typesettingStatus,
+      reviewing_status: params.reviewingStatus,
+      is_published: params.isPublished,
+      member_ids: params.memberIds,
+      projset_ids: params.projsetIds,
+      time_start: params.timeStart,
+      page: params.page,
+      limit: params.limit,
+    };
+    // Pass a single `payload` object with `team_id` and nested `filter` (snake_case).
+    const raw = await invoke<RawResProject[]>('search_team_projects_enriched', {
+      payload: {
+        team_id: params.team_id,
+        filter: {
+          fuzzy_proj_name: payload.fuzzy_proj_name,
+          translating_status: payload.translating_status,
+          proofreading_status: payload.proofreading_status,
+          typesetting_status: payload.typesetting_status,
+          reviewing_status: payload.reviewing_status,
+          is_published: payload.is_published,
+          member_ids: payload.member_ids,
+          time_start: payload.time_start,
+          page: payload.page,
+          limit: payload.limit,
+        },
       },
-    },
-  });
+    });
 
-  return (raw || []).map(r => mapRawProject(r));
+    return (raw || []).map(r => mapRawProject(r));
+  } catch (error) {
+    console.error('Error in searchTeamProjectsEnriched:', { params, error });
+    throw error;
+  }
 }
 
 // 获取团队的 enriched 项目列表（无筛选，分页）
@@ -221,15 +236,20 @@ export async function getTeamProjectsEnriched(params: {
   page: number;
   limit: number;
 }): Promise<ResProjectEnriched[]> {
-  const raw = await invoke<RawResProject[]>('get_team_projects_enriched', {
-    payload: {
-      team_id: params.teamId,
-      page: params.page,
-      limit: params.limit,
-    },
-  });
+  try {
+    const raw = await invoke<RawResProject[]>('get_team_projects_enriched', {
+      payload: {
+        team_id: params.teamId,
+        page: params.page,
+        limit: params.limit,
+      },
+    });
 
-  return (raw || []).map(r => mapRawProject(r));
+    return (raw || []).map(r => mapRawProject(r));
+  } catch (error) {
+    console.error('Error in getTeamProjectsEnriched:', { params, error });
+    throw error;
+  }
 }
 
 // PopRaKo 创建项目集请求参数
@@ -251,16 +271,21 @@ interface RawCreateProjsetResult {
 }
 
 export async function createProjset(payload: CreateProjsetPayload): Promise<CreateProjsetResult> {
-  const raw = await invoke<RawCreateProjsetResult>('create_projset', {
-    payload: {
-      projset_name: payload.projsetName,
-      projset_description: payload.projsetDescription,
-      team_id: payload.teamId,
-      mtr_token: payload.mtrToken,
-    },
-  });
+  try {
+    const raw = await invoke<RawCreateProjsetResult>('create_projset', {
+      payload: {
+        projset_name: payload.projsetName,
+        projset_description: payload.projsetDescription,
+        team_id: payload.teamId,
+        mtr_token: payload.mtrToken,
+      },
+    });
 
-  return { projsetSerial: raw.projset_serial };
+    return { projsetSerial: raw.projset_serial };
+  } catch (error) {
+    console.error('Error in createProjset:', { payload, error });
+    throw error;
+  }
 }
 
 // PopRaKo 创建项目请求参数
@@ -292,27 +317,32 @@ interface RawCreateProjResult {
 }
 
 export async function createProj(payload: CreateProjPayload): Promise<CreateProjResult> {
-  const raw = await invoke<RawCreateProjResult>('create_proj', {
-    payload: {
-      proj_name: payload.projName,
-      proj_description: payload.projDescription,
-      team_id: payload.teamId,
-      projset_id: payload.projsetId,
-      mtr_auth: payload.mtrAuth,
-      workset_index: payload.worksetIndex,
-      source_language: payload.sourceLanguage,
-      target_languages: payload.targetLanguages,
-      allow_apply_type: payload.allowApplyType,
-      application_check_type: payload.applicationCheckType,
-      default_role: payload.defaultRole,
-    },
-  });
+  try {
+    const raw = await invoke<RawCreateProjResult>('create_proj', {
+      payload: {
+        proj_name: payload.projName,
+        proj_description: payload.projDescription,
+        team_id: payload.teamId,
+        projset_id: payload.projsetId,
+        mtr_auth: payload.mtrAuth,
+        workset_index: payload.worksetIndex,
+        source_language: payload.sourceLanguage,
+        target_languages: payload.targetLanguages,
+        allow_apply_type: payload.allowApplyType,
+        application_check_type: payload.applicationCheckType,
+        default_role: payload.defaultRole,
+      },
+    });
 
-  return {
-    projId: raw.proj_id,
-    projSerial: raw.proj_serial,
-    projsetIndex: raw.projset_index,
-  };
+    return {
+      projId: raw.proj_id,
+      projSerial: raw.proj_serial,
+      projsetIndex: raw.projset_index,
+    };
+  } catch (error) {
+    console.error('Error in createProj:', { payload, error });
+    throw error;
+  }
 }
 
 // PopRaKo 项目集 DTO（简化版，只保留 Creator 需要的字段）
@@ -334,17 +364,22 @@ interface RawPoprakoProjsetInfo {
 }
 
 export async function getTeamPoprakoProjsets(teamId: string): Promise<PoprakoProjsetInfo[]> {
-  const raw = await invoke<RawPoprakoProjsetInfo[]>('get_team_poprako_projsets', {
-    payload: { team_id: teamId },
-  });
+  try {
+    const raw = await invoke<RawPoprakoProjsetInfo[]>('get_team_poprako_projsets', {
+      payload: { team_id: teamId },
+    });
 
-  return (raw || []).map(r => ({
-    projsetId: r.projset_id,
-    projsetName: r.projset_name,
-    projsetDescription: r.projset_description ?? null,
-    projsetSerial: r.projset_serial,
-    teamId: r.team_id,
-  }));
+    return (raw || []).map(r => ({
+      projsetId: r.projset_id,
+      projsetName: r.projset_name,
+      projsetDescription: r.projset_description ?? null,
+      projsetSerial: r.projset_serial,
+      teamId: r.team_id,
+    }));
+  } catch (error) {
+    console.error('Error in getTeamPoprakoProjsets:', { teamId, error });
+    throw error;
+  }
 }
 
 // 创建 PopRaKo 项目集
@@ -358,18 +393,23 @@ export interface CreatePoprakoProjsetPayload {
 export async function createPoprakoProjset(
   payload: CreatePoprakoProjsetPayload
 ): Promise<{ projsetSerial: number }> {
-  const raw = await invoke<{ projset_serial: number }>('create_poprako_projset', {
-    payload: {
-      projset_name: payload.projsetName,
-      projset_description: payload.projsetDescription ?? null,
-      team_id: payload.teamId,
-      mtr_token: payload.mtrToken,
-    },
-  });
+  try {
+    const raw = await invoke<{ projset_serial: number }>('create_poprako_projset', {
+      payload: {
+        projset_name: payload.projsetName,
+        projset_description: payload.projsetDescription ?? null,
+        team_id: payload.teamId,
+        mtr_token: payload.mtrToken,
+      },
+    });
 
-  return {
-    projsetSerial: raw.projset_serial,
-  };
+    return {
+      projsetSerial: raw.projset_serial,
+    };
+  } catch (error) {
+    console.error('Error in createPoprakoProjset:', { payload, error });
+    throw error;
+  }
 }
 
 // 指派成员到 PopRaKo 项目
@@ -383,16 +423,21 @@ export interface AssignMemberPayload {
 }
 
 export async function assignMemberToProj(payload: AssignMemberPayload): Promise<void> {
-  await invoke<void>('assign_member_to_proj', {
-    payload: {
-      proj_id: payload.projId,
-      member_id: payload.memberId,
-      is_translator: payload.isTranslator,
-      is_proofreader: payload.isProofreader,
-      is_typesetter: payload.isTypesetter,
-      is_redrawer: payload.isRedrawer,
-    },
-  });
+  try {
+    await invoke<void>('assign_member_to_proj', {
+      payload: {
+        proj_id: payload.projId,
+        member_id: payload.memberId,
+        is_translator: payload.isTranslator,
+        is_proofreader: payload.isProofreader,
+        is_typesetter: payload.isTypesetter,
+        is_redrawer: payload.isRedrawer,
+      },
+    });
+  } catch (error) {
+    console.error('Error in assignMemberToProj:', { payload, error });
+    throw error;
+  }
 }
 
 // Update project phase status (PopRaKo API #9)
@@ -403,13 +448,18 @@ export interface UpdateProjStatusPayload {
 }
 
 export async function updateProjStatus(payload: UpdateProjStatusPayload): Promise<void> {
-  await invoke<void>('update_proj_status', {
-    payload: {
-      proj_id: payload.projId,
-      status_type: payload.statusType,
-      new_status: payload.newStatus,
-    },
-  });
+  try {
+    await invoke<void>('update_proj_status', {
+      payload: {
+        proj_id: payload.projId,
+        status_type: payload.statusType,
+        new_status: payload.newStatus,
+      },
+    });
+  } catch (error) {
+    console.error('Error in updateProjStatus:', { payload, error });
+    throw error;
+  }
 }
 
 // Publish project (PopRaKo API #10)
@@ -418,11 +468,16 @@ export interface PublishProjPayload {
 }
 
 export async function publishProj(payload: PublishProjPayload): Promise<void> {
-  await invoke<void>('publish_proj', {
-    payload: {
-      proj_id: payload.projId,
-    },
-  });
+  try {
+    await invoke<void>('publish_proj', {
+      payload: {
+        proj_id: payload.projId,
+      },
+    });
+  } catch (error) {
+    console.error('Error in publishProj:', { payload, error });
+    throw error;
+  }
 }
 
 // 获取 assignments（派活列表）
@@ -441,25 +496,30 @@ interface RawResAssignment {
 }
 
 export async function getAssignments(timeStart?: number): Promise<ResAssignment[]> {
-  const raw = await invoke<RawResAssignment[]>('get_assignments', {
-    payload: {
-      time_start: timeStart ?? 0,
-    },
-  });
+  try {
+    const raw = await invoke<RawResAssignment[]>('get_assignments', {
+      payload: {
+        time_start: timeStart ?? 0,
+      },
+    });
 
-  return (raw || []).map(r => ({
-    projId: r.proj_id,
-    projName: r.proj_name,
-    projsetSerial: r.projset_serial,
-    projsetIndex: r.projset_index,
-    memberId: r.member_id,
-    username: r.username,
-    isTranslator: r.is_translator,
-    isProofreader: r.is_proofreader,
-    isTypesetter: r.is_typesetter,
-    isRedrawer: r.is_redrawer,
-    updatedAt: r.updated_at,
-  }));
+    return (raw || []).map(r => ({
+      projId: r.proj_id,
+      projName: r.proj_name,
+      projsetSerial: r.projset_serial,
+      projsetIndex: r.projset_index,
+      memberId: r.member_id,
+      username: r.username,
+      isTranslator: r.is_translator,
+      isProofreader: r.is_proofreader,
+      isTypesetter: r.is_typesetter,
+      isRedrawer: r.is_redrawer,
+      updatedAt: r.updated_at,
+    }));
+  } catch (error) {
+    console.error('Error in getAssignments:', { timeStart, error });
+    throw error;
+  }
 }
 
 // ========== Moetran 项目 targets / files（供 ProjectDetail 使用） ==========

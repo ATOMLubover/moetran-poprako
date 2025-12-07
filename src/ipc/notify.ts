@@ -5,5 +5,10 @@ import { invoke } from '@tauri-apps/api/core';
  * @returns 如果有更新返回true，否则false
  */
 export async function checkAppUpdate(): Promise<boolean> {
-  return await invoke<boolean>('update');
+  try {
+    return await invoke<boolean>('update');
+  } catch (error) {
+    console.error('Error in checkAppUpdate:', error);
+    throw error;
+  }
 }

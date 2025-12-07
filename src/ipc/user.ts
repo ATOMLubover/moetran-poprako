@@ -24,21 +24,26 @@ export async function syncUser(payload: {
 
 // 获取用户信息
 export async function getUserInfo(): Promise<ResUser> {
-  // Raw response shape from Moetran (snake_case)
-  interface RawResUser {
-    id: string;
-    name: string;
-    has_avatar: boolean;
-    avatar: string;
-  }
+  try {
+    // Raw response shape from Moetran (snake_case)
+    interface RawResUser {
+      id: string;
+      name: string;
+      has_avatar: boolean;
+      avatar: string;
+    }
 
-  const raw = await invoke<RawResUser>('get_user_info');
-  return {
-    id: raw.id,
-    name: raw.name,
-    hasAvatar: raw.has_avatar,
-    avatar: raw.avatar,
-  };
+    const raw = await invoke<RawResUser>('get_user_info');
+    return {
+      id: raw.id,
+      name: raw.name,
+      hasAvatar: raw.has_avatar,
+      avatar: raw.avatar,
+    };
+  } catch (error) {
+    console.error('Error in getUserInfo:', error);
+    throw error;
+  }
 }
 
 // (用户汉化组与项目相关接口已迁移到 team.ts / project.ts)

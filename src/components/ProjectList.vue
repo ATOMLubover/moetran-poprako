@@ -374,10 +374,11 @@ async function fetchAndClamp(): Promise<void> {
     console.error('[ProjectList] 获取用户项目失败:', err);
     innerProjects.value = [];
     lastFetchCount.value = 0;
+    console.error('获取项目失败', err);
     try {
       const toastStore = useToastStore();
       // 给用户友好的提示（网络或后端服务不可用）
-      toastStore.show(`获取项目失败：${String(err)}`);
+      toastStore.show('获取项目失败，请稍后重试');
     } catch (e) {
       // 如果 toast 无法使用，继续静默处理
       console.debug('ProjectList toast failed', e);

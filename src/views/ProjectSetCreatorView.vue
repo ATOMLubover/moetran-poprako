@@ -59,7 +59,7 @@ async function handleCreateProjset(): Promise<void> {
     emit('close');
   } catch (err) {
     console.error('Create projset failed', err);
-    toastStore.show(`项目集创建失败：${String(err)}`);
+    toastStore.show('项目集创建失败，请稍后重试');
   } finally {
     loading.value = false;
   }

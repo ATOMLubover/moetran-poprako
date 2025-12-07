@@ -311,6 +311,9 @@ async function handleCreateProject(): Promise<void> {
       message.value = '项目创建成功，并已指派预邀请成员';
       toastStore.show('项目创建成功');
     }
+
+    // 创建成功后自动关闭creator
+    emit('close');
   } catch (err) {
     console.error('Create project failed', err);
     message.value = `项目创建失败：${String(err)}`;
