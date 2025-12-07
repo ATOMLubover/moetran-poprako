@@ -24,6 +24,6 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/poprako-tmp.ico"]
+    "icon": ["icons/moetran-poprako.ico"]
   }
 }
