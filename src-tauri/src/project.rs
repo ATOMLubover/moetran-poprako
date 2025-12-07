@@ -1121,18 +1121,22 @@ pub async fn create_source(payload: CreateSourceReq) -> Result<MoetranSource, St
     Ok(reply)
 }
 
-// 更新 source（框内/框外切换）
+// 更新 source（框内/框外切换或位置移动）
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UpdateSourceReq {
     pub source_id: String,
-    pub position_type: i32,
+    pub position_type: Option<i32>,
+    pub x: Option<f64>,
+    pub y: Option<f64>,
 }
 
 #[tauri::command]
 pub async fn update_source(payload: UpdateSourceReq) -> Result<MoetranSource, String> {
     tracing::info!(
         source_id = %payload.source_id,
-        position_type = payload.position_type,
+        position_type = ?payload.position_type,
+        x = ?payload.x,
+        y = ?payload.y,
         "moetran.source.update.start"
     );
 
@@ -1145,10 +1149,18 @@ pub async fn update_source(payload: UpdateSourceReq) -> Result<MoetranSource, St
         "id".to_string(),
         serde_json::Value::String(payload.source_id.clone()),
     );
-    body.insert(
-        "position_type".to_string(),
-        serde_json::Value::from(payload.position_type),
-    );
+
+    if let Some(pt) = payload.position_type {
+        body.insert("position_type".to_string(), serde_json::Value::from(pt));
+    }
+
+    if let Some(x) = payload.x {
+        body.insert("x".to_string(), serde_json::Value::from(x));
+    }
+
+    if let Some(y) = payload.y {
+        body.insert("y".to_string(), serde_json::Value::from(y));
+    }
 
     let reply = moetran_put_opt::<serde_json::Value, MoetranSource>(
         &path,
@@ -1160,6 +1172,8 @@ pub async fn update_source(payload: UpdateSourceReq) -> Result<MoetranSource, St
     tracing::info!(
         source_id = %reply.id,
         position_type = reply.position_type,
+        x = reply.x,
+        y = reply.y,
         "moetran.source.update.ok"
     );
 

@@ -25,7 +25,6 @@ const PANEL_WIDTH_RATIO = 0.3;
 const MARKER_REFERENCE_WIDTH = 1920;
 const MAX_MARKER_VIEWPORT_SCALE = 2.0;
 const MIN_MARKER_VIEWPORT_SCALE = 0.5;
-const MARKER_TIP_OFFSET_PX = 10;
 const ZOOM_STEP = 0.25;
 const PANNING_THRESHOLD = 10;
 const WORKSPACE_BOTTOM_GUTTER = 20;
@@ -216,8 +215,16 @@ async function addSourceAtPointer(
 
   const rect = wrapper.getBoundingClientRect();
 
-  const relativeX = (event.clientX - rect.left) / rect.width;
-  const relativeY = (event.clientY - rect.top) / rect.height;
+  // 屏幕坐标 -> wrapper本地坐标（考虑zoom和pan）-> 图像相对坐标(0-1)
+  const wrapperLocalX = (event.clientX - rect.left) / zoom.value;
+  const wrapperLocalY = (event.clientY - rect.top) / zoom.value;
+
+  // wrapper的原始尺寸就是rect.width和rect.height除以zoom
+  const originalWidth = rect.width / zoom.value;
+  const originalHeight = rect.height / zoom.value;
+
+  const relativeX = wrapperLocalX / originalWidth;
+  const relativeY = wrapperLocalY / originalHeight;
 
   if (relativeX < 0 || relativeX > 1 || relativeY < 0 || relativeY > 1) {
     return;
@@ -614,9 +621,8 @@ const markerScale = computed(() => markerViewportScale.value / zoom.value);
 const markerTransform = computed(() => {
   const scale = markerScale.value;
 
-  const offset = MARKER_TIP_OFFSET_PX * scale;
-
-  return `translate(-50%, calc(-50% - ${offset}px)) scale(${scale})`;
+  // 倒三角的下顶点对准position坐标
+  return `translate(-50%, -100%) scale(${scale})`;
 });
 
 const selectedSource = computed(() => {
@@ -1381,9 +1387,15 @@ function updateDraggingSourcePosition(event: PointerEvent): void {
 
   const pointerY = event.clientY - markerDragOffset.value.y;
 
-  const relativeX = (pointerX - rect.left) / rect.width;
+  // wrapper已经被zoom和pan变换，需要逆向计算
+  const wrapperLocalX = (pointerX - rect.left) / zoom.value;
+  const wrapperLocalY = (pointerY - rect.top) / zoom.value;
 
-  const relativeY = (pointerY - rect.top) / rect.height;
+  const originalWidth = rect.width / zoom.value;
+  const originalHeight = rect.height / zoom.value;
+
+  const relativeX = wrapperLocalX / originalWidth;
+  const relativeY = wrapperLocalY / originalHeight;
 
   targetSource.position.x = Math.min(Math.max(relativeX, 0), 1);
 
@@ -1391,12 +1403,29 @@ function updateDraggingSourcePosition(event: PointerEvent): void {
 }
 
 // 停止拖拽标记
-function stopDraggingSource(): void {
+async function stopDraggingSource(): Promise<void> {
   if (!draggingSourceId.value) {
     return;
   }
 
+  const sourceId = draggingSourceId.value;
   draggingSourceId.value = null;
+
+  // 提交位置更新到后端
+  const targetSource = sources.value.find(item => item.id === sourceId);
+  if (targetSource) {
+    try {
+      await updateSource({
+        sourceId: targetSource.id,
+        x: targetSource.position.x,
+        y: targetSource.position.y,
+      });
+      showToast('标记位置已更新');
+    } catch (error) {
+      console.error('更新标记位置失败', error);
+      showToast('更新标记位置失败', 'error');
+    }
+  }
 }
 
 // 删除标记
@@ -2532,8 +2561,21 @@ onBeforeUnmount(() => {
                 @click.stop="handleSelectSource(item.id)"
                 @contextmenu.prevent.stop="handleRemoveSource(item.id)"
               >
+                <!-- SVG倒三角形：底边在上，尖端在下 -->
+                <svg
+                  class="marker__triangle"
+                  viewBox="0 0 40 36"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <polygon class="marker__fill" points="20,36 0,0 40,0" />
+                  <polygon
+                    class="marker__stroke"
+                    points="20,36 0,0 40,0"
+                    fill="none"
+                    stroke-width="2"
+                  />
+                </svg>
                 <span class="marker__label">{{ sourceLabelMap.get(item.id)?.number ?? '' }}</span>
-                <span class="marker__pointer" aria-hidden="true"></span>
               </button>
             </template>
             <div
@@ -2961,101 +3003,97 @@ onBeforeUnmount(() => {
 .marker {
   position: absolute;
   border: none;
-  background: rgba(255, 255, 255, 0.95);
+  background: transparent;
   cursor: pointer;
   padding: 0;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  /* increased by ~70% from 24px -> 41px */
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  transform-origin: 50% 50%;
-  box-shadow: 0 10px 22px rgba(20, 24, 32, 0.14);
-  transition:
-    transform 0.16s ease,
-    box-shadow 0.16s ease,
-    background 0.16s ease,
-    border 0.16s ease;
-  /* narrow dark stroke */
-  border: 1px solid rgba(202, 205, 212, 0.92);
+  /* 倒三角尺寸 */
+  width: 40px;
+  height: 36px;
+  /* 尖端在底部，以尖端为定位点 */
+  transform-origin: 50% 100%;
+  transition: transform 0.16s ease;
   min-width: 0;
   touch-action: none;
   overflow: visible;
 }
 
+.marker__triangle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* 默认填充色（不应该显示，总是被inside/outside覆盖） */
+.marker__fill {
+  fill: rgba(220, 220, 220, 0.95);
+}
+
+/* 默认边框色 - 橙色 */
+.marker__stroke {
+  stroke: rgba(255, 140, 60, 0.95);
+  stroke-width: 1;
+}
+
 .marker:hover,
 .marker:focus-visible {
-  box-shadow: 0 14px 30px rgba(118, 166, 219, 0.32);
   outline: none;
 }
 
 .marker__label {
-  color: #173556;
-  /* scale label a bit to match larger marker */
+  color: #1a1a1a;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0.2px;
   pointer-events: none;
-}
-
-.marker__pointer {
+  /* 数字位于三角形高度30%处（从顶边向下） */
   position: absolute;
-  /* moved downward to sit visually attached to larger circle */
-  bottom: -12px;
+  top: 30%;
   left: 50%;
-  transform: translateX(-50%);
-  /* scaled by ~70% from 14x8 -> 24x14 */
-  width: 16px;
-  height: 14px;
-  background: rgba(202, 208, 214, 0.8);
-  clip-path: polygon(50% 100%, 0 0, 100% 0);
-  filter: drop-shadow(0 3px 6px rgba(20, 24, 32, 0.18));
-  pointer-events: none;
+  transform: translate(-50%, -50%);
+  z-index: 1;
 }
 
-.marker--inside {
-  /* pink-ish fill for inside markers */
-  background: linear-gradient(145deg, rgba(255, 182, 193, 0.96), rgba(255, 150, 185, 0.9));
-  border-color: rgba(160, 40, 80, 0.92);
+/* inside: 粉色背景 + 深红边框 */
+.marker--inside .marker__fill {
+  fill: rgba(255, 182, 193, 0.95);
+}
+
+.marker--inside .marker__stroke {
+  stroke: rgba(229, 179, 195, 0.95);
 }
 
 .marker--inside .marker__label {
-  color: #13325c;
+  color: #4a1a30;
 }
 
-.marker--inside .marker__pointer {
-  background: rgba(255, 160, 185, 0.95);
+/* outside: 黄色背景 + 深黄边框 */
+.marker--outside .marker__fill {
+  fill: rgba(255, 249, 196, 0.95);
 }
 
-.marker--outside {
-  /* pale yellow for outside markers */
-  background: linear-gradient(145deg, rgba(255, 249, 196, 0.96), rgba(255, 241, 160, 0.9));
-  border-color: rgba(180, 150, 60, 0.92);
+.marker--outside .marker__stroke {
+  stroke: rgba(243, 225, 181, 0.95);
 }
 
 .marker--outside .marker__label {
-  color: #61203b;
+  color: #5a4a1a;
 }
 
-.marker--outside .marker__pointer {
-  background: rgba(255, 235, 150, 0.95);
-}
-
-.marker--active {
-  box-shadow: 0 16px 34px rgba(255, 196, 139, 0.4);
-  border-color: rgba(255, 196, 139, 0.9);
-}
-
-.marker--active .marker__pointer {
-  background: rgba(255, 196, 139, 0.95);
+/* active: 淡红色边框，宽度3px */
+.marker--active .marker__stroke {
+  stroke: rgba(100, 255, 183, 0.8);
+  stroke-width: 3;
 }
 
 .marker-overlay {
   position: absolute;
-  transform: translate(-50%, calc(-100% - 14px));
+  transform: translate(-50%, calc(-100% - 18px));
   pointer-events: none;
   max-width: 240px;
   width: max-content;

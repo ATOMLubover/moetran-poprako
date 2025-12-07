@@ -215,6 +215,7 @@ defineExpose({
 
 // 时间筛选：计算 time_start 并添加到筛选条件
 function selectTimeRange(range: '1day' | '1week' | '1month'): void {
+  console.log('[ProjectFilterBoard] selectTimeRange called with range:', range);
   selectedTimeRange.value = range;
   const now = Math.floor(Date.now() / 1000);
   let timeStart: number;
@@ -237,7 +238,13 @@ function selectTimeRange(range: '1day' | '1week' | '1month'): void {
 
   // 移除已有的时间筛选条件，添加新的
   filterOptions.value = filterOptions.value.filter(o => o.key !== 'time-start');
-  addOption({ label, key: 'time-start', value: String(timeStart) });
+  const newOption = { label, key: 'time-start', value: String(timeStart) };
+  addOption(newOption);
+  console.log('[ProjectFilterBoard] Added time filter option:', newOption);
+  console.log(
+    '[ProjectFilterBoard] Current filterOptions after adding time:',
+    JSON.parse(JSON.stringify(filterOptions.value))
+  );
 }
 
 function onProjsetConfirm(): void {
@@ -272,12 +279,14 @@ function removeOption(opt: FilterOption) {
   );
 }
 function clearAllOptions() {
+  console.log('[ProjectFilterBoard] clearAllOptions called, clearing all options');
   filterOptions.value = [];
   projectInput.value = '';
   memberInput.value = '';
   selectedLabor.value = '';
   projsetPickedIds.value = [];
   advancedPickedMembers.value = [];
+  console.log('[ProjectFilterBoard] Emitting applyFilter after clearing');
   // 清空时立即通知父组件应用空筛选（触发列表刷新）
   emit('applyFilter');
 }
@@ -285,6 +294,7 @@ function clearAllOptions() {
 function onConfirm() {
   // protect: ignore confirm when no conditions
   if (!filterOptions.value.length) {
+    console.log('[ProjectFilterBoard] onConfirm called but no filterOptions, showing toast');
     toastStore.show('请先添加筛选条件');
     return;
   }
@@ -293,7 +303,7 @@ function onConfirm() {
   // (will be visible in renderer devtools console)
   // eslint-disable-next-line no-console
   console.log(
-    '[ProjectFilterBoard] confirmOptions ->',
+    '[ProjectFilterBoard] onConfirm -> emitting applyFilter with options:',
     JSON.parse(JSON.stringify(filterOptions.value))
   );
   // 通知父组件应用当前筛选条件
@@ -367,7 +377,7 @@ function onConfirm() {
 
     <!-- 时间筛选 + 成员筛选 -->
     <div class="fb-row fb-row--tight fb-time-filter" style="align-items: center">
-      <label class="fb-label">发布时间</label>
+      <label class="fb-label">创建时间</label>
       <div class="fb-time-btns" style="flex: 1; display: flex; gap: 8px">
         <button
           class="fb-time-btn"

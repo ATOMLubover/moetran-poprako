@@ -274,6 +274,14 @@ function mapEnrichedToBasic(apiRes: ResProjectEnriched[]): ProjectListItem[] {
 
 // 根据当前 props.teamId / props.filters 决定调用哪种 IPC
 async function fetchAndClamp(): Promise<void> {
+  console.log(
+    '[ProjectList] fetchAndClamp called with teamId:',
+    props.teamId,
+    'filters:',
+    props.filters,
+    'page:',
+    currentPage.value
+  );
   isLoading.value = true;
   try {
     console.log(
@@ -290,10 +298,17 @@ async function fetchAndClamp(): Promise<void> {
     let apiRes: ResProjectEnriched[] = [];
 
     const hasFilters = !!(props.filters && Object.keys(props.filters).length > 0);
+    console.log('[ProjectList] hasFilters:', hasFilters, 'teamId:', props.teamId);
 
     if (props.teamId) {
       // 团队视角：有筛选时走 team search，暂无筛选时使用团队 enriched 列表
       if (hasFilters) {
+        console.log('[ProjectList] Calling searchTeamProjectsEnriched with params:', {
+          team_id: props.teamId as string,
+          ...props.filters,
+          page: currentPage.value,
+          limit: serverLimit,
+        });
         apiRes = await searchTeamProjectsEnriched({
           team_id: props.teamId as string,
           ...props.filters,
@@ -301,6 +316,11 @@ async function fetchAndClamp(): Promise<void> {
           limit: serverLimit,
         });
       } else {
+        console.log('[ProjectList] Calling getTeamProjectsEnriched with params:', {
+          teamId: props.teamId as string,
+          page: currentPage.value,
+          limit: serverLimit,
+        });
         apiRes = await getTeamProjectsEnriched({
           teamId: props.teamId as string,
           page: currentPage.value,
@@ -310,12 +330,21 @@ async function fetchAndClamp(): Promise<void> {
     } else {
       // 用户视角
       if (hasFilters) {
+        console.log('[ProjectList] Calling searchUserProjectsEnriched with params:', {
+          ...props.filters,
+          page: currentPage.value,
+          limit: serverLimit,
+        });
         apiRes = await searchUserProjectsEnriched({
           ...props.filters,
           page: currentPage.value,
           limit: serverLimit,
         });
       } else {
+        console.log('[ProjectList] Calling getUserProjectsEnriched with params:', {
+          page: currentPage.value,
+          limit: serverLimit,
+        });
         apiRes = await getUserProjectsEnriched({ page: currentPage.value, limit: serverLimit });
       }
     }
@@ -371,6 +400,14 @@ async function fetchAndClamp(): Promise<void> {
       });
     });
   } catch (err) {
+    console.error(
+      '[ProjectList] fetchAndClamp failed with error:',
+      err,
+      'teamId:',
+      props.teamId,
+      'filters:',
+      props.filters
+    );
     console.error('[ProjectList] 获取用户项目失败:', err);
     innerProjects.value = [];
     lastFetchCount.value = 0;
@@ -384,6 +421,7 @@ async function fetchAndClamp(): Promise<void> {
       console.debug('ProjectList toast failed', e);
     }
   } finally {
+    console.log('[ProjectList] fetchAndClamp finished, isLoading set to false');
     isLoading.value = false;
   }
 }
@@ -423,6 +461,7 @@ watch(
 watch(
   () => props.shouldApplyFilters,
   () => {
+    console.log('[ProjectList] shouldApplyFilters changed, calling fetchAndClamp');
     currentPage.value = 1;
     requestAnimationFrame(() => {
       void fetchAndClamp();

@@ -745,7 +745,9 @@ export async function createSource(payload: CreateSourcePayload): Promise<PageSo
 
 export interface UpdateSourcePayload {
   sourceId: string;
-  positionType: number;
+  positionType?: number;
+  x?: number;
+  y?: number;
 }
 
 export async function updateSource(payload: UpdateSourcePayload): Promise<PageSource> {
@@ -773,6 +775,8 @@ export async function updateSource(payload: UpdateSourcePayload): Promise<PageSo
       payload: {
         source_id: payload.sourceId,
         position_type: payload.positionType,
+        x: payload.x,
+        y: payload.y,
       },
     });
 

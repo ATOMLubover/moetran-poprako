@@ -400,9 +400,10 @@ const currentSearchFilters = computed<PanelProjectSearchFilters | undefined>(() 
 
 // 处理 applyFilter 事件：当用户点击确认或清空时，触发列表刷新
 function handleApplyFilter() {
+  console.log('[PanelView] handleApplyFilter called, toggling shouldApplyFilters');
   // 切换 shouldApplyFilters 触发 watch，让 ProjectList 刷新
   shouldApplyFilters.value = !shouldApplyFilters.value;
-  console.log('[PanelView] applyFilter triggered, shouldApplyFilters:', shouldApplyFilters.value);
+  console.log('[PanelView] shouldApplyFilters set to:', shouldApplyFilters.value);
 }
 
 // 最终传递给 ProjectList 的项目已由其内部管理；此处预留接口以备未来需要
