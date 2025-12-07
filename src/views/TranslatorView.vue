@@ -472,11 +472,9 @@ const pendingContentUpdates = new Map<string, string>();
 const pendingProofreadUpdates = new Map<string, string>();
 const pendingSelectedUpdates = new Map<string, boolean>();
 
-let autoSyncTimer: number | null = null;
-
 let pendingFlushTimeout: number | null = null;
 
-const FLUSH_DELAY = 500; // 0.5秒后自动提交
+const FLUSH_DELAY = 1500; // 1.5秒后自动提交
 
 const hasEditorBeenDragged = ref(false);
 
@@ -1167,24 +1165,6 @@ function warmupAroundPage(pageIndex: number): void {
   })();
 }
 
-// 自动同步定时器管理
-function startAutoSyncTimer(): void {
-  if (autoSyncTimer !== null) {
-    return;
-  }
-
-  autoSyncTimer = window.setInterval(() => {
-    void flushPendingUpdates();
-  }, 2000); // 每 2 秒同步一次
-}
-
-function stopAutoSyncTimer(): void {
-  if (autoSyncTimer !== null) {
-    clearInterval(autoSyncTimer);
-    autoSyncTimer = null;
-  }
-}
-
 // 强制提交所有待更新内容
 async function flushPendingUpdates(): Promise<void> {
   const contentUpdates = Array.from(pendingContentUpdates.entries());
@@ -1198,12 +1178,6 @@ async function flushPendingUpdates(): Promise<void> {
   ) {
     return;
   }
-
-  console.log('[TranslatorView] 开始批量更新翻译', {
-    contentCount: contentUpdates.length,
-    proofreadCount: proofreadUpdates.length,
-    selectedCount: selectedUpdates.length,
-  });
 
   // 合并同一个 translationId 的更新
   const updateMap = new Map<
@@ -1279,11 +1253,6 @@ async function flushPendingUpdates(): Promise<void> {
     pendingProofreadUpdates.delete(translationId);
     pendingSelectedUpdates.delete(translationId);
   }
-
-  console.log('[TranslatorView] 批量更新完成', {
-    totalAttempts: updateMap.size,
-    successful: successfulIds.length,
-  });
 }
 
 // 处理翻译文本输入
@@ -1299,12 +1268,6 @@ function handleTranslationInput(event: Event): void {
 
   // 注意：状态不应该因为文本内容的变化而改变
   // 状态（selected/proofed）与文本内容是完全独立的
-
-  console.log('[TranslatorView] 检查myTranslationId:', {
-    myTranslationId: selectedSource.value.myTranslationId,
-    isFalsy: !selectedSource.value.myTranslationId,
-    type: typeof selectedSource.value.myTranslationId,
-  });
 
   // 如果还没有 myTranslationId，需要先创建翻译记录
   if (!selectedSource.value.myTranslationId) {
@@ -1336,32 +1299,15 @@ function handleTranslationInput(event: Event): void {
   } else {
     // 已有翻译记录，标记为待更新
     const translationId = selectedSource.value.myTranslationId;
-    console.log('[TranslatorView] 检查翻译更新:', {
-      translationId,
-      currentValue: value.substring(0, 50),
-      serverValue: selectedSource.value.serverTranslationText?.substring(0, 50),
-      isDifferent: value !== selectedSource.value.serverTranslationText,
-      valueLength: value.length,
-      serverLength: selectedSource.value.serverTranslationText?.length,
-      valueEqualsServer: value === selectedSource.value.serverTranslationText,
-    });
 
     if (value !== selectedSource.value.serverTranslationText) {
-      console.log('[TranslatorView] 进入更新条件，准备设置pendingContentUpdates');
       pendingContentUpdates.set(translationId, value);
-      console.log('[TranslatorView] 已设置pendingContentUpdates', {
-        translationId,
-        value: value.substring(0, 50),
-        pendingSize: pendingContentUpdates.size,
-      });
-      console.log('[TranslatorView] 标记翻译文本为待更新:', translationId, value.substring(0, 50));
 
       // 节流提交：清除之前的timeout，设置新的
       if (pendingFlushTimeout !== null) {
         clearTimeout(pendingFlushTimeout);
       }
       pendingFlushTimeout = window.setTimeout(() => {
-        console.log('[TranslatorView] 触发自动提交');
         void flushPendingUpdates();
         pendingFlushTimeout = null;
       }, FLUSH_DELAY);
@@ -1387,7 +1333,6 @@ function handleProofInput(event: Event): void {
     selectedSource.value.selectedTranslationId || selectedSource.value.myTranslationId;
   if (translationId && value !== selectedSource.value.serverProofText) {
     pendingProofreadUpdates.set(translationId, value);
-    console.log('[TranslatorView] 标记校对文本为待更新:', translationId, value.substring(0, 50));
 
     // 节流提交：清除之前的timeout，设置新的
     if (pendingFlushTimeout !== null) {
@@ -2405,17 +2350,11 @@ onMounted(() => {
       }
     });
   }
-
-  // 启动自动同步定时器（每 2 秒）
-  startAutoSyncTimer();
 });
 
 onBeforeUnmount(() => {
   // 退出前强制提交所有待更新内容
   void flushPendingUpdates();
-
-  // 停止自动同步定时器
-  stopAutoSyncTimer();
 
   // 清除节流提交timeout
   if (pendingFlushTimeout !== null) {
