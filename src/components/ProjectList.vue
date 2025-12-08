@@ -38,6 +38,7 @@ interface _ProjectListOpenDetailPayload {
   hasPoprako?: boolean;
   role?: _ProjectRole | null;
   teamId?: string;
+  teamName?: string;
 }
 
 // 私有类型：通用 role passthrough
@@ -101,37 +102,133 @@ type ProjectListItem = ProjectBasicInfo & { hasPoprako?: boolean } & {
   projectSetName?: string | null;
   members?: ResMember[];
   role?: _ProjectRole | null;
+  // 汉化组信息（来自 ResProjectEnriched 的 team 字段）
+  teamId?: string;
+  teamName?: string;
 };
 
+// 本地完整项目缓存（所有已拉取的数据）
+const allProjects = ref<ProjectListItem[]>([]);
+// 当前显示的项目列表（根据屏幕高度裁剪后的）
 const innerProjects = ref<ProjectListItem[]>([]);
+// 当前显示列表的起始索引（在 allProjects 中的位置）
+const currentStartIndex = ref(0);
 const isLoading = ref(false);
 const listContainerRef = ref<HTMLElement | null>(null);
 // resize debounce timer and listener ref
 const resizeTimer = ref<ReturnType<typeof setTimeout> | null>(null);
 const resizeListener = ref<((this: Window, ev: UIEvent) => void) | null>(null);
-// 服务端一次最多拉取多少条，之后前端再根据高度裁剪
+// 服务端一次最多拉取多少条
 const serverLimit = 10;
-// 分页状态
-const currentPage = ref(1);
+// 服务端分页状态（用于判断是否还有更多数据可拉取）
+const serverPage = ref(1);
 const lastFetchCount = ref(0);
-// 是否还有下一页（基于返回数量是否达到 serverLimit）
-const hasNextPage = computed(() => lastFetchCount.value === serverLimit);
+// 是否还有下一页（服务端是否还有更多数据）
+const hasMoreFromServer = computed(() => lastFetchCount.value === serverLimit);
 
+// 上一页：尝试从本地缓存向前翻页
 function goPrevPage(): void {
-  if (currentPage.value > 1) {
-    currentPage.value -= 1;
-    void fetchAndClamp();
-  }
+  if (currentStartIndex.value <= 0) return;
+
+  // 计算当前显示的数量，作为一“页”的大小
+  const currentPageSize = innerProjects.value.length;
+  // 向前移动一页
+  currentStartIndex.value = Math.max(0, currentStartIndex.value - currentPageSize);
+
+  void clampAndDisplay();
 }
 
-function goNextPage(): void {
-  if (!hasNextPage.value) return;
-  currentPage.value += 1;
-  void fetchAndClamp();
+// 下一页：先检查本地是否有足够数据，不足时请求更多
+async function goNextPage(): Promise<void> {
+  const currentPageSize = innerProjects.value.length;
+  const nextStartIndex = currentStartIndex.value + currentPageSize;
+
+  // 检查本地缓存是否有足够的数据显示下一页
+  // 如果本地剩余数据少于 currentPageSize 且服务端还有更多数据，则请求
+  const remainingLocal = allProjects.value.length - nextStartIndex;
+
+  if (remainingLocal < currentPageSize && hasMoreFromServer.value) {
+    // 需要从服务端拉取更多数据
+    await fetchMoreFromServer();
+  }
+
+  // 检查是否还有数据可以显示
+  if (nextStartIndex >= allProjects.value.length) return;
+
+  currentStartIndex.value = nextStartIndex;
+  void clampAndDisplay();
 }
 
 function refreshList(): void {
+  // 刷新时清空缓存，重新从第一页开始
+  allProjects.value = [];
+  currentStartIndex.value = 0;
+  serverPage.value = 1;
   void fetchAndClamp();
+}
+
+// 从服务端拉取更多数据（追加到 allProjects）
+async function fetchMoreFromServer(): Promise<void> {
+  if (isLoading.value) return;
+
+  console.log('[ProjectList] fetchMoreFromServer: fetching page', serverPage.value + 1);
+  isLoading.value = true;
+
+  try {
+    serverPage.value += 1;
+    let apiRes: ResProjectEnriched[] = [];
+
+    const hasFilters = !!(props.filters && Object.keys(props.filters).length > 0);
+
+    if (props.teamId) {
+      if (hasFilters) {
+        apiRes = await searchTeamProjectsEnriched({
+          team_id: props.teamId as string,
+          ...props.filters,
+          page: serverPage.value,
+          limit: serverLimit,
+        });
+      } else {
+        apiRes = await getTeamProjectsEnriched({
+          teamId: props.teamId as string,
+          page: serverPage.value,
+          limit: serverLimit,
+        });
+      }
+    } else {
+      if (hasFilters) {
+        apiRes = await searchUserProjectsEnriched({
+          ...props.filters,
+          page: serverPage.value,
+          limit: serverLimit,
+        });
+      } else {
+        apiRes = await getUserProjectsEnriched({
+          page: serverPage.value,
+          limit: serverLimit,
+        });
+      }
+    }
+
+    const newItems = mapEnrichedToBasic(apiRes);
+    lastFetchCount.value = apiRes.length;
+
+    // 追加到本地缓存
+    allProjects.value = [...allProjects.value, ...newItems];
+
+    console.log(
+      '[ProjectList] fetchMoreFromServer: added',
+      newItems.length,
+      'items, total:',
+      allProjects.value.length
+    );
+  } catch (err) {
+    console.error('[ProjectList] fetchMoreFromServer failed:', err);
+    const toastStore = useToastStore();
+    toastStore.show('获取项目失败，请稍后重试');
+  } finally {
+    isLoading.value = false;
+  }
 }
 
 // 点击详情
@@ -157,7 +254,73 @@ function handleOpenDetail(item: ProjectListItem): void {
     isPublished: item.isPublished ?? false,
     hasPoprako: item.hasPoprako ?? false,
     role: item.role ?? null,
-    teamId: props.teamId ?? undefined,
+    teamId: item.teamId ?? undefined,
+    teamName: item.teamName ?? undefined,
+  });
+}
+
+// 从 allProjects 中裁剪并显示当前页面（根据屏幕高度）
+function clampAndDisplay(): void {
+  void nextTick().then(() => {
+    requestAnimationFrame(() => {
+      const container = listContainerRef.value;
+      if (!container) {
+        console.log('[ProjectList] clampAndDisplay: container not mounted');
+        return;
+      }
+
+      if (allProjects.value.length === 0) {
+        innerProjects.value = [];
+        return;
+      }
+
+      // 从 currentStartIndex 开始，取尽可能多的项，直到超出屏幕高度
+      const availableItems = allProjects.value.slice(currentStartIndex.value);
+
+      // 先尝试显示所有可用项
+      innerProjects.value = availableItems;
+
+      // 等待 DOM 更新后再裁剪
+      void nextTick().then(() => {
+        requestAnimationFrame(() => {
+          const scroll = container.closest('.projects-scroll') as HTMLElement | null;
+          const host = scroll ?? container;
+          const items = host.querySelectorAll('.project-list__item');
+
+          if (!items.length) {
+            console.log('[ProjectList] clampAndDisplay: no items rendered');
+            return;
+          }
+
+          let visibleCount = 0;
+
+          for (let i = 0; i < items.length; i++) {
+            const itemRect = (items[i] as HTMLElement).getBoundingClientRect();
+            const bottomWithPadding = itemRect.bottom + 20;
+
+            if (bottomWithPadding > window.innerHeight) {
+              break;
+            }
+
+            visibleCount++;
+          }
+
+          // 至少显示一项
+          const finalCount = Math.max(1, visibleCount);
+
+          console.log(
+            '[ProjectList] clampAndDisplay: visible items:',
+            finalCount,
+            'of',
+            availableItems.length
+          );
+
+          if (innerProjects.value.length > finalCount) {
+            innerProjects.value = availableItems.slice(0, finalCount);
+          }
+        });
+      });
+    });
   });
 }
 
@@ -182,6 +345,21 @@ function chipClass(phase: PhaseChip): string {
 
 // 最终展示数据：始终使用内部拉取的 innerProjects
 const displayProjects = computed<ProjectListItem[]>(() => innerProjects.value);
+
+// 分页按钮状态
+const canGoPrev = computed(() => currentStartIndex.value > 0);
+const canGoNext = computed(() => {
+  const currentPageSize = innerProjects.value.length;
+  const nextStartIndex = currentStartIndex.value + currentPageSize;
+  // 如果本地还有数据，或者服务端还有更多，则可以下一页
+  return nextStartIndex < allProjects.value.length || hasMoreFromServer.value;
+});
+
+// 当前页码显示（基于 currentStartIndex 和 innerProjects.length 计算）
+const currentPageNumber = computed(() => {
+  if (innerProjects.value.length === 0) return 1;
+  return Math.floor(currentStartIndex.value / innerProjects.value.length) + 1;
+});
 
 // 将 ResProjectEnriched 转为列表展示 DTO
 function mapEnrichedToBasic(apiRes: ResProjectEnriched[]): ProjectListItem[] {
@@ -265,6 +443,8 @@ function mapEnrichedToBasic(apiRes: ResProjectEnriched[]): ProjectListItem[] {
       principals: p.principals ?? [],
       members: (p.members ?? []) as ResMember[],
       role: p.role ?? null,
+      teamId: p.team?.id ?? undefined,
+      teamName: p.team?.name ?? undefined,
       phases,
     };
 
@@ -272,27 +452,22 @@ function mapEnrichedToBasic(apiRes: ResProjectEnriched[]): ProjectListItem[] {
   });
 }
 
-// 根据当前 props.teamId / props.filters 决定调用哪种 IPC
+// 初始化或重置时调用：从服务端拉取第一页数据
 async function fetchAndClamp(): Promise<void> {
   console.log(
     '[ProjectList] fetchAndClamp called with teamId:',
     props.teamId,
     'filters:',
-    props.filters,
-    'page:',
-    currentPage.value
+    props.filters
   );
   isLoading.value = true;
+
   try {
     console.log(
-      '[ProjectList] fetchAndClamp: requesting',
+      '[ProjectList] fetchAndClamp: requesting first page, limit =',
       serverLimit,
-      'items, teamId =',
-      props.teamId,
-      'filters =',
-      props.filters,
-      'page =',
-      currentPage.value
+      'teamId =',
+      props.teamId
     );
 
     let apiRes: ResProjectEnriched[] = [];
@@ -301,127 +476,54 @@ async function fetchAndClamp(): Promise<void> {
     console.log('[ProjectList] hasFilters:', hasFilters, 'teamId:', props.teamId);
 
     if (props.teamId) {
-      // 团队视角：有筛选时走 team search，暂无筛选时使用团队 enriched 列表
       if (hasFilters) {
-        console.log('[ProjectList] Calling searchTeamProjectsEnriched with params:', {
-          team_id: props.teamId as string,
-          ...props.filters,
-          page: currentPage.value,
-          limit: serverLimit,
-        });
         apiRes = await searchTeamProjectsEnriched({
           team_id: props.teamId as string,
           ...props.filters,
-          page: currentPage.value,
+          page: 1,
           limit: serverLimit,
         });
       } else {
-        console.log('[ProjectList] Calling getTeamProjectsEnriched with params:', {
-          teamId: props.teamId as string,
-          page: currentPage.value,
-          limit: serverLimit,
-        });
         apiRes = await getTeamProjectsEnriched({
           teamId: props.teamId as string,
-          page: currentPage.value,
+          page: 1,
           limit: serverLimit,
         });
       }
     } else {
-      // 用户视角
       if (hasFilters) {
-        console.log('[ProjectList] Calling searchUserProjectsEnriched with params:', {
-          ...props.filters,
-          page: currentPage.value,
-          limit: serverLimit,
-        });
         apiRes = await searchUserProjectsEnriched({
           ...props.filters,
-          page: currentPage.value,
+          page: 1,
           limit: serverLimit,
         });
       } else {
-        console.log('[ProjectList] Calling getUserProjectsEnriched with params:', {
-          page: currentPage.value,
-          limit: serverLimit,
-        });
-        apiRes = await getUserProjectsEnriched({ page: currentPage.value, limit: serverLimit });
+        apiRes = await getUserProjectsEnriched({ page: 1, limit: serverLimit });
       }
     }
+
     const all = mapEnrichedToBasic(apiRes);
     lastFetchCount.value = apiRes.length;
-    innerProjects.value = all;
 
-    // 使用 setTimeout 确保 DOM 完全渲染后再裁剪
-    void nextTick().then(() => {
-      requestAnimationFrame(() => {
-        const container = listContainerRef.value;
-        if (!container) {
-          console.log('[ProjectList] fetchAndClamp: container not mounted yet, skip clamp');
-          return;
-        }
+    // 重置本地缓存
+    allProjects.value = all;
+    currentStartIndex.value = 0;
+    serverPage.value = 1;
 
-        const scroll = container.closest('.projects-scroll') as HTMLElement | null;
-        const host = scroll ?? container;
-        const items = host.querySelectorAll('.project-list__item');
-        if (!items.length) {
-          console.log('[ProjectList] fetchAndClamp: no items rendered');
-          return;
-        }
+    console.log('[ProjectList] fetchAndClamp: loaded', all.length, 'items');
 
-        // 使用每个项的下边缘 + 10px 与 window.innerHeight 比较，若超出则停止，确保裁剪更加直观可靠
-        let itemCount = 0;
-
-        for (let i = 0; i < items.length; i++) {
-          const itemRect = (items[i] as HTMLElement).getBoundingClientRect();
-          const bottomWithPadding = itemRect.bottom + 20; // 下边缘 + 10px
-
-          // 如果下一项的下边缘超出窗口高度，则不包括该项
-          if (bottomWithPadding > window.innerHeight) {
-            break;
-          }
-
-          itemCount++;
-        }
-
-        // 至少保留一项
-        const adjustedMaxItems = Math.max(1, itemCount);
-
-        console.log(
-          '[ProjectList] clamp by bottom: itemCount=',
-          itemCount,
-          'adjustedMaxItems=',
-          adjustedMaxItems
-        );
-
-        if (innerProjects.value.length > adjustedMaxItems) {
-          innerProjects.value = innerProjects.value.slice(0, adjustedMaxItems);
-        }
-      });
-    });
+    // 裁剪并显示
+    clampAndDisplay();
   } catch (err) {
-    console.error(
-      '[ProjectList] fetchAndClamp failed with error:',
-      err,
-      'teamId:',
-      props.teamId,
-      'filters:',
-      props.filters
-    );
-    console.error('[ProjectList] 获取用户项目失败:', err);
+    console.error('[ProjectList] fetchAndClamp failed:', err);
+    allProjects.value = [];
     innerProjects.value = [];
     lastFetchCount.value = 0;
-    console.error('获取项目失败', err);
-    try {
-      const toastStore = useToastStore();
-      // 给用户友好的提示（网络或后端服务不可用）
-      toastStore.show('获取项目失败，请稍后重试');
-    } catch (e) {
-      // 如果 toast 无法使用，继续静默处理
-      console.debug('ProjectList toast failed', e);
-    }
+
+    const toastStore = useToastStore();
+    toastStore.show('获取项目失败，请稍后重试');
   } finally {
-    console.log('[ProjectList] fetchAndClamp finished, isLoading set to false');
+    console.log('[ProjectList] fetchAndClamp finished');
     isLoading.value = false;
   }
 }
@@ -430,12 +532,13 @@ onMounted(() => {
   requestAnimationFrame(() => {
     void fetchAndClamp();
   });
-  // 当窗口尺寸变化时，debounce 后重新裁剪以适配空间
+  // 当窗口尺寸变化时，debounce 后重新裁剪（保持当前起始位置）
   const onResize = () => {
     if (resizeTimer.value) clearTimeout(resizeTimer.value);
     resizeTimer.value = setTimeout(() => {
       requestAnimationFrame(() => {
-        void fetchAndClamp();
+        // resize 时不改变 currentStartIndex，只重新裁剪显示
+        clampAndDisplay();
       });
     }, 150);
   };
@@ -445,11 +548,13 @@ onMounted(() => {
   resizeListener.value = onResize;
 });
 
-// 当 filters 变化时，重新拉取并裁剪
+// 当 filters 变化时，清空缓存并重新拉取
 watch(
   () => props.filters,
   () => {
-    currentPage.value = 1; // reset page on filters change
+    allProjects.value = [];
+    currentStartIndex.value = 0;
+    serverPage.value = 1;
     requestAnimationFrame(() => {
       void fetchAndClamp();
     });
@@ -462,7 +567,9 @@ watch(
   () => props.shouldApplyFilters,
   () => {
     console.log('[ProjectList] shouldApplyFilters changed, calling fetchAndClamp');
-    currentPage.value = 1;
+    allProjects.value = [];
+    currentStartIndex.value = 0;
+    serverPage.value = 1;
     requestAnimationFrame(() => {
       void fetchAndClamp();
     });
@@ -474,7 +581,9 @@ watch(
   () => props.teamId,
   (newVal, oldVal) => {
     console.log('[ProjectList] teamId changed:', oldVal, '->', newVal);
-    currentPage.value = 1; // reset page when team changes
+    allProjects.value = [];
+    currentStartIndex.value = 0;
+    serverPage.value = 1;
     requestAnimationFrame(() => {
       void fetchAndClamp();
     });
@@ -566,7 +675,7 @@ onBeforeUnmount(() => {
             type="button"
             class="icon-btn"
             @click="goPrevPage"
-            :disabled="isLoading || currentPage <= 1"
+            :disabled="isLoading || !canGoPrev"
             title="上一页"
           >
             <svg
@@ -582,12 +691,12 @@ onBeforeUnmount(() => {
               <polyline points="15 18 9 12 15 6"></polyline>
             </svg>
           </button>
-          <span class="page-indicator">第 {{ currentPage }} 页</span>
+          <span class="page-indicator">第 {{ currentPageNumber }} 页</span>
           <button
             type="button"
             class="icon-btn"
             @click="goNextPage"
-            :disabled="isLoading || !hasNextPage"
+            :disabled="isLoading || !canGoNext"
             title="下一页"
           >
             <svg

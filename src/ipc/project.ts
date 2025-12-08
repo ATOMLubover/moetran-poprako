@@ -492,6 +492,7 @@ interface RawResAssignment {
   is_proofreader: boolean;
   is_typesetter: boolean;
   is_redrawer: boolean;
+  is_principal?: boolean;
   updated_at: number;
 }
 
@@ -514,6 +515,7 @@ export async function getAssignments(timeStart?: number): Promise<ResAssignment[
       isProofreader: r.is_proofreader,
       isTypesetter: r.is_typesetter,
       isRedrawer: r.is_redrawer,
+      isPrincipal: r.is_principal,
       updatedAt: r.updated_at,
     }));
   } catch (error) {

@@ -2587,13 +2587,13 @@ onBeforeUnmount(() => {
                 <!-- SVG倒三角形：底边在上，尖端在下 -->
                 <svg
                   class="marker__triangle"
-                  viewBox="0 0 40 36"
+                  viewBox="0 0 30 27"
                   xmlns="http://www.w3.org/2000/svg"
                 >
-                  <polygon class="marker__fill" points="20,36 0,0 40,0" />
+                  <polygon class="marker__fill" points="15,27 0,0 30,0" />
                   <polygon
                     class="marker__stroke"
-                    points="20,36 0,0 40,0"
+                    points="15,27 0,0 30,0"
                     fill="none"
                     stroke-width="2"
                   />
@@ -2717,14 +2717,14 @@ onBeforeUnmount(() => {
             @input="handleTranslationInput"
           ></textarea>
         </div>
-        <div v-if="isProofMode" class="editor__field editor__field--readonly">
+        <!-- <div v-if="isProofMode" class="editor__field editor__field--readonly">
           <div class="editor__field-label">翻译稿</div>
           <textarea
             :value="editorTranslationText"
             readonly
             class="editor__textarea editor__textarea--readonly"
           ></textarea>
-        </div>
+        </div> -->
         <div v-if="isProofMode" class="editor__field editor__field--proof">
           <div class="editor__field-label">校对稿</div>
           <textarea
@@ -3035,8 +3035,8 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   /* 倒三角尺寸 */
-  width: 40px;
-  height: 36px;
+  width: 30px;
+  height: 27px;
   /* 尖端在底部，以尖端为定位点 */
   transform-origin: 50% 100%;
   transition: transform 0.16s ease;

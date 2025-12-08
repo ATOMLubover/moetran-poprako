@@ -308,7 +308,26 @@ thread_local! {
         ApiClient::new(base, default_headers)
     });
 
-    pub static POPRAKO_API_BASE: reqwest::Url = "http://127.0.0.1:8080/api/v1/".parse().expect("invalid POPRAKO_API_BASE URL");
+    pub static POPRAKO_API_BASE: reqwest::Url = {
+        dotenvy::dotenv().expect("Failed to load .end file");
+
+        let use_local = match std::env::var("RUST_LOG") {
+            Ok(v) => v.to_lowercase().contains("debug"),
+            Err(_) => false,
+        };
+
+        let url_str = if use_local {
+            tracing::info!("Using local Poprako API endpoint for debugging");
+
+            "http://127.0.0.1:8080/api/v1/"
+        } else {
+            tracing::info!("Using production Poprako API endpoint");
+
+            "https://hatsu1ki-lb-site.com/api/v1/"
+        };
+
+        url_str.parse().expect("invalid POPRAKO_API_BASE URL")
+    };
 
     static POPRAKO_API_CLIENT: LazyCell<ApiClient> = LazyCell::new(|| {
         let base = POPRAKO_API_BASE.with(|b| b.clone());

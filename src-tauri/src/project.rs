@@ -1578,6 +1578,8 @@ pub struct PoprakoAssignment {
     pub is_translator: bool,
     pub is_proofreader: bool,
     pub is_typesetter: bool,
+    pub is_redrawer: bool,
+    pub is_principal: bool,
     pub updated_at: i64, // Unix timestamp (seconds)
 }
 

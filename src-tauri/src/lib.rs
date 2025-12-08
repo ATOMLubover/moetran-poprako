@@ -19,7 +19,7 @@ use tracing_subscriber::EnvFilter;
 // 直接导入模块便于 generate_handler 使用路径调用，不强制要求 pub 暴露全部
 
 const DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
-    dotenvy::dotenv().expect("Failed to load .end file");
+    dotenvy::dotenv().expect("Failed to load .env file");
 
     let app_dir = std::env::var("APP_DIR").unwrap_or_else(|_| "./".to_string());
 
@@ -36,6 +36,8 @@ const DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    dotenvy::dotenv().expect("Failed to load .env file");
+
     // 初始化 tracing（一次性），添加 EnvFilter 方便用户通过环境变量调整日志等级：
     // 示例：RUST_LOG=debug,reqwest=warn
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));

@@ -75,6 +75,7 @@ const selectedProjectTypesettingStatus = ref<number | null>(null);
 const selectedProjectReviewingStatus = ref<number | null>(null);
 const selectedProjectIsPublished = ref<boolean>(false);
 const selectedProjectTeamId = ref<string>('');
+const selectedProjectTeamName = ref<string>('');
 
 // 项目集创建弹窗状态
 const projsetCreatorOpen = ref(false);
@@ -199,6 +200,7 @@ function handleOpenDetail(payload: {
   hasPoprako?: boolean;
   role?: _PanelSelectedRole | null;
   teamId?: string;
+  teamName?: string;
 }): void {
   // 在 PanelView 中打开全屏详情视图
   detailMode.value = 'detail'; // 设置为 detail 模式
@@ -222,7 +224,9 @@ function handleOpenDetail(payload: {
   selectedProjectRole.value = payload.role ?? null;
   selectedProjectHasPoprako.value = payload.hasPoprako ?? undefined;
   selectedProjectIsPublished.value = payload.isPublished ?? false;
-  selectedProjectTeamId.value = payload.teamId ?? activeTeamId.value ?? '';
+  // 直接使用 payload 中的 teamId，不再依赖响应式的 activeTeamId
+  selectedProjectTeamId.value = payload.teamId ?? '';
+  selectedProjectTeamName.value = payload.teamName ?? '';
   detailReady.value = false;
   detailOpen.value = true;
   // 直接标记为就绪，全屏显示
@@ -585,6 +589,7 @@ function handleModifierBack(): void {
             :role="selectedProjectRole"
             :has-poprako="selectedProjectHasPoprako"
             :team-id="selectedProjectTeamId"
+            :team-name="selectedProjectTeamName"
             @close="handleCloseDetail"
             @open-modifier="handleOpenModifier"
           />

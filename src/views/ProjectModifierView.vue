@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue';
 import { useToastStore } from '../stores/toast';
 import { useTokenStore } from '../stores/token';
 import { assignMemberToProj, updateProjStatus, publishProj } from '../ipc/project';
+import { deleteFileCache } from '../ipc/image_cache';
 import MemberSelector from '../components/MemberSelector.vue';
 import type { ResMember } from '../api/model/member';
 
@@ -116,14 +117,13 @@ const selectorOpen = ref(false);
 const selectorRole = ref<'translator' | 'proofreader' | 'typesetter' | 'redrawer' | null>(null);
 const pickedAll = ref<_ModifierPickedItem[]>([]);
 
-function openSelector(role: 'translator' | 'proofreader' | 'typesetter' | 'redrawer'): void {
+function openSelector(): void {
   console.log('[ProjectModifier] openSelector called', {
-    role,
     teamId: props.teamId,
     pickedAllCount: pickedAll.value.length,
   });
 
-  selectorRole.value = role;
+  selectorRole.value = 'translator';
   // build pickedAll from current lists
   pickedAll.value = [
     ...currentTranslators.value.map(m => ({ ...m, position: 'translator' as const })),
@@ -237,40 +237,30 @@ async function handleUpdateProject(): Promise<void> {
       }
     }
 
-    // 2. Assign new members (compare with original)
-    const newTranslators = currentTranslators.value.filter(
-      m => !existingMembers.value.some(em => em.id === m.id)
-    );
-    const newProofreaders = currentProofreaders.value.filter(
-      m => !existingMembers.value.some(em => em.id === m.id)
-    );
-    const newTypesetters = currentTypesetters.value.filter(
-      m => !existingMembers.value.some(em => em.id === m.id)
-    );
-    const newRedrawers = currentRedrawers.value.filter(
-      m => !existingMembers.value.some(em => em.id === m.id)
-    );
-
-    const allNewMembers = new Set([
-      ...newTranslators.map(m => m.id),
-      ...newProofreaders.map(m => m.id),
-      ...newTypesetters.map(m => m.id),
-      ...newRedrawers.map(m => m.id),
+    // 2. 更新所有成员的角色分配（检测变更并调用 assign API）
+    const allCurrentMemberIds = new Set([
+      ...currentTranslators.value.map(m => m.id),
+      ...currentProofreaders.value.map(m => m.id),
+      ...currentTypesetters.value.map(m => m.id),
+      ...currentRedrawers.value.map(m => m.id),
     ]);
 
-    for (const memberId of allNewMembers) {
+    // 为每个当前成员调用 assign API 设置其所有角色
+    let assignedCount = 0;
+    for (const memberId of allCurrentMemberIds) {
       await assignMemberToProj({
         projId: props.projectId,
         memberId,
-        isTranslator: newTranslators.some(m => m.id === memberId),
-        isProofreader: newProofreaders.some(m => m.id === memberId),
-        isTypesetter: newTypesetters.some(m => m.id === memberId),
-        isRedrawer: newRedrawers.some(m => m.id === memberId),
+        isTranslator: currentTranslators.value.some(m => m.id === memberId),
+        isProofreader: currentProofreaders.value.some(m => m.id === memberId),
+        isTypesetter: currentTypesetters.value.some(m => m.id === memberId),
+        isRedrawer: currentRedrawers.value.some(m => m.id === memberId),
       });
+      assignedCount++;
     }
 
-    if (allNewMembers.size > 0) {
-      toastStore.show(`已添加 ${allNewMembers.size} 名新成员`);
+    if (assignedCount > 0) {
+      toastStore.show(`已更新 ${assignedCount} 名成员的角色分配`);
     }
 
     // 3. Publish project (if user marked pending publish and not already published)
@@ -280,6 +270,14 @@ async function handleUpdateProject(): Promise<void> {
       localIsPublished.value = true;
       pendingPublish.value = false;
       toastStore.show('项目已标记为已发布');
+    }
+
+    // 4. 清除项目缓存（图片缓存）以避免一致性问题
+    try {
+      await deleteFileCache(props.projectId);
+      console.log('[ProjectModifier] 项目缓存已清除', props.projectId);
+    } catch (cacheErr) {
+      console.warn('[ProjectModifier] 清除缓存失败（可忽略）', cacheErr);
     }
 
     toastStore.show('项目更新成功', 'success');
@@ -337,129 +335,303 @@ async function handleUpdateProject(): Promise<void> {
           ></textarea>
         </div> -->
 
-        <!-- Phase statuses (compact row) -->
-        <div class="modifier-field modifier-status-row">
-          <div class="status-row">
-            <div class="status-item">
-              <label class="modifier-label">翻译</label>
-              <select v-model.number="translatingStatus" class="modifier-select status-select">
-                <option :value="0">未开始</option>
-                <option :value="1">进行中</option>
-                <option :value="2">已完成</option>
-              </select>
-            </div>
+        <!-- Phase statuses (button-style layout) -->
+        <div class="modifier-field">
+          <h3 class="modifier-section-title">项目状态</h3>
 
-            <div class="status-item">
-              <label class="modifier-label">校对</label>
-              <select v-model.number="proofreadingStatus" class="modifier-select status-select">
-                <option :value="0">未开始</option>
-                <option :value="1">进行中</option>
-                <option :value="2">已完成</option>
-              </select>
+          <!-- 翻译状态 -->
+          <div class="status-row-new">
+            <label class="status-label-new">翻译</label>
+            <div class="status-buttons">
+              <button
+                type="button"
+                :class="[
+                  'status-btn',
+                  {
+                    'status-btn--current':
+                      translatingStatus === 0 && (props.translatingStatus ?? 0) === 0,
+                  },
+                  {
+                    'status-btn--modified':
+                      translatingStatus === 0 && (props.translatingStatus ?? 0) !== 0,
+                  },
+                ]"
+                @click="translatingStatus = 0"
+              >
+                未开始
+              </button>
+              <button
+                type="button"
+                :class="[
+                  'status-btn',
+                  {
+                    'status-btn--current':
+                      translatingStatus === 1 && (props.translatingStatus ?? 0) === 1,
+                  },
+                  {
+                    'status-btn--modified':
+                      translatingStatus === 1 && (props.translatingStatus ?? 0) !== 1,
+                  },
+                ]"
+                @click="translatingStatus = 1"
+              >
+                进行中
+              </button>
+              <button
+                type="button"
+                :class="[
+                  'status-btn',
+                  {
+                    'status-btn--current':
+                      translatingStatus === 2 && (props.translatingStatus ?? 0) === 2,
+                  },
+                  {
+                    'status-btn--modified':
+                      translatingStatus === 2 && (props.translatingStatus ?? 0) !== 2,
+                  },
+                ]"
+                @click="translatingStatus = 2"
+              >
+                已完成
+              </button>
             </div>
+          </div>
 
-            <div class="status-item">
-              <label class="modifier-label">嵌字</label>
-              <select v-model.number="typesettingStatus" class="modifier-select status-select">
-                <option :value="0">未开始</option>
-                <option :value="1">进行中</option>
-                <option :value="2">已完成</option>
-              </select>
+          <!-- 校对状态 -->
+          <div class="status-row-new">
+            <label class="status-label-new">校对</label>
+            <div class="status-buttons">
+              <button
+                type="button"
+                :class="[
+                  'status-btn',
+                  {
+                    'status-btn--current':
+                      proofreadingStatus === 0 && (props.proofreadingStatus ?? 0) === 0,
+                  },
+                  {
+                    'status-btn--modified':
+                      proofreadingStatus === 0 && (props.proofreadingStatus ?? 0) !== 0,
+                  },
+                ]"
+                @click="proofreadingStatus = 0"
+              >
+                未开始
+              </button>
+              <button
+                type="button"
+                :class="[
+                  'status-btn',
+                  {
+                    'status-btn--current':
+                      proofreadingStatus === 1 && (props.proofreadingStatus ?? 0) === 1,
+                  },
+                  {
+                    'status-btn--modified':
+                      proofreadingStatus === 1 && (props.proofreadingStatus ?? 0) !== 1,
+                  },
+                ]"
+                @click="proofreadingStatus = 1"
+              >
+                进行中
+              </button>
+              <button
+                type="button"
+                :class="[
+                  'status-btn',
+                  {
+                    'status-btn--current':
+                      proofreadingStatus === 2 && (props.proofreadingStatus ?? 0) === 2,
+                  },
+                  {
+                    'status-btn--modified':
+                      proofreadingStatus === 2 && (props.proofreadingStatus ?? 0) !== 2,
+                  },
+                ]"
+                @click="proofreadingStatus = 2"
+              >
+                已完成
+              </button>
             </div>
+          </div>
 
-            <div class="status-item">
-              <label class="modifier-label">监修</label>
-              <select v-model.number="reviewingStatus" class="modifier-select status-select">
-                <option :value="0">未开始</option>
-                <option :value="1">进行中</option>
-                <option :value="2">已完成</option>
-              </select>
+          <!-- 嵌字状态 -->
+          <div class="status-row-new">
+            <label class="status-label-new">嵌字</label>
+            <div class="status-buttons">
+              <button
+                type="button"
+                :class="[
+                  'status-btn',
+                  {
+                    'status-btn--current':
+                      typesettingStatus === 0 && (props.typesettingStatus ?? 0) === 0,
+                  },
+                  {
+                    'status-btn--modified':
+                      typesettingStatus === 0 && (props.typesettingStatus ?? 0) !== 0,
+                  },
+                ]"
+                @click="typesettingStatus = 0"
+              >
+                未开始
+              </button>
+              <button
+                type="button"
+                :class="[
+                  'status-btn',
+                  {
+                    'status-btn--current':
+                      typesettingStatus === 1 && (props.typesettingStatus ?? 0) === 1,
+                  },
+                  {
+                    'status-btn--modified':
+                      typesettingStatus === 1 && (props.typesettingStatus ?? 0) !== 1,
+                  },
+                ]"
+                @click="typesettingStatus = 1"
+              >
+                进行中
+              </button>
+              <button
+                type="button"
+                :class="[
+                  'status-btn',
+                  {
+                    'status-btn--current':
+                      typesettingStatus === 2 && (props.typesettingStatus ?? 0) === 2,
+                  },
+                  {
+                    'status-btn--modified':
+                      typesettingStatus === 2 && (props.typesettingStatus ?? 0) !== 2,
+                  },
+                ]"
+                @click="typesettingStatus = 2"
+              >
+                已完成
+              </button>
             </div>
+          </div>
 
-            <div class="status-item publish-item">
-              <label class="modifier-label">发布</label>
-              <div class="modifier-publish-control">
-                <button
-                  type="button"
-                  :class="['modifier-publish-btn', { pending: pendingPublish }]"
-                  :disabled="props.isPublished"
-                  @click="handlePublishClick"
-                >
-                  {{ props.isPublished ? '已发布' : pendingPublish ? '待发布' : '发布' }}
-                </button>
-                <span v-if="props.isPublished" class="modifier-publish-note"
-                  >（已发布，不可更改）</span
-                >
-              </div>
+          <!-- 监修状态 -->
+          <div class="status-row-new">
+            <label class="status-label-new">监修</label>
+            <div class="status-buttons">
+              <button
+                type="button"
+                :class="[
+                  'status-btn',
+                  {
+                    'status-btn--current':
+                      reviewingStatus === 0 && (props.reviewingStatus ?? 0) === 0,
+                  },
+                  {
+                    'status-btn--modified':
+                      reviewingStatus === 0 && (props.reviewingStatus ?? 0) !== 0,
+                  },
+                ]"
+                @click="reviewingStatus = 0"
+              >
+                未开始
+              </button>
+              <button
+                type="button"
+                :class="[
+                  'status-btn',
+                  {
+                    'status-btn--current':
+                      reviewingStatus === 1 && (props.reviewingStatus ?? 0) === 1,
+                  },
+                  {
+                    'status-btn--modified':
+                      reviewingStatus === 1 && (props.reviewingStatus ?? 0) !== 1,
+                  },
+                ]"
+                @click="reviewingStatus = 1"
+              >
+                进行中
+              </button>
+              <button
+                type="button"
+                :class="[
+                  'status-btn',
+                  {
+                    'status-btn--current':
+                      reviewingStatus === 2 && (props.reviewingStatus ?? 0) === 2,
+                  },
+                  {
+                    'status-btn--modified':
+                      reviewingStatus === 2 && (props.reviewingStatus ?? 0) !== 2,
+                  },
+                ]"
+                @click="reviewingStatus = 2"
+              >
+                已完成
+              </button>
+            </div>
+          </div>
+
+          <!-- 发布状态 -->
+          <div class="status-row-new">
+            <label class="status-label-new">发布</label>
+            <div class="status-buttons">
+              <button
+                type="button"
+                :class="['status-btn-publish', { 'status-btn-publish--pending': pendingPublish }]"
+                :disabled="props.isPublished"
+                @click="handlePublishClick"
+              >
+                {{ props.isPublished ? '已发布' : pendingPublish ? '待发布' : '发布' }}
+              </button>
+              <span v-if="props.isPublished" class="modifier-publish-note"
+                >（已发布，不可更改）</span
+              >
             </div>
           </div>
         </div>
 
         <!-- Member management -->
         <div class="modifier-invite-block">
-          <h3 class="modifier-section-title">成员管理</h3>
+          <div class="modifier-invite-header">
+            <h3 class="modifier-section-title">成员管理</h3>
+            <button type="button" class="modifier-manage-all-btn" @click="openSelector()">
+              管理成员
+            </button>
+          </div>
           <p class="modifier-section-note">已有成员不可删除；可添加新成员并分配角色。</p>
 
-          <!-- Translators -->
-          <div class="modifier-invite-item">
-            <div class="modifier-invite-text">
-              翻译:
-              <span class="modifier-invite-names">
+          <!-- Current members summary -->
+          <div class="modifier-member-summary">
+            <div class="modifier-member-row">
+              <span class="modifier-member-role">翻译:</span>
+              <span class="modifier-member-names">
                 {{ currentTranslators.map(m => m.name).join('、') || '未分配' }}
               </span>
             </div>
-            <button type="button" class="modifier-invite-btn" @click="openSelector('translator')">
-              管理
-            </button>
-          </div>
-
-          <!-- Proofreaders -->
-          <div class="modifier-invite-item">
-            <div class="modifier-invite-text">
-              校对:
-              <span class="modifier-invite-names">
+            <div class="modifier-member-row">
+              <span class="modifier-member-role">校对:</span>
+              <span class="modifier-member-names">
                 {{ currentProofreaders.map(m => m.name).join('、') || '未分配' }}
               </span>
             </div>
-            <button type="button" class="modifier-invite-btn" @click="openSelector('proofreader')">
-              管理
-            </button>
-          </div>
-
-          <!-- Typesetters -->
-          <div class="modifier-invite-item">
-            <div class="modifier-invite-text">
-              嵌字:
-              <span class="modifier-invite-names">
+            <div class="modifier-member-row">
+              <span class="modifier-member-role">嵌字:</span>
+              <span class="modifier-member-names">
                 {{ currentTypesetters.map(m => m.name).join('、') || '未分配' }}
               </span>
             </div>
-            <button type="button" class="modifier-invite-btn" @click="openSelector('typesetter')">
-              管理
-            </button>
-          </div>
-
-          <!-- Redrawers -->
-          <div class="modifier-invite-item">
-            <div class="modifier-invite-text">
-              美工:
-              <span class="modifier-invite-names">
+            <div class="modifier-member-row">
+              <span class="modifier-member-role">美工:</span>
+              <span class="modifier-member-names">
                 {{ currentRedrawers.map(m => m.name).join('、') || '未分配' }}
               </span>
             </div>
-            <button type="button" class="modifier-invite-btn" @click="openSelector('redrawer')">
-              管理
-            </button>
-          </div>
-
-          <!-- Principals (仅显示，不可编辑) -->
-          <div class="modifier-invite-item modifier-invite-item--readonly">
-            <div class="modifier-invite-text">
-              监修:
-              <span class="modifier-invite-names">
+            <div class="modifier-member-row modifier-member-row--readonly">
+              <span class="modifier-member-role">监修:</span>
+              <span class="modifier-member-names">
                 {{ displayPrincipals.map(m => m.name).join('、') || '未分配' }}
               </span>
-              <span class="modifier-invite-note">(仅创建时指定)</span>
+              <span class="modifier-member-note">(仅创建时指定)</span>
             </div>
           </div>
         </div>
@@ -657,57 +829,71 @@ async function handleUpdateProject(): Promise<void> {
   gap: 10px;
 }
 
-.modifier-invite-item {
+.modifier-invite-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 9px 12px;
-  border-radius: 12px;
-  background: #f6f8fc;
-  border: 1px solid rgba(170, 190, 215, 0.9);
+  margin-bottom: 6px;
 }
 
-.modifier-invite-item--readonly {
-  background: #f9fafb;
-  opacity: 0.85;
-}
-
-.modifier-invite-text {
-  font-size: 13px;
-  color: #23415b;
-}
-
-.modifier-invite-names {
-  margin-left: 4px;
-  color: #4a5f7a;
-}
-
-.modifier-invite-note {
-  margin-left: 6px;
-  font-size: 11px;
-  color: #7a8b99;
-}
-
-.modifier-invite-btn {
-  padding: 7px 12px;
+.modifier-manage-all-btn {
+  padding: 8px 16px;
   border-radius: 10px;
-  border: 1px solid rgba(118, 184, 255, 0.28);
+  border: 1px solid rgba(118, 184, 255, 0.35);
   background: #f4f9ff;
   color: #2f5a8f;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 6px 14px rgba(118, 184, 255, 0.05);
+  box-shadow: 0 6px 18px rgba(118, 184, 255, 0.06);
   transition:
     box-shadow 0.18s ease,
     transform 0.18s ease,
     background 0.18s ease;
 }
 
-.modifier-invite-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 8px 20px rgba(118, 184, 255, 0.08);
+.modifier-manage-all-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 26px rgba(118, 184, 255, 0.12);
   background: #eef6ff;
+}
+
+.modifier-member-summary {
+  padding: 12px;
+  background: #f6f8fc;
+  border-radius: 12px;
+  border: 1px solid rgba(170, 190, 215, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.modifier-member-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.modifier-member-row--readonly {
+  opacity: 0.75;
+}
+
+.modifier-member-role {
+  min-width: 40px;
+  font-weight: 600;
+  color: #23415b;
+}
+
+.modifier-member-names {
+  color: #4a5f7a;
+  flex: 1;
+}
+
+.modifier-member-note {
+  margin-left: 6px;
+  font-size: 11px;
+  color: #7a8b99;
 }
 
 .modifier-footer {
@@ -749,55 +935,101 @@ async function handleUpdateProject(): Promise<void> {
   box-shadow: none;
 }
 
-/* Compact status row */
-.status-row {
+/* 新的状态按钮布局 */
+.status-row-new {
   display: flex;
+  align-items: center;
   gap: 12px;
-  align-items: flex-end;
-  flex-wrap: wrap;
+  margin-bottom: 10px;
 }
 
-.status-item {
+.status-label-new {
+  min-width: 60px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #446585;
+}
+
+.status-buttons {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 160px;
+  gap: 8px;
+  flex: 1;
 }
 
-.status-select {
-  min-width: 140px;
-}
-
-.publish-item {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-}
-
-.modifier-publish-btn {
+.status-btn {
+  flex: 1;
   padding: 8px 12px;
+  border: 1px solid rgba(180, 206, 238, 0.7);
+  background: rgba(246, 250, 255, 0.9);
+  color: #2b577e;
+  font-size: 12px;
+  font-weight: 500;
   border-radius: 8px;
-  border: 1px solid rgba(60, 140, 90, 0.12);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    transform 0.12s ease,
+    box-shadow 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.status-btn:hover {
+  background: #eaf6ff;
+  box-shadow: 0 6px 18px rgba(118, 184, 255, 0.08);
+  transform: translateY(-2px);
+}
+
+/* 当前状态样式（淡绿色） */
+.status-btn--current {
+  background: #effaf1;
+  border: 1px solid rgba(60, 140, 90, 0.5);
+  color: #2f6f45;
+  box-shadow: 0 4px 12px rgba(60, 140, 90, 0.12);
+}
+
+/* 修改后的状态样式（淡橙黄色） */
+.status-btn--modified {
+  background: #fff4e6;
+  border: 1px solid #ffb84d;
+  color: #9a4f00;
+  box-shadow: 0 4px 12px rgba(255, 184, 77, 0.12);
+}
+
+/* 发布按钮特殊样式 */
+.status-btn-publish {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid rgba(60, 140, 90, 0.5);
   background: #effaf1;
   color: #2f6f45;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+  transition:
+    background 0.12s ease,
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
 }
 
-.modifier-publish-btn:disabled {
+.status-btn-publish:hover:not(:disabled) {
+  background: #e0f5e4;
+  box-shadow: 0 6px 18px rgba(60, 140, 90, 0.15);
+  transform: translateY(-2px);
+}
+
+.status-btn-publish:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
 
-/* Pending publish visual style */
-.modifier-publish-btn.pending {
-  background: #fff4e6; /* warm/pending background */
-  border: 1px solid #ffb84d; /* stronger orange border */
-  color: #9a4f00; /* darker orange text */
+.status-btn-publish--pending {
+  background: #fff4e6;
+  border: 1px solid #ffb84d;
+  color: #9a4f00;
   box-shadow: 0 8px 18px rgba(255, 184, 77, 0.12);
 }
 
-.modifier-publish-btn.pending:hover:not(:disabled) {
+.status-btn-publish--pending:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: 0 12px 30px rgba(255, 184, 77, 0.16);
 }

@@ -88,6 +88,8 @@ const props = defineProps<{
   isPublished?: boolean;
   // team id for member management
   teamId?: string;
+  // team name for display
+  teamName?: string;
   // Moetran 原生项目可能返回的 role 字段；若非 null 表示当前用户在该项目中
   role?: _ProjectRole | null;
 }>();
@@ -701,6 +703,7 @@ onBeforeUnmount(() => {
 
     <div class="pd-topbar">
       <div class="pd-tags">
+        <span v-if="props.teamName" class="pd-tag pd-tag--team">汉化组: {{ props.teamName }}</span>
         <span class="pd-tag">项目集: {{ project.projsetName ?? '-' }}</span>
         <span class="pd-tag">项目序号: {{ project.projsetIndex ?? '-' }}</span>
       </div>
@@ -987,6 +990,12 @@ onBeforeUnmount(() => {
   background: #f9f1ff;
   border-color: rgba(180, 120, 210, 0.5);
   color: #6a3d88;
+}
+.pd-tag--team {
+  background: #f0f8ff;
+  border-color: rgba(118, 184, 255, 0.5);
+  color: #2f5a8f;
+  font-weight: 600;
 }
 
 .pd-actions {

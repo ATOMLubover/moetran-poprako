@@ -79,16 +79,26 @@ const categorizedAssignments = computed(() => {
   // 根据选择的时间范围决定显示哪些时间段
   const result: { label: string; range: TimeRange; assigns: ResAssignment[] }[] = [];
 
-  // 近一天的 assigns
-  const dayAssigns = allAssignments.value.filter(a => a.updatedAt >= day1);
+  // 近一天的 assigns（按时间升序）
+  const dayAssigns = allAssignments.value
+    .filter(a => a.updatedAt >= day1)
+    .slice()
+    .sort((x, y) => x.updatedAt - y.updatedAt)
+    .reverse();
 
-  // 近一周（不含近一天）的 assigns
-  const weekAssigns = allAssignments.value.filter(a => a.updatedAt >= week1 && a.updatedAt < day1);
+  // 近一周（不含近一天）的 assigns（按时间升序）
+  const weekAssigns = allAssignments.value
+    .filter(a => a.updatedAt >= week1 && a.updatedAt < day1)
+    .slice()
+    .sort((x, y) => x.updatedAt - y.updatedAt)
+    .reverse();
 
-  // 近一个月（不含近一周）的 assigns
-  const monthAssigns = allAssignments.value.filter(
-    a => a.updatedAt >= month1 && a.updatedAt < week1
-  );
+  // 近一个月（不含近一周）的 assigns（按时间升序）
+  const monthAssigns = allAssignments.value
+    .filter(a => a.updatedAt >= month1 && a.updatedAt < week1)
+    .slice()
+    .sort((x, y) => x.updatedAt - y.updatedAt)
+    .reverse();
 
   // 根据选择的时间范围依次添加
   if (dayAssigns.length > 0) {
@@ -192,6 +202,7 @@ async function fetchAssignments(): Promise<void> {
 function selectTimeRange(range: TimeRange): void {
   selectedTimeRange.value = range;
   currentPage.value = 1;
+  void fetchAssignments();
 }
 
 // 格式化角色标签（模板内直接构造，无需函数）
@@ -356,7 +367,12 @@ watch(
                       美工
                     </span>
                   </div>
-                  <div class="assign-card__member">{{ assign.username }}</div>
+                  <div class="assign-card__member">
+                    <div v-if="assign.isPrincipal" class="assign-card__principal">
+                      {{ assign.username }}
+                    </div>
+                    <template v-else>{{ assign.username }}</template>
+                  </div>
                 </div>
               </div>
               <div class="assign-card__proj">
@@ -614,6 +630,7 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* keep default text direction */
 }
 
 .assign-card:hover {
@@ -690,11 +707,33 @@ watch(
   font-weight: 600;
 }
 
+.assign-card__principal {
+  display: inline-block;
+  font-size: 14px;
+  font-weight: 600;
+  color: #6b3a1a;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid rgba(255, 190, 140, 0.9);
+}
+
 .assign-card__time {
   font-size: 10px;
   color: #6b7c8f;
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.assign-card__supervisor {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b3a1a;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid rgba(255, 190, 140, 0.8);
+  text-align: center;
 }
 </style>
