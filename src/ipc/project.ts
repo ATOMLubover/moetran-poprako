@@ -537,6 +537,7 @@ export interface ProjectFileInfo {
   name: string;
   sourceCount: number;
   url: string;
+  coverUrl: string;
 }
 
 export async function getProjectTargets(projectId: string): Promise<ProjectTargetInfo[]> {
@@ -580,6 +581,7 @@ export async function getProjectFiles(
         name: string;
         source_count: number;
         url: string;
+        cover_url?: string;
       }[]
     >('get_project_files', {
       payload,
@@ -592,6 +594,7 @@ export async function getProjectFiles(
       name: f.name,
       sourceCount: f.source_count ?? 0,
       url: f.url,
+      coverUrl: (f as any).cover_url ?? (f as any).coverUrl ?? '',
     }));
   } catch (err) {
     console.error('[ipc] getProjectFiles failed', { projectId, targetId, err });

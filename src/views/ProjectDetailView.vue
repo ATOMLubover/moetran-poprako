@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
 import { Line } from 'vue-chartjs';
 import {
   Chart as ChartJS,
@@ -15,6 +15,7 @@ import {
 import { useToastStore } from '../stores/toast';
 import { useUserStore } from '../stores/user';
 import { useRouterStore } from '../stores/router';
+import { useCacheStore } from '../stores/cache';
 import { getProjectTargets, getProjectFiles, proxyImage } from '../ipc/project';
 import LoadingCircle from '../components/LoadingCircle.vue';
 import FileUploader from '../components/FileUploader.vue';
@@ -99,6 +100,7 @@ interface FileInfo {
   name: string;
   sourceCount: number;
   url: string; // 图片URL（Moetran API 总是返回）
+  coverUrl?: string; // 低分辨率预览图（可选）
 }
 
 const emit = defineEmits<{
@@ -108,6 +110,11 @@ const emit = defineEmits<{
 
 const toastStore = useToastStore();
 const routerStore = useRouterStore();
+const cacheStore = useCacheStore();
+
+const showJoinLeave = computed(() => {
+  return !(isMePrincipal.value && props.hasPoprako !== false);
+});
 
 // 项目详情数据
 const project = ref<ProjectDetail | null>(null);
@@ -133,6 +140,131 @@ const showUploader = ref(false);
 // 封面图片加载状态
 const coverImageData = ref<string | null>(null);
 const loadingCover = ref(false);
+
+// 预览分页状态（使用 coverUrl，不走缓存）
+const previewPage = ref(1);
+// 不再使用固定值，而是根据预览网格容器宽度与每个预览项的最大宽度动态计算每页能放多少个（单行展示）
+const previewGridRef = ref<HTMLElement | null>(null);
+const previewGridWidth = ref(0);
+// 控制是否处于测量模式：测量时渲染全部项（不触发图片加载），测量后切换为按页渲染
+const measuringPreviews = ref(false);
+// 可写的每页数量，由测量或 resize 事件设置
+const previewsPerPageRef = ref(6);
+const PREVIEW_ITEM_MIN = 140; // 与 CSS 中 min-width 保持一致
+const PREVIEW_ITEM_MAX = 220; // 单个预览项的最大宽度（可调整）
+const PREVIEW_GAP = 10; // grid gap（px），与 CSS 保持同步
+
+// 计算单行最多能放多少预览项：使用 (width + gap) / (itemMax + gap) 的近似
+const previewsPerPage = computed(() => previewsPerPageRef.value);
+
+const totalPreviewPages = computed(() => {
+  const p = previewsPerPage.value || 1;
+  return Math.max(1, Math.ceil((primaryFiles.value || []).length / p));
+});
+
+const previewFiles = computed(() => {
+  const per = previewsPerPage.value || 1;
+  const start = (previewPage.value - 1) * per;
+  return (primaryFiles.value || []).slice(start, start + per);
+});
+
+// 渲染用文件列表：测量模式下渲染全部 primaryFiles（不触发 proxy 请求），否则渲染按页切片
+const renderPreviewFiles = computed(() => {
+  return measuringPreviews.value ? primaryFiles.value : previewFiles.value;
+});
+
+// 生成用于绑定到预览 grid 的内联样式（控制列数，使其只显示单行）
+const previewGridStyle = computed(() => {
+  if (measuringPreviews.value) return {} as Record<string, string>;
+  const n = previewsPerPage.value || 1;
+  return {
+    gridTemplateColumns: `repeat(${n}, minmax(${PREVIEW_ITEM_MIN}px, ${PREVIEW_ITEM_MAX}px))`,
+  } as Record<string, string>;
+});
+
+// 当每页数量改变时，调整当前页码并重载当前页图片
+watch(
+  () => previewsPerPage.value,
+  (newVal, oldVal) => {
+    if (newVal === oldVal) return;
+    previewPage.value = Math.min(previewPage.value, totalPreviewPages.value);
+    loadPreviewPageImages().catch(err => console.warn('preview load failed', err));
+  }
+);
+
+// preview images proxied via backend (object URLs stored here)
+const previewImageMap = ref<Record<string, string | undefined>>({});
+const loadingPreview = ref(false);
+
+function revokePreviewUrlsExcept(keepIds: string[]) {
+  const map = previewImageMap.value;
+  for (const id of Object.keys(map)) {
+    if (!keepIds.includes(id)) {
+      // do not revoke object URLs immediately — DOM may still reference them
+      delete map[id];
+    }
+  }
+}
+
+function cleanupAllPreviewUrls() {
+  try {
+    for (const v of Object.values(previewImageMap.value)) {
+      if (v) {
+        try {
+          URL.revokeObjectURL(v);
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
+  } finally {
+    previewImageMap.value = {};
+  }
+}
+
+async function loadPreviewPageImages() {
+  const files = previewFiles.value || [];
+  if (!files.length) {
+    // clear existing previews
+    revokePreviewUrlsExcept([]);
+    previewImageMap.value = {};
+    return;
+  }
+
+  loadingPreview.value = true;
+
+  const keepIds: string[] = files.map(f => f.id);
+
+  // revoke urls not needed anymore
+  revokePreviewUrlsExcept(keepIds);
+
+  for (const f of files) {
+    if (previewImageMap.value[f.id]) continue; // already loaded
+    try {
+      const src = f.coverUrl ?? undefined;
+      if (!src) {
+        previewImageMap.value[f.id] = undefined;
+        continue;
+      }
+      const res = await proxyImage(src);
+      // store as data URL to avoid creating blob object URLs which may be revoked elsewhere
+      previewImageMap.value[f.id] = `data:${res.content_type};base64,${res.b64}`;
+    } catch (e) {
+      console.error('[ProjectDetail] loadPreviewPageImages proxy failed', { id: f.id, e });
+      previewImageMap.value[f.id] = undefined;
+    }
+  }
+
+  loadingPreview.value = false;
+}
+
+function goPrevPreview() {
+  if (previewPage.value > 1) previewPage.value -= 1;
+}
+
+function goNextPreview() {
+  if (previewPage.value < totalPreviewPages.value) previewPage.value += 1;
+}
 
 // 是否为项目管理员（后续可根据真实用户身份判断）
 // (已由 'principal' 角色控制关键编辑权限)
@@ -433,7 +565,18 @@ async function loadCoverImage(): Promise<void> {
   loadingCover.value = true;
   try {
     const firstFile = primaryFiles.value[0];
+
+    // Try to reuse cached object URL first (key format used elsewhere)
+    const key = `${props.projectId}::${firstFile.id}`;
+    const cached = cacheStore.promoteImageCacheEntry(key);
+    if (cached) {
+      coverImageData.value = cached;
+      return;
+    }
+
     const result = await proxyImage(firstFile.url);
+
+    // Use data URL directly to avoid object URL revoke races (no pinia cache)
     coverImageData.value = `data:${result.content_type};base64,${result.b64}`;
   } catch (err) {
     console.error('[ProjectDetail] loadCoverImage failed', err);
@@ -587,6 +730,9 @@ async function loadProject(): Promise<void> {
         }
         // 加载封面图片
         loadCoverImage();
+        // 加载当前预览页的低分辨率图片（通过后端 proxy）
+        previewPage.value = 1;
+        loadPreviewPageImages().catch(err => console.warn('preview load failed', err));
       }
     }
 
@@ -649,6 +795,29 @@ onMounted(() => {
   loadProject();
   checkCache();
   window.addEventListener('resize', handleResize);
+  // 初始化预览网格宽度，并使用 ResizeObserver 监听宽度变化以重新计算每页展示数量
+  if (previewGridRef.value) {
+    try {
+      previewGridWidth.value = previewGridRef.value.clientWidth;
+    } catch (e) {
+      previewGridWidth.value = 0;
+    }
+  }
+  const ro = new ResizeObserver(entries => {
+    if (!entries || entries.length === 0) return;
+    const r = entries[0];
+    previewGridWidth.value = Math.floor(r.contentRect.width);
+    // on resize, if not currently measuring, recompute per based on rendered item width
+    if (!measuringPreviews.value) {
+      recomputePerFromRenderedItems();
+    }
+  });
+  // attach observer after a tick (element should be present)
+  setTimeout(() => {
+    if (previewGridRef.value) ro.observe(previewGridRef.value);
+  }, 0);
+  // store observer on ref for cleanup
+  (previewGridRef as any).__ro = ro;
 });
 
 // 如果父组件在侧栏打开时切换了 `projectId`，需要响应式地重新加载数据
@@ -665,11 +834,95 @@ watch(
     // 重新加载新的 project 数据
     loadProject();
     checkCache();
+    // reset preview cache when project changes
+    cleanupAllPreviewUrls();
   }
 );
 
+// Load preview images whenever the preview page changes
+watch(
+  () => previewPage.value,
+  () => {
+    loadPreviewPageImages().catch(err => console.warn('preview load failed', err));
+  }
+);
+
+// When primaryFiles change, reset preview page and reload
+watch(
+  () => primaryFiles.value.length,
+  len => {
+    if (len === 0) {
+      previewImageMap.value = {};
+      return;
+    }
+    // 进入测量模式：先渲染全部占位项以测量实际可用项宽度
+    measuringPreviews.value = true;
+    previewPage.value = 1;
+    // 等待 DOM 更新后测量并切换回分页渲染
+    nextTick(() => {
+      // 使用 requestAnimationFrame 以确保布局完成
+      requestAnimationFrame(() => {
+        recomputePerFromRenderedItems();
+      });
+    });
+  }
+);
+
+// 根据渲染出的子项宽度和容器宽度计算每页数量，并退出测量模式
+function recomputePerFromRenderedItems(): void {
+  try {
+    const grid = previewGridRef.value;
+    if (!grid) {
+      previewsPerPageRef.value = 1;
+      measuringPreviews.value = false;
+      // load current page images (safe)
+      loadPreviewPageImages().catch(err => console.warn('preview load failed', err));
+      return;
+    }
+
+    const gridWidth = grid.clientWidth || previewGridWidth.value || 0;
+    // 使用预设的最大项宽度计算每行数量，避免受 auto-fill 布局扩展的影响
+    const per = Math.max(
+      1,
+      Math.floor((gridWidth + PREVIEW_GAP) / (PREVIEW_ITEM_MAX + PREVIEW_GAP))
+    );
+    previewsPerPageRef.value = per;
+
+    // ensure current page is within new total pages
+    previewPage.value = Math.min(
+      previewPage.value,
+      Math.max(1, Math.ceil(primaryFiles.value.length / per))
+    );
+
+    // exit measuring mode and load images for the computed page
+    measuringPreviews.value = false;
+    loadPreviewPageImages().catch(err => console.warn('preview load failed', err));
+  } catch (e) {
+    measuringPreviews.value = false;
+    previewsPerPageRef.value = 1;
+    loadPreviewPageImages().catch(err => console.warn('preview load failed', err));
+  }
+}
+
 onBeforeUnmount(() => {
   window.removeEventListener('resize', handleResize);
+  // revoke preview object URLs and clear map
+  cleanupAllPreviewUrls();
+  // revoke cover image object URL
+  if (coverImageData.value) {
+    try {
+      URL.revokeObjectURL(coverImageData.value);
+    } catch (e) {
+      // ignore
+    }
+  }
+  // disconnect ResizeObserver if set
+  try {
+    const ro = (previewGridRef as any).__ro;
+    if (ro && typeof ro.disconnect === 'function') ro.disconnect();
+  } catch (e) {
+    // ignore
+  }
 });
 </script>
 
@@ -727,9 +980,7 @@ onBeforeUnmount(() => {
         >
           修改项目信息
         </button>
-        <button v-else type="button" class="pd-btn pd-btn--primary" @click="handleJoinOrLeave">
-          {{ isMeInProject ? '退出项目' : '加入项目' }}
-        </button>
+        <!-- join/leave moved to cover column to align with cover width -->
         <button
           v-if="isMeTranslatorOrProofreader"
           type="button"
@@ -785,6 +1036,9 @@ onBeforeUnmount(() => {
           <div v-if="loadingCover" class="pd-cover-loading">
             <LoadingCircle />
           </div>
+          <div v-else-if="loadingMarkers || measuringPreviews" class="pd-cover-loading">
+            <LoadingCircle />
+          </div>
           <img
             v-else-if="coverImageData"
             :src="coverImageData"
@@ -792,6 +1046,20 @@ onBeforeUnmount(() => {
             class="pd-cover-image"
           />
           <div v-else class="pd-cover-placeholder">暂无封面</div>
+        </div>
+        <div class="pd-cover-actions">
+          <button
+            v-if="showJoinLeave"
+            type="button"
+            :class="[
+              'pd-btn',
+              isMeInProject ? 'pd-btn--danger' : 'pd-btn--primary',
+              'pd-cover-action-button',
+            ]"
+            @click="handleJoinOrLeave"
+          >
+            {{ isMeInProject ? '退出项目' : '加入项目' }}
+          </button>
         </div>
       </div>
 
@@ -848,7 +1116,7 @@ onBeforeUnmount(() => {
         </div>
 
         <!-- 标记分布图表 -->
-        <div class="pd-chart-card">
+        <!-- <div class="pd-chart-card">
           <h2 class="pd-section-title">每页标记分布</h2>
           <div class="pd-chart-canvas" :style="{ height: chartDynamicHeight + 'px' }">
             <div v-if="loadingMarkers" class="pd-chart-loading">
@@ -863,6 +1131,50 @@ onBeforeUnmount(() => {
               :options="chartOptions"
             />
             <div v-else class="pd-chart-empty">暂无标记数据</div>
+          </div>
+        </div> -->
+        <!-- 预览图（使用 Moetran 的 cover_url，分页显示，低分辨率不走缓存） -->
+        <div class="pd-preview-card">
+          <h2 class="pd-section-title">预览</h2>
+          <div v-if="!primaryFiles.length" class="pd-preview-empty">
+            <template v-if="loadingMarkers || measuringPreviews || loadingPreview">
+              <LoadingCircle />
+            </template>
+            <template v-else>暂无预览</template>
+          </div>
+          <div v-else>
+            <div class="pd-preview-grid" ref="previewGridRef" :style="previewGridStyle">
+              <div v-for="f in renderPreviewFiles" :key="f.id" class="pd-preview-item">
+                <div v-if="previewImageMap[f.id]">
+                  <img :src="previewImageMap[f.id]" :alt="f.name" />
+                </div>
+                <div v-else class="pd-preview-placeholder">
+                  {{ !measuringPreviews && !loadingPreview ? '暂无预览' : '' }}
+                </div>
+              </div>
+            </div>
+            <div v-if="measuringPreviews || loadingPreview" class="pd-preview-overlay">
+              <LoadingCircle />
+            </div>
+            <div class="pd-preview-pager">
+              <button
+                class="pd-btn pd-btn--secondary"
+                @click="goPrevPreview"
+                :disabled="previewPage <= 1"
+                type="button"
+              >
+                上一页
+              </button>
+              <span class="pd-preview-page">{{ previewPage }} / {{ totalPreviewPages }}</span>
+              <button
+                class="pd-btn pd-btn--secondary"
+                @click="goNextPreview"
+                :disabled="previewPage >= totalPreviewPages"
+                type="button"
+              >
+                下一页
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1251,6 +1563,18 @@ onBeforeUnmount(() => {
   justify-content: center;
 }
 
+.pd-cover-actions {
+  margin-top: 10px;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+.pd-cover-action-button {
+  width: 100%;
+  max-width: 180px;
+  box-sizing: border-box;
+}
+
 /* 右列：内容区 */
 .pd-content-column {
   flex: 1;
@@ -1364,6 +1688,74 @@ onBeforeUnmount(() => {
 .pd-chart-error {
   color: #c62828;
   font-weight: 500;
+}
+
+.pd-preview-card {
+  background: #ffffff;
+  border: 1px solid rgba(150, 180, 210, 0.4);
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 6px 18px rgba(140, 180, 230, 0.12);
+  position: relative;
+}
+.pd-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+.pd-preview-item {
+  width: 100%;
+  height: 120px;
+  background: #f8fafc;
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pd-preview-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.pd-preview-pager {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+}
+.pd-preview-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 12px;
+  pointer-events: none;
+  z-index: 6;
+}
+.pd-preview-page {
+  font-size: 13px;
+  color: #4a5f7a;
+  min-width: 64px;
+  text-align: center;
+}
+.pd-preview-empty {
+  font-size: 13px;
+  color: #7a8fa5;
+  padding: 12px 0;
+}
+.pd-preview-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #7a8fa5;
+  font-size: 13px;
 }
 
 @media (max-width: 1100px) {

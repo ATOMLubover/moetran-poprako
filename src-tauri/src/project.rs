@@ -186,6 +186,7 @@ pub struct MoetranProjectFile {
     pub name: String,
     pub source_count: u64,
     pub url: String,
+    pub cover_url: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -572,12 +573,18 @@ pub async fn get_project_files(
             let name = v.get("name")?.as_str()?.to_string();
             let source = v.get("source_count").and_then(|x| x.as_u64()).unwrap_or(0);
             let url = v.get("url")?.as_str()?.to_string();
+            let cover = v
+                .get("cover_url")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
 
             Some(MoetranProjectFile {
                 id,
                 name,
                 source_count: source,
                 url,
+                cover_url: cover,
             })
         })
         .collect();
