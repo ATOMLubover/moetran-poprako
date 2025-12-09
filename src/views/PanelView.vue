@@ -2,6 +2,7 @@
 import { ref, onMounted, computed, watch } from 'vue';
 import type { ComponentPublicInstance } from 'vue';
 import type { ProjectSearchFilters } from '../ipc/project';
+import type { FilterOption } from '../api/model/filterOption';
 import { useToastStore } from '../stores/toast';
 import { useUserStore } from '../stores/user';
 import { useRouterStore } from '../stores/router';
@@ -284,16 +285,37 @@ watch(
 
 // ======================= 新过滤逻辑 =======================
 // 来自 ProjectFilterBoard 的选项结构
-// 筛选面板返回的单个筛选项
-export interface FilterOption {
-  label: string;
-  key: string;
-  value: string;
-}
 const currentFilterOptions = ref<FilterOption[]>([]);
 
-// 控制是否应用筛选到 ProjectList（仅在确认查询或清空时触发）
-const shouldApplyFilters = ref(false);
+// 追踪搜索状态，用于禁用筛选控制板
+const isSearching = ref(false);
+
+// 处理添加筛选项（来自 ProjectFilterBoard）
+function handleAddFilterOption(option: FilterOption) {
+  const exists = currentFilterOptions.value.find(
+    opt => opt.key === option.key && opt.value === option.value
+  );
+
+  if (!exists) {
+    currentFilterOptions.value.push(option);
+  }
+}
+
+// 处理移除筛选项（来自 ProjectFilterBoard）
+function handleRemoveFilterOption(option: FilterOption) {
+  const index = currentFilterOptions.value.findIndex(
+    opt => opt.key === option.key && opt.value === option.value
+  );
+
+  if (index !== -1) {
+    currentFilterOptions.value.splice(index, 1);
+  }
+}
+
+// 处理清空所有筛选项（来自 ProjectFilterBoard）
+function handleClearFilters() {
+  currentFilterOptions.value = [];
+}
 
 // 将 FilterOption[] 映射为后端可识别的 ProjectSearchFilters
 // 后端定义字段：
@@ -402,13 +424,27 @@ const currentSearchFilters = computed<PanelProjectSearchFilters | undefined>(() 
   return filters;
 });
 
-// 处理 applyFilter 事件：当用户点击确认或清空时，触发列表刷新
-function handleApplyFilter() {
-  console.log('[PanelView] handleApplyFilter called, toggling shouldApplyFilters');
-  // 切换 shouldApplyFilters 触发 watch，让 ProjectList 刷新
-  shouldApplyFilters.value = !shouldApplyFilters.value;
-  console.log('[PanelView] shouldApplyFilters set to:', shouldApplyFilters.value);
-}
+// Debug: log when the computed search filters change (helps trace v-model -> computed -> prop flow)
+watch(
+  () => currentSearchFilters.value,
+  filters => {
+    if (filters !== undefined) {
+      console.log('[PanelView] currentSearchFilters changed:', JSON.parse(JSON.stringify(filters)));
+    } else {
+      console.log('[PanelView] currentSearchFilters changed: undefined (no filters)');
+    }
+
+    // 筛选条件变化时标记为搜索中，短暂延时后解除
+    isSearching.value = true;
+
+    setTimeout(() => {
+      isSearching.value = false;
+    }, 500);
+  },
+  { deep: true }
+);
+
+// 筛选即时生效：不再需要手动应用流程（确认按钮已移除）
 
 // 最终传递给 ProjectList 的项目已由其内部管理；此处预留接口以备未来需要
 // const displayProjects = computed(() =>
@@ -475,16 +511,28 @@ function handleModifierBack(): void {
     <!-- 顶部栏 已移除（按要求） -->
 
     <div class="content-layout">
-      <!-- 侧边栏：始终是头像+名字纵向列表，收起靠裁剪隐藏名字 -->
+      <!-- 左侧：汉化组列表 -->
       <aside class="teams-sidebar">
         <ul class="teams-list">
-          <li class="team-item team-item--user" @click="selectUserProjects">
+          <li
+            :class="[
+              'team-item',
+              'team-item--user',
+              { 'team-item--selected': activeTeamId === null },
+            ]"
+            @click="selectUserProjects"
+          >
             <span class="team-item__avatar user-avatar">{{
               user?.name ? user.name.slice(0, 1) : '我'
             }}</span>
             <span class="team-item__name">{{ user?.name || '我' }} 的项目</span>
           </li>
-          <li v-for="team in teams" :key="team.id" class="team-item" @click="onSelectTeam(team.id)">
+          <li
+            v-for="team in teams"
+            :key="team.id"
+            :class="['team-item', { 'team-item--selected': activeTeamId === team.id }]"
+            @click="onSelectTeam(team.id)"
+          >
             <span class="team-item__avatar">{{ team.name.slice(0, 1) }}</span>
             <span class="team-item__name">{{ team.name }} 的项目</span>
           </li>
@@ -506,44 +554,15 @@ function handleModifierBack(): void {
         </div>
       </aside>
 
-      <!-- 主体区域 -->
+      <!-- 中间：项目列表/派活主区域 -->
       <main class="projects-main">
-        <div class="projects-top">
-          <div class="projects-announcements">
-            <div class="ann-header">
-              <h3 class="ann-title">公告</h3>
-            </div>
-            <ul class="ann-list">
-              <li v-for="a in announcements.slice(0, 3)" :key="a.id" class="ann-item">
-                <div class="ann-item__head">
-                  <div class="ann-item__title">{{ a.title }}</div>
-                  <div class="ann-item__date">{{ a.date }}</div>
-                </div>
-                <div class="ann-item__content">{{ a.content }}</div>
-              </li>
-              <li v-if="!announcements.length" class="ann-empty">暂无公告</li>
-            </ul>
-          </div>
-
-          <div class="filter-panel-wrapper">
-            <ProjectFilterBoard
-              :team-id="activeTeamId ?? undefined"
-              v-model="currentFilterOptions"
-              :disabled="viewMode === 'assignments'"
-              @applyFilter="handleApplyFilter"
-              ref="filterBoardRef"
-            />
-          </div>
-        </div>
         <div class="projects-content" ref="projectsContainerRef">
           <div v-if="loadingProjects" class="placeholder">载入项目...</div>
           <div class="projects-scroll" v-else>
-            <!-- 根据 viewMode 条件渲染 ProjectList 或 AssignmentList -->
             <ProjectList
               v-if="viewMode === 'projects'"
               :team-id="activeTeamId"
               :filters="currentSearchFilters"
-              :should-apply-filters="shouldApplyFilters"
               :current-view="viewMode"
               @open-detail="handleOpenDetail"
               @create="handleOpenCreator"
@@ -559,6 +578,21 @@ function handleModifierBack(): void {
           </div>
         </div>
       </main>
+
+      <!-- 右侧：PopRaKo 筛选控制板（占用全部宽度的 23%） -->
+      <aside class="right-column">
+        <div class="filter-panel-wrapper">
+          <ProjectFilterBoard
+            :team-id="activeTeamId ?? undefined"
+            :is-searching="isSearching"
+            :disabled="viewMode === 'assignments'"
+            @add-option="handleAddFilterOption"
+            @remove-option="handleRemoveFilterOption"
+            @clear-all="handleClearFilters"
+            ref="filterBoardRef"
+          />
+        </div>
+      </aside>
 
       <!-- 全屏项目详情/创建/修改视图 -->
       <div v-if="detailOpen" class="detail-fullscreen">
@@ -753,6 +787,20 @@ function handleModifierBack(): void {
   background: #f5f8ff;
 }
 
+/* 选中项样式：绿色边框与淡绿色背景 */
+.team-item--selected {
+  border: 1px solid rgba(46, 204, 113, 0.9);
+  background: linear-gradient(180deg, #f6fff6 0%, #ecfff0 100%);
+  box-shadow: 0 8px 22px rgba(46, 204, 113, 0.06);
+  transform: none; /* keep selected steady */
+}
+
+.team-item--selected .team-item__avatar {
+  background: linear-gradient(135deg, #eaffea, #e0ffe0);
+  border-color: rgba(46, 204, 113, 0.45);
+  color: #1f5d35;
+}
+
 .team-item__avatar {
   flex: 0 0 34px;
   width: 34px;
@@ -838,6 +886,20 @@ function handleModifierBack(): void {
   box-sizing: border-box;
   box-shadow: 0 10px 34px rgba(140, 180, 230, 0.22);
   min-width: 0; /* 防止被右侧栏挤压时产生水平抖动 */
+}
+/* 右侧第三列：占据全部宽度的 23% */
+.right-column {
+  flex: 0 0 23%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Ensure the filter panel inside the right column fills its container */
+.right-column .filter-panel-wrapper,
+.right-column .filter-panel-wrapper > * {
+  width: 100%;
+  box-sizing: border-box;
 }
 .projects-header {
   display: flex;
@@ -968,20 +1030,25 @@ function handleModifierBack(): void {
     opacity 0.25s ease,
     margin-top 0.3s ease;
 }
-/* apply the card styling to the direct child so we don't produce a
-   double border (ProjectFilterBoard itself already renders a bordered
-   card); also ensure it fills the wrapper and uses matching font size */
+/* keep the wrapper lightweight so the child component's card
+   styling (border/background/shadow) remains authoritative. The
+   wrapper only handles sizing and layout; avoid forcing a background
+   or border onto the child. */
 .filter-panel-wrapper > * {
-  flex: 1 1 auto;
+  /* Match the visual style of the main projects panel: same border,
+     radius and shadow so the filter card reads as the same system.
+     Keep flex disabled so the child sizes to its content. */
+  flex: 0 0 auto;
   min-height: 84px;
   box-sizing: border-box;
   background: #fff;
-  border: 1px solid rgba(170, 190, 215, 0.85);
-  border-radius: 12px;
+  border: 1px solid rgba(150, 180, 210, 0.3); /* match .projects-main */
+  border-radius: 18px; /* match .projects-main */
   padding: 12px;
   display: flex;
   flex-direction: column;
   font-size: 13px;
+  box-shadow: 0 10px 34px rgba(140, 180, 230, 0.22); /* match .projects-main */
 }
 
 /* remove the filter-board's default top margin and slightly adjust
@@ -1015,7 +1082,7 @@ function handleModifierBack(): void {
   opacity: 1;
 }
 .projects-content {
-  margin-top: 5px;
+  margin-top: 2px;
   flex: 1;
   display: flex;
   flex-direction: column;

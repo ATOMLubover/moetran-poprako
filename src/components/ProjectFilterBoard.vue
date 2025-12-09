@@ -1,38 +1,32 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, watch, computed } from 'vue';
 import MemberSelector, { MemberInfo } from './MemberSelector.vue';
 import { getTeamPoprakoProjsets, type PoprakoProjsetInfo } from '../ipc/project';
 import { useToastStore } from '../stores/toast';
+import type { FilterOption } from '../api/model/filterOption';
+
 // 与示例逻辑对应的筛选面板，实现项目集/项目/成员/状态筛选
-// 发出 confirmOptions 事件供父组件应用过滤
+// 通过事件通知父组件，父组件负责管理真实的筛选数据
 
 // 父组件传入的上下文：当前选中的团队 ID（用于成员搜索）
 const props = defineProps<{
   teamId?: string;
-  modelValue: FilterOption[]; // v-model 绑定的筛选条件
   disabled?: boolean; // 是否禁用整个筛选面板
+  isSearching?: boolean; // 父组件正在搜索时禁用添加操作
 }>();
 
+// 三种事件：添加、删除单个、清空全部
 const emit = defineEmits<{
-  (e: 'update:modelValue', options: FilterOption[]): void;
-  (e: 'applyFilter'): void; // 通知父组件应用筛选（确认查询或清空时触发）
-  (e: 'openProjsetCreator'): void; // 通知父组件打开项目集创建弹窗
+  (e: 'add-option', option: FilterOption): void;
+  (e: 'remove-option', option: FilterOption): void;
+  (e: 'clear-all'): void;
+  (e: 'openProjsetCreator'): void;
 }>();
 
 const toastStore = useToastStore();
 
-// 过滤条件项
-export interface FilterOption {
-  label: string;
-  key: string;
-  value: string;
-}
-
-// 使用 computed 访问父组件传入的 filterOptions
-const filterOptions = computed({
-  get: () => props.modelValue,
-  set: (val: FilterOption[]) => emit('update:modelValue', val),
-});
+// 本地预览用的筛选条件（只用于显示，不传递给父组件）
+const localFilterOptions = ref<FilterOption[]>([]);
 
 // 高级成员选择（职位+多选）
 const advancedPickedMembers = ref<MemberInfo[]>([]);
@@ -50,13 +44,19 @@ function handleMemberSelectorConfirm(): void {
     redrawer: '美工',
     principal: '监修',
   };
+
   for (const m of advancedPickedMembers.value) {
     const key = `member-${m.position}`;
     const label = `成员(${labelMap[m.position]})：${m.name}`;
-    if (!filterOptions.value.find(o => o.key === key && o.value === m.id)) {
-      filterOptions.value.push({ label, key, value: m.id });
+    const option: FilterOption = { label, key, value: m.id };
+
+    // 检查本地是否已存在
+    if (!localFilterOptions.value.find(o => o.key === key && o.value === m.id)) {
+      localFilterOptions.value.push(option);
+      emit('add-option', option);
     }
   }
+
   advancedPickedMembers.value = [];
 }
 
@@ -74,20 +74,11 @@ const filterEnabled = ref<boolean>(true);
 // 当前是否有 teamId（当无 teamId 时，除“筛选项目”外其余控件应被禁用）
 const teamAvailable = computed(() => !!props.teamId);
 
-// 是否可以执行确认查询：存在筛选项且面板启用，且 (有 team 或 包含 project 条件)
-const canConfirm = computed(() => {
-  if (!filterEnabled.value) return false;
-  if (!filterOptions.value.length) return false;
-  if (teamAvailable.value) return true;
-  return filterOptions.value.some(o => o.key === 'project');
-});
+// 确认查询按钮已移除，筛选即时生效，保留计算项已无必要
 
 // 项目集列表与加载状态
 const currentProjsets = ref<PoprakoProjsetInfo[]>([]);
 const projsetLoading = ref(false);
-// projset 选择弹窗状态与临时选中项
-const projsetSelectorOpen = ref(false);
-const projsetPickedIds = ref<string[]>([]);
 // 时间筛选状态（time_start unix 时间戳）
 const selectedTimeRange = ref<'1day' | '1week' | '1month' | null>(null);
 
@@ -99,14 +90,11 @@ watch(
     if (!props.teamId) {
       currentProjsets.value = [];
       projsetLoading.value = false;
-      projsetPickedIds.value = [];
-      projsetSelectorOpen.value = false;
       return;
     }
 
     currentProjsets.value = [];
     projsetLoading.value = false;
-    projsetPickedIds.value = [];
     void loadProjsetsForCurrentTeam();
   },
   { immediate: true }
@@ -180,28 +168,22 @@ function getOptionalValues(selectedLabor: string): string[] {
       return [];
   }
 }
-function onSelectStatus(statusType: string) {
+function onSelectStatus(statusType: string): void {
   const optionLabel = selectedLabor.value + '：' + statusType;
-  const existing = filterOptions.value.find(o => o.label === optionLabel);
+  const option: FilterOption = {
+    label: optionLabel,
+    key: laborToStringKey(selectedLabor.value),
+    value: statusTypeToStringValue(statusType),
+  };
+
+  const existing = localFilterOptions.value.find(o => o.label === optionLabel);
   if (!existing) {
-    addOption({
-      label: optionLabel,
-      key: laborToStringKey(selectedLabor.value),
-      value: statusTypeToStringValue(statusType),
-    });
+    addOption(option);
   }
+
   selectedLabor.value = '';
 }
-function openProjsetSelector(): void {
-  // only open when a teamId is available
-  if (!props.teamId) return;
-
-  // prefill picked ids with existing project-set options
-  projsetPickedIds.value = filterOptions.value
-    .filter(o => o.key === 'project-set')
-    .map(o => o.value);
-  projsetSelectorOpen.value = true;
-}
+// (旧的弹窗选择已弃用；使用 inline 列表替代)
 
 // 重新加载项目集列表的公开方法（供父组件在创建项目集后调用）
 function reloadProjsets(): void {
@@ -236,110 +218,112 @@ function selectTimeRange(range: '1day' | '1week' | '1month'): void {
       break;
   }
 
-  // 移除已有的时间筛选条件，添加新的
-  filterOptions.value = filterOptions.value.filter(o => o.key !== 'time-start');
-  const newOption = { label, key: 'time-start', value: String(timeStart) };
-  addOption(newOption);
-  console.log('[ProjectFilterBoard] Added time filter option:', newOption);
-  console.log(
-    '[ProjectFilterBoard] Current filterOptions after adding time:',
-    JSON.parse(JSON.stringify(filterOptions.value))
-  );
-}
-
-function onProjsetConfirm(): void {
-  for (const id of projsetPickedIds.value) {
-    const projset = currentProjsets.value.find(p => p.projsetId === id);
-    if (!projset) continue;
-    const label = `项目集：${projset.projsetName}`;
-    addOption({ label, key: 'project-set', value: id });
+  // 先移除本地已有的时间筛选条件
+  const oldTimeOption = localFilterOptions.value.find(o => o.key === 'time-start');
+  if (oldTimeOption) {
+    removeOption(oldTimeOption);
   }
-  projsetSelectorOpen.value = false;
+
+  // 添加新的时间筛选
+  const newOption: FilterOption = { label, key: 'time-start', value: String(timeStart) };
+  addOption(newOption);
+
+  console.log('[ProjectFilterBoard] Added time filter option:', newOption);
 }
 
-function onProjsetCancel(): void {
-  projsetSelectorOpen.value = false;
+// Inline project-set selection: compute currently selected ids and toggle
+const selectedProjsetIds = computed(() =>
+  localFilterOptions.value.filter(o => o.key === 'project-set').map(o => o.value)
+);
+
+function toggleProjset(id: string): void {
+  const exists = selectedProjsetIds.value.includes(id);
+  if (exists) {
+    removeOption({ label: '', key: 'project-set', value: id });
+    return;
+  }
+
+  const ps = currentProjsets.value.find(p => p.projsetId === id);
+  const label = ps ? `项目集：${ps.projsetName}` : '项目集';
+  addOption({ label, key: 'project-set', value: id });
 }
 
-function onEnterProject() {
+function onEnterProject(): void {
   const v = projectInput.value.trim();
   if (v) {
     addOption({ label: '项目：' + v, key: 'project', value: v });
     projectInput.value = '';
   }
 }
-function addOption(opt: FilterOption) {
-  if (!filterOptions.value.find(o => o.key === opt.key && o.value === opt.value)) {
-    filterOptions.value.push(opt);
-  }
-}
-function removeOption(opt: FilterOption) {
-  filterOptions.value = filterOptions.value.filter(
-    o => !(o.key === opt.key && o.value === opt.value)
-  );
-}
-function clearAllOptions() {
-  console.log('[ProjectFilterBoard] clearAllOptions called, clearing all options');
-  filterOptions.value = [];
-  projectInput.value = '';
-  memberInput.value = '';
-  selectedLabor.value = '';
-  projsetPickedIds.value = [];
-  advancedPickedMembers.value = [];
-  console.log('[ProjectFilterBoard] Emitting applyFilter after clearing');
-  // 清空时立即通知父组件应用空筛选（触发列表刷新）
-  emit('applyFilter');
-}
 
-function onConfirm() {
-  // protect: ignore confirm when no conditions
-  if (!filterOptions.value.length) {
-    console.log('[ProjectFilterBoard] onConfirm called but no filterOptions, showing toast');
-    toastStore.show('请先添加筛选条件');
+function addOption(opt: FilterOption): void {
+  if (props.isSearching) {
+    console.log('[ProjectFilterBoard] Cannot add option while searching');
     return;
   }
 
-  // diagnostic log: print the options being emitted so we can debug unexpected member_ids
-  // (will be visible in renderer devtools console)
-  // eslint-disable-next-line no-console
-  console.log(
-    '[ProjectFilterBoard] onConfirm -> emitting applyFilter with options:',
-    JSON.parse(JSON.stringify(filterOptions.value))
-  );
-  // 通知父组件应用当前筛选条件
-  emit('applyFilter');
+  if (!localFilterOptions.value.find(o => o.key === opt.key && o.value === opt.value)) {
+    localFilterOptions.value.push(opt);
+    emit('add-option', opt);
+    console.log('[ProjectFilterBoard] Added option:', opt);
+  }
+}
+
+function removeOption(opt: FilterOption): void {
+  console.log('[ProjectFilterBoard] removeOption called for:', opt);
+
+  const index = localFilterOptions.value.findIndex(o => o.key === opt.key && o.value === opt.value);
+
+  if (index !== -1) {
+    localFilterOptions.value.splice(index, 1);
+    emit('remove-option', opt);
+    console.log('[ProjectFilterBoard] Option removed successfully');
+  } else {
+    console.log('[ProjectFilterBoard] Option not found');
+  }
+}
+
+function clearAllOptions(): void {
+  if (localFilterOptions.value.length === 0) {
+    console.log('[ProjectFilterBoard] Already cleared');
+    return;
+  }
+
+  console.log('[ProjectFilterBoard] Clearing all options');
+
+  // 清空所有本地状态
+  projectInput.value = '';
+  memberInput.value = '';
+  selectedLabor.value = '';
+  advancedPickedMembers.value = [];
+  selectedTimeRange.value = null;
+  localFilterOptions.value = [];
+
+  // 通知父组件
+  emit('clear-all');
+
+  console.log('[ProjectFilterBoard] All options cleared');
 }
 </script>
 <template>
   <div class="filter-board" :class="{ 'fb--disabled': !filterEnabled || props.disabled }">
     <div class="fb-header">
       <h3 class="fb-title">PopRaKo 筛选控制板</h3>
-      <button class="fb-confirm-btn" @click="onConfirm" :disabled="!canConfirm">确认查询</button>
     </div>
 
-    <!-- 第一行：项目名（模糊搜索）+ 项目集选择（右对齐） -->
+    <!-- 第一行：项目名（模糊搜索） -->
     <div class="fb-row fb-row--tight" style="align-items: center">
       <label class="fb-label">项目名称</label>
       <input
         class="fb-input"
-        placeholder="输入项目集号/序号/作者/标题 [Enter 确认]"
+        placeholder="[按 Enter 确认]"
         v-model="projectInput"
         @keyup.enter="onEnterProject"
         :disabled="!filterEnabled"
       />
-      <div style="display: flex; align-items: center; gap: 8px; margin-left: auto">
-        <label class="fb-label fb-label--small">项目集</label>
-        <button
-          class="fb-adv-btn"
-          @click="openProjsetSelector"
-          :disabled="!filterEnabled || !props.teamId || projsetLoading"
-        >
-          选择
-        </button>
-      </div>
     </div>
 
-    <!-- 第三行：状态选择 -->
+    <!-- 第二行：状态选择 -->
     <div class="fb-status-block fb-row--tight">
       <label class="fb-label">项目状态</label>
       <div v-if="!selectedLabor" class="fb-status-group">
@@ -348,7 +332,7 @@ function onConfirm() {
           :key="s"
           class="fb-status-btn"
           @click="selectedLabor = s"
-          :disabled="!filterEnabled || !teamAvailable"
+          :disabled="!filterEnabled"
         >
           {{ s }}
         </button>
@@ -359,15 +343,11 @@ function onConfirm() {
           :key="st"
           class="fb-status-btn"
           @click="onSelectStatus(st)"
-          :disabled="!filterEnabled || !teamAvailable"
+          :disabled="!filterEnabled"
         >
           {{ st }}
         </button>
-        <button
-          class="fb-cancel-btn"
-          @click="selectedLabor = ''"
-          :disabled="!filterEnabled || !teamAvailable"
-        >
+        <button class="fb-cancel-btn" @click="selectedLabor = ''" :disabled="!filterEnabled">
           取消
         </button>
       </div>
@@ -375,7 +355,7 @@ function onConfirm() {
 
     <!-- 状态选择（强制单行填充） -->
 
-    <!-- 时间筛选 + 成员筛选 -->
+    <!-- 第三行：创建时间 -->
     <div class="fb-row fb-row--tight fb-time-filter" style="align-items: center">
       <label class="fb-label">创建时间</label>
       <div class="fb-time-btns" style="flex: 1; display: flex; gap: 8px">
@@ -383,7 +363,7 @@ function onConfirm() {
           class="fb-time-btn"
           :class="{ 'fb-time-btn--active': selectedTimeRange === '1day' }"
           @click="selectTimeRange('1day')"
-          :disabled="!filterEnabled || !teamAvailable"
+          :disabled="!filterEnabled"
         >
           近一天
         </button>
@@ -391,7 +371,7 @@ function onConfirm() {
           class="fb-time-btn"
           :class="{ 'fb-time-btn--active': selectedTimeRange === '1week' }"
           @click="selectTimeRange('1week')"
-          :disabled="!filterEnabled || !teamAvailable"
+          :disabled="!filterEnabled"
         >
           近一周
         </button>
@@ -399,31 +379,63 @@ function onConfirm() {
           class="fb-time-btn"
           :class="{ 'fb-time-btn--active': selectedTimeRange === '1month' }"
           @click="selectTimeRange('1month')"
-          :disabled="!filterEnabled || !teamAvailable"
+          :disabled="!filterEnabled"
         >
           近一个月
         </button>
       </div>
-      <div class="fb-member-compact">
-        <label class="fb-label fb-label--small">成员</label>
+    </div>
+
+    <!-- 第四行：成员选择 -->
+    <div v-if="teamAvailable" class="fb-row fb-row--tight" style="align-items: center">
+      <label class="fb-label">成员</label>
+      <div style="display: flex; align-items: center; gap: 8px">
         <button
           type="button"
           class="fb-adv-btn"
           @click="openMemberSelector"
-          :disabled="!filterEnabled || !teamAvailable"
+          :disabled="!filterEnabled"
         >
           选择
         </button>
       </div>
     </div>
 
+    <!-- 第五行（放到底部）：项目集选择 -->
+    <div v-if="teamAvailable" class="fb-row fb-row--tight" style="align-items: flex-start">
+      <label class="fb-label">项目集</label>
+      <div class="fb-projset-grid" style="flex: 1">
+        <div v-if="projsetLoading">加载中...</div>
+        <template v-else>
+          <button
+            v-for="ps in currentProjsets"
+            :key="ps.projsetId"
+            type="button"
+            class="fb-projset-btn"
+            :class="{ 'fb-projset-btn--active': selectedProjsetIds.includes(ps.projsetId) }"
+            @click="toggleProjset(ps.projsetId)"
+            :disabled="!filterEnabled"
+          >
+            {{ ps.projsetName }}
+          </button>
+          <div v-if="!currentProjsets.length" class="selector-empty">暂无项目集</div>
+        </template>
+      </div>
+    </div>
+
     <!-- 条件预览：使用 transition-group 动画展示 -->
-    <div class="fb-preview" v-if="filterOptions.length">
+    <div class="fb-preview" v-if="localFilterOptions.length">
       <span class="fb-preview__label">筛选条件预览：</span>
       <transition-group name="chip" tag="div" class="fb-preview-chips">
-        <div v-for="opt in filterOptions" :key="opt.key + opt.value" class="fb-chip">
+        <div
+          v-for="opt in localFilterOptions"
+          :key="`filter-${opt.key}-${opt.value}`"
+          class="fb-chip"
+        >
           {{ opt.label }}
-          <button class="fb-chip__remove" @click="removeOption(opt)">&times;</button>
+          <button class="fb-chip__remove" @click.stop.prevent="removeOption(opt)" type="button">
+            &times;
+          </button>
         </div>
       </transition-group>
     </div>
@@ -431,15 +443,16 @@ function onConfirm() {
     <!-- 操作按钮 -->
     <div class="fb-actions">
       <button
-        v-if="filterOptions.length"
+        v-if="localFilterOptions.length"
         class="fb-clear-btn"
         @click="clearAllOptions"
-        :disabled="!filterEnabled"
+        :disabled="!filterEnabled || props.isSearching"
       >
         清空条件
       </button>
     </div>
     <MemberSelector
+      v-if="teamAvailable"
       :show="memberSelectorOpen"
       :picked="advancedPickedMembers"
       :team-id="props.teamId"
@@ -448,48 +461,20 @@ function onConfirm() {
       @close="handleMemberSelectorClose"
     />
 
-    <!-- 项目集选择弹窗 -->
-    <div v-if="projsetSelectorOpen" class="projset-overlay">
-      <div class="projset-panel">
-        <div class="selector-header">
-          <div class="selector-title">选择项目集</div>
-          <button class="selector-close" @click="onProjsetCancel">✕</button>
-        </div>
-        <div class="selector-body">
-          <div style="max-height: 280px; overflow: auto">
-            <label v-for="ps in currentProjsets" :key="ps.projsetId" class="projset-item">
-              <input type="checkbox" :value="ps.projsetId" v-model="projsetPickedIds" />
-              <span style="margin-left: 8px">{{ ps.projsetName }}</span>
-            </label>
-            <div v-if="!currentProjsets.length" class="selector-empty">暂无项目集</div>
-          </div>
-          <div class="selector-actions">
-            <button
-              class="selector-action-btn selector-action-btn--cancel"
-              @click="onProjsetCancel"
-            >
-              取消
-            </button>
-            <button
-              class="selector-action-btn selector-action-btn--confirm"
-              @click="onProjsetConfirm"
-            >
-              添加所选
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+    <!-- 项目集弹窗已弃用：改为 inline 列表 -->
   </div>
 </template>
 <style scoped>
 .filter-board {
   margin-top: 14px;
-  padding: 14px 16px 18px;
-  background: rgba(250, 253, 255, 0.92);
-  border: 1px solid rgba(150, 180, 210, 0.35);
-  border-radius: 14px;
-  box-shadow: 0 8px 22px rgba(140, 180, 230, 0.14);
+  /* keep internal spacing but do not provide the outer card visuals
+     (wrapper handles background/border/radius) — this prevents a
+     double-border while allowing the board to size to its content */
+  padding: 14px 16px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -507,24 +492,38 @@ function onConfirm() {
 }
 .fb-row {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+/* Ensure any direct child control in a row fills the available width.
+   This overrides inline centering on parent wrappers so inputs/buttons
+   truly expand to full row width. */
+.fb-row > div,
+.fb-row > input,
+.fb-row > select,
+.fb-row > textarea {
+  width: 100%;
+  box-sizing: border-box;
 }
 .fb-row--member {
   position: relative;
 }
 .fb-label {
-  min-width: 92px;
+  display: block;
+  width: 100%;
+  margin: 0 0 6px 0;
   font-size: 13px;
   color: #446585;
   font-weight: 600;
 }
 .fb-input {
   flex: 1;
-  height: 34px;
+  width: 100%;
+  height: 40px;
   border: 1px solid rgba(170, 200, 232, 0.8);
   border-radius: 10px;
-  padding: 0 12px;
+  padding: 8px 12px;
   font-size: 13px;
   background: rgba(248, 252, 255, 0.95);
   color: #203a56;
@@ -535,6 +534,7 @@ function onConfirm() {
 }
 .fb-select {
   flex: 1;
+  width: 100%;
   height: 34px;
   border: 1px solid rgba(170, 200, 232, 0.8);
   border-radius: 10px;
@@ -561,6 +561,7 @@ function onConfirm() {
 }
 .fb-member-wrapper {
   flex: 1;
+  width: 100%;
   position: relative;
 }
 .fb-dropdown {
@@ -587,22 +588,22 @@ function onConfirm() {
   background: #f1f7ff;
 }
 .fb-status-block {
-  /* lay out label and status buttons in one row, matching other fb-row
-     controls: label on the left, buttons fill the remaining space */
+  /* label on its own line, buttons below and full-width */
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
 }
 .fb-status-group {
   display: flex;
-  flex: 1 1 auto; /* fill remaining horizontal space beside the label */
-  flex-wrap: nowrap; /* 强制单行 */
+  width: 100%;
   gap: 8px;
+  flex-wrap: wrap;
 }
 .fb-status-btn {
   flex: 1 1 0; /* 横向填充并允许缩放，不换行 */
   min-width: 0;
-  padding: 8px 10px;
+  padding: 4px 4px;
   border: 1px solid rgba(180, 206, 238, 0.7);
   background: rgba(246, 250, 255, 0.9);
   color: #2b577e;
@@ -773,7 +774,9 @@ function onConfirm() {
     transform 0.16s ease,
     background 0.12s ease,
     box-shadow 0.12s ease;
-  min-width: 110px; /* Ensure member/projset buttons keep a readable width */
+  min-width: 0;
+  width: 100%;
+  padding: 8px 12px;
 }
 .fb-adv-btn:hover {
   background: #eaf6ff;
@@ -796,6 +799,31 @@ function onConfirm() {
   font-size: 12px;
   color: #2f4b66;
 }
+.fb-projset-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  width: 100%;
+}
+.fb-projset-btn {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(180, 206, 238, 0.7);
+  background: rgba(246, 250, 255, 0.95);
+  color: #2b577e;
+  font-size: 13px;
+  text-align: center;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-projset-btn--active {
+  background: rgba(210, 244, 225, 0.96);
+  color: #1e6042;
+  border-color: rgba(140, 205, 170, 0.9);
+  box-shadow: 0 6px 18px rgba(120, 200, 160, 0.06);
+}
 .fb-adv-chip {
   background: #f0fbf3;
   border: 1px solid #bfe6c6;
@@ -812,13 +840,14 @@ function onConfirm() {
 /* 时间筛选按钮样式 */
 .fb-time-filter {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
 }
 .fb-time-btns {
   display: flex;
   gap: 8px;
-  flex: 1 1 auto; /* 占据发布时间标签右侧的剩余宽度 */
+  width: 100%;
   min-width: 0; /* 允许子项在窄容器中正确收缩 */
 }
 .fb-time-btn {

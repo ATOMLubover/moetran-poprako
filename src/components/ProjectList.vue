@@ -551,10 +551,20 @@ onMounted(() => {
 // 当 filters 变化时，清空缓存并重新拉取
 watch(
   () => props.filters,
-  () => {
+  newVal => {
+    if (newVal !== undefined) {
+      console.log(
+        '[ProjectList] props.filters watcher triggered, new filters:',
+        JSON.parse(JSON.stringify(newVal))
+      );
+    } else {
+      console.log('[ProjectList] props.filters watcher triggered: undefined (no filters)');
+    }
+
     allProjects.value = [];
     currentStartIndex.value = 0;
     serverPage.value = 1;
+
     requestAnimationFrame(() => {
       void fetchAndClamp();
     });
@@ -606,113 +616,121 @@ onBeforeUnmount(() => {
 <template>
   <section class="project-list">
     <header class="project-list__header">
-      <!-- 标题改为切换按钮 -->
-      <div class="project-list__view-toggle">
-        <button
-          type="button"
-          class="view-toggle-btn"
-          :class="{ 'view-toggle-btn--active': viewMode === 'projects' }"
-          @click="switchView('projects')"
-        >
-          项目列表
-        </button>
-        <button
-          type="button"
-          class="view-toggle-btn"
-          :class="{ 'view-toggle-btn--active': viewMode === 'assignments' }"
-          @click="switchView('assignments')"
-          :disabled="!canViewAssignments"
-        >
-          派活列表
-        </button>
-      </div>
-      <div
-        class="project-list__header-actions"
-        :class="{ 'project-list__header-actions--locked': !canCreate }"
-      >
-        <button
-          type="button"
-          class="icon-btn"
-          @click="refreshList"
-          :disabled="isLoading"
-          title="刷新"
-        >
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <polyline points="23 4 23 10 17 10"></polyline>
-            <polyline points="1 20 1 14 7 14"></polyline>
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"></path>
-            <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"></path>
-          </svg>
-        </button>
-        <button
-          type="button"
-          class="project-list__publish"
-          @click="$emit('create-projset')"
-          :disabled="isLoading || !canCreate"
-        >
-          创建项目集
-        </button>
-        <button
-          type="button"
-          class="project-list__create"
-          @click="handleCreateProject"
-          :disabled="isLoading || !canCreate"
-        >
-          创建新项目
-        </button>
-        <!-- <span v-if="!canCreate" class="project-list__locked-note">🔒 仅团队管理员可创建</span> -->
-        <div class="pagination-controls">
+      <!-- 标题行：切换按钮 + 刷新 -->
+      <div class="project-list__title-row">
+        <div class="project-list__view-toggle">
           <button
             type="button"
-            class="icon-btn"
-            @click="goPrevPage"
-            :disabled="isLoading || !canGoPrev"
-            title="上一页"
+            class="view-toggle-btn"
+            :class="{ 'view-toggle-btn--active': viewMode === 'projects' }"
+            @click="switchView('projects')"
           >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <polyline points="15 18 9 12 15 6"></polyline>
-            </svg>
+            项目列表
           </button>
-          <span class="page-indicator">第 {{ currentPageNumber }} 页</span>
           <button
+            v-if="canViewAssignments"
             type="button"
-            class="icon-btn"
-            @click="goNextPage"
-            :disabled="isLoading || !canGoNext"
-            title="下一页"
+            class="view-toggle-btn"
+            :class="{ 'view-toggle-btn--active': viewMode === 'assignments' }"
+            @click="switchView('assignments')"
           >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <polyline points="9 18 15 12 9 6"></polyline>
-            </svg>
+            派活列表
           </button>
         </div>
+        <div class="project-list__title-row-right">
+          <div v-if="canCreate" class="project-list__create-actions">
+            <button
+              type="button"
+              class="project-list__publish"
+              @click="$emit('create-projset')"
+              :disabled="isLoading"
+            >
+              + 新项目集
+            </button>
+            <button
+              type="button"
+              class="project-list__create"
+              @click="handleCreateProject"
+              :disabled="isLoading"
+            >
+              + 新项目
+            </button>
+          </div>
+          <button
+            type="button"
+            class="icon-btn"
+            @click="refreshList"
+            :disabled="isLoading"
+            title="刷新"
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="23 4 23 10 17 10"></polyline>
+              <polyline points="1 20 1 14 7 14"></polyline>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"></path>
+              <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"></path>
+            </svg>
+          </button>
+          <div class="pagination-controls">
+            <button
+              type="button"
+              class="icon-btn"
+              @click="goPrevPage"
+              :disabled="isLoading || !canGoPrev"
+              title="上一页"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="15 18 9 12 15 6"></polyline>
+              </svg>
+            </button>
+            <span class="page-indicator">第 {{ currentPageNumber }} 页</span>
+            <button
+              type="button"
+              class="icon-btn"
+              @click="goNextPage"
+              :disabled="isLoading || !canGoNext"
+              title="下一页"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="9 18 15 12 9 6"></polyline>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 操作行（保留占位样式以维持布局，按钮已移至标题行） -->
+      <div
+        class="project-list__actions-row"
+        :class="{ 'project-list__actions-row--locked': !canCreate }"
+      >
+        <!-- buttons moved to header right; keep this row for layout consistency -->
       </div>
     </header>
 
@@ -770,9 +788,28 @@ onBeforeUnmount(() => {
 
 .project-list__header {
   display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.project-list__title-row {
+  display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+}
+
+.project-list__actions-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+}
+
+.project-list__create-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .project-list__header-actions {
@@ -784,9 +821,14 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  margin-left: 8px;
   font-size: 12px;
   color: #2a4f7a;
+}
+
+.project-list__title-row-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
 }
 .page-indicator {
   font-weight: 600;
@@ -818,12 +860,12 @@ onBeforeUnmount(() => {
 
 /* When the current user cannot create projects for the selected team,
    show the actions area with a muted/locked appearance while keeping layout. */
-.project-list__header-actions--locked {
+.project-list__actions-row--locked {
   opacity: 0.95;
 }
 
-.project-list__header-actions--locked .project-list__create,
-.project-list__header-actions--locked .project-list__publish {
+.project-list__actions-row--locked .project-list__create,
+.project-list__actions-row--locked .project-list__publish {
   background: linear-gradient(135deg, #f6f8fa, #fbfdff);
   color: #7a8796;
   border-color: rgba(200, 208, 218, 0.6);
@@ -890,9 +932,10 @@ onBeforeUnmount(() => {
 
 .project-list__create,
 .project-list__publish {
+  min-width: 100px;
   border-radius: 10px;
-  padding: 8px 12px;
-  font-size: 14px;
+  padding: 6px 6px;
+  font-size: 13px;
   font-weight: 600;
   border: 1px solid rgba(118, 184, 255, 0.35);
   background: #f4f9ff;
@@ -923,10 +966,6 @@ onBeforeUnmount(() => {
 .project-list__publish:not(:disabled):hover {
   transform: translateY(-2px);
   box-shadow: 0 14px 30px rgba(118, 184, 255, 0.42);
-}
-
-.project-list__publish {
-  padding-inline: 14px;
 }
 
 .project-list__content {
