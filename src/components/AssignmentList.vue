@@ -17,12 +17,12 @@ interface PageSection {
 // 一页的数据结构（PageData 不再单独声明，直接使用 PageSection[]）
 
 const emit = defineEmits<{
-  (e: 'view-change', view: 'projects' | 'assignments'): void;
+  (e: 'view-change', view: 'projects' | 'assignments' | 'members'): void;
 }>();
 
 const props = defineProps<{
   teamId?: string | null;
-  currentView?: 'projects' | 'assignments';
+  currentView?: 'projects' | 'assignments' | 'members';
 }>();
 
 const toastStore = useToastStore();
@@ -32,7 +32,7 @@ const viewMode = computed(() => props.currentView ?? 'assignments');
 // 无 teamId 时禁用“派活列表”按钮
 const canViewAssignments = computed(() => !!props.teamId);
 
-function switchView(view: 'projects' | 'assignments'): void {
+function switchView(view: 'projects' | 'assignments' | 'members'): void {
   emit('view-change', view);
 }
 
@@ -247,6 +247,15 @@ watch(
           :disabled="!canViewAssignments"
         >
           派活列表
+        </button>
+        <button
+          type="button"
+          class="view-toggle-btn"
+          :class="{ 'view-toggle-btn--active': viewMode === 'members' }"
+          @click="switchView('members')"
+          :disabled="!canViewAssignments"
+        >
+          成员列表
         </button>
       </div>
       <div class="assignment-list__controls">

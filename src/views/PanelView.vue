@@ -13,6 +13,7 @@ import type { ResTeam } from '../api/model/team';
 import type { ResMember } from '../api/model/member';
 import ProjectList from '../components/ProjectList.vue';
 import AssignmentList from '../components/AssignmentList.vue';
+import MemberList from '../components/MemberList.vue';
 import LoadingCircle from '../components/LoadingCircle.vue';
 // 使用共享的基本项目信息类型仅在本地过滤场景；当前不直接使用
 import ProjectFilterBoard from '../components/ProjectFilterBoard.vue';
@@ -34,8 +35,8 @@ const teams = ref<ResTeam[]>([]);
 // 当前选中的团队（用于成员筛选等场景；null 代表“仅看我的项目”）
 const activeTeamId = ref<string | null>(null);
 
-// 视图模式：项目列表或派活列表
-const viewMode = ref<'projects' | 'assignments'>('projects');
+// 视图模式：项目列表或派活列表或成员列表
+const viewMode = ref<'projects' | 'assignments' | 'members'>('projects');
 
 // 主体“当前展示”的项目列表目前由 ProjectList 自行通过 IPC 拉取。
 // 这里预留 rawProjects / filteredProjects 以便后续若改回父组件统筹过滤时使用。
@@ -152,7 +153,7 @@ function selectUserProjects(): void {
 }
 
 // 处理视图切换
-function handleViewChange(view: 'projects' | 'assignments'): void {
+function handleViewChange(view: 'projects' | 'assignments' | 'members'): void {
   viewMode.value = view;
 }
 
@@ -277,7 +278,7 @@ onMounted(() => {
 watch(
   () => activeTeamId.value,
   newTeamId => {
-    if (newTeamId === null && viewMode.value === 'assignments') {
+    if (newTeamId === null && (viewMode.value === 'assignments' || viewMode.value === 'members')) {
       viewMode.value = 'projects';
     }
   }
@@ -575,6 +576,12 @@ function handleModifierBack(): void {
               :current-view="viewMode"
               @view-change="handleViewChange"
             />
+            <MemberList
+              v-else-if="viewMode === 'members'"
+              :team-id="activeTeamId"
+              :current-view="viewMode"
+              @view-change="handleViewChange"
+            />
           </div>
         </div>
       </main>
@@ -585,7 +592,7 @@ function handleModifierBack(): void {
           <ProjectFilterBoard
             :team-id="activeTeamId ?? undefined"
             :is-searching="isSearching"
-            :disabled="viewMode === 'assignments'"
+            :disabled="viewMode === 'assignments' || viewMode === 'members'"
             @add-option="handleAddFilterOption"
             @remove-option="handleRemoveFilterOption"
             @clear-all="handleClearFilters"

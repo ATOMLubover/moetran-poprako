@@ -110,6 +110,7 @@ pub fn run() {
             // member search
             crate::member::get_members,
             crate::member::get_member_info,
+            crate::member::get_active_members,
             // image cache
             crate::image_cache::check_file_cache,
             crate::image_cache::download_project_files,

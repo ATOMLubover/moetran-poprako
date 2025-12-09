@@ -50,7 +50,7 @@ interface _ProjectRole {
 const emit = defineEmits<{
   (e: 'open-detail', payload: _ProjectListOpenDetailPayload): void;
   (e: 'create'): void;
-  (e: 'view-change', view: 'projects' | 'assignments'): void;
+  (e: 'view-change', view: 'projects' | 'assignments' | 'members'): void;
   (e: 'create-projset'): void;
 }>();
 
@@ -61,8 +61,8 @@ const props = defineProps<{
   filters?: ProjectSearchFilters | undefined;
   // 当此布尔值切换时，触发列表刷新（用于确认/清空筛选）
   shouldApplyFilters?: boolean;
-  // 当前视图：'projects' 或 'assignments'
-  currentView?: 'projects' | 'assignments';
+  // 当前视图：'projects' 或 'assignments' 或 'members'
+  currentView?: 'projects' | 'assignments' | 'members';
 }>();
 
 const userStore = useUserStore();
@@ -72,11 +72,11 @@ const canCreate = computed(() => {
   return !!props.teamId && userStore.isAdminFor(props.teamId);
 });
 
-// 视图模式：项目列表或派活列表
+// 视图模式：项目列表或派活列表或成员列表
 const viewMode = computed(() => props.currentView ?? 'projects');
 
 // 切换视图
-function switchView(view: 'projects' | 'assignments'): void {
+function switchView(view: 'projects' | 'assignments' | 'members'): void {
   emit('view-change', view);
 }
 
@@ -635,6 +635,15 @@ onBeforeUnmount(() => {
             @click="switchView('assignments')"
           >
             派活列表
+          </button>
+          <button
+            v-if="canViewAssignments"
+            type="button"
+            class="view-toggle-btn"
+            :class="{ 'view-toggle-btn--active': viewMode === 'members' }"
+            @click="switchView('members')"
+          >
+            成员列表
           </button>
         </div>
         <div class="project-list__title-row-right">

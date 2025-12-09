@@ -9,6 +9,7 @@ export interface ResMember {
   isTypesetter: boolean;
   isRedrawer: boolean;
   isPrincipal: boolean;
+  lastActive?: number | null;
 }
 
 export interface ResMemberBrief {

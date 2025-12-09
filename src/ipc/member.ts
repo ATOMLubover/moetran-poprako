@@ -76,3 +76,51 @@ export async function getMemberInfo(teamId: string): Promise<ResMemberInfo> {
     throw error;
   }
 }
+
+// 获取团队中所有成员及其最后活跃时间
+export async function getActiveMembers(
+  teamId: string,
+  page: number = 1,
+  limit: number = 15
+): Promise<ResMember[]> {
+  try {
+    // Raw response shape from PopRaKo (snake_case)
+    interface RawActiveMember {
+      member_id: string;
+      user_id: string;
+      username: string;
+      is_admin?: boolean;
+      is_translator?: boolean;
+      is_proofreader?: boolean;
+      is_typesetter?: boolean;
+      is_redrawer?: boolean;
+      is_principal?: boolean;
+      // unix timestamp in seconds
+      last_active?: number | null;
+    }
+
+    const raw = await invoke<RawActiveMember[]>('get_active_members', {
+      payload: {
+        team_id: teamId,
+        page,
+        limit,
+      },
+    });
+
+    return raw.map(m => ({
+      userId: m.user_id,
+      memberId: m.member_id,
+      username: m.username,
+      isAdmin: m.is_admin === true,
+      isTranslator: m.is_translator === true,
+      isProofreader: m.is_proofreader === true,
+      isTypesetter: m.is_typesetter === true,
+      isRedrawer: m.is_redrawer === true,
+      isPrincipal: m.is_principal === true,
+      lastActive: m.last_active ?? null,
+    }));
+  } catch (error) {
+    console.error('Error in getActiveMembers:', { teamId, page, limit, error });
+    throw error;
+  }
+}
