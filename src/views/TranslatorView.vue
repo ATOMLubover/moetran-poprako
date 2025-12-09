@@ -377,6 +377,18 @@ const SHORTCUT_HINTS = computed(() => {
       combo: 'Ctrl + Enter',
       description: '提交校对',
     });
+    editHints.push({
+      combo: 'Ctrl + T',
+      description: '将当前聚焦的翻译文本复制到校对框（不会确认校对）',
+    });
+    editHints.push({
+      combo: 'Ctrl + A + T',
+      description: '将当前页所有翻译文本复制到对应的校对框（不会确认校对）',
+    });
+    editHints.push({
+      combo: 'Ctrl + A + Enter',
+      description: '确认当前页所有标记为校对状态（有无翻译的源则失败）',
+    });
   }
 
   return editHints;
@@ -524,6 +536,41 @@ let boardResizeObserver: ResizeObserver | null = null;
 const isShortcutHelpVisible = ref(false);
 
 const shortcutHelpRef = ref<HTMLDivElement | null>(null);
+
+// 跟踪当前按下的按键（用于检测组合 Ctrl + A + Enter）
+const _pressedKeys = new Set<string>();
+
+// 确认删除对话框状态
+const confirmVisible = ref(false);
+const confirmMessage = ref('');
+const confirmResolve = ref<((value: boolean) => void) | null>(null);
+
+function showConfirm(message: string): Promise<boolean> {
+  confirmMessage.value = message;
+  confirmVisible.value = true;
+
+  return new Promise<boolean>(resolve => {
+    confirmResolve.value = resolve;
+  });
+}
+
+function confirmOk(): void {
+  confirmVisible.value = false;
+
+  if (confirmResolve.value) {
+    confirmResolve.value(true);
+    confirmResolve.value = null;
+  }
+}
+
+function confirmCancel(): void {
+  confirmVisible.value = false;
+
+  if (confirmResolve.value) {
+    confirmResolve.value(false);
+    confirmResolve.value = null;
+  }
+}
 
 // 使用全局 store，不再维护本地状态
 
@@ -1125,7 +1172,8 @@ async function initPage(pageIndex: number): Promise<void> {
 
     const key = makeImageCacheKey(props.projectId, currentFile.id);
 
-    if (!pageSourceStore.has(key)) {
+    // 如果 API 返回了非空 sources，则使用它覆盖缓存；否则保持已有缓存不变
+    if (result.sources.length > 0 || !pageSourceStore.has(key)) {
       pageSourceStore.set(key, cloneSourceList(result.sources));
     }
 
@@ -1589,6 +1637,23 @@ async function stopDraggingSource(): Promise<void> {
 async function handleRemoveSource(sourceId: string): Promise<void> {
   if (!canEdit.value) return;
 
+  // 如果本地存在该 source，且其包含翻译或校对内容，需要先确认
+  const local = sources.value.find(s => s.id === sourceId) ?? null;
+
+  if (local) {
+    const hasContent =
+      (local.translationText && local.translationText.trim() !== '') ||
+      (local.proofText && local.proofText.trim() !== '');
+
+    if (hasContent) {
+      const confirmed = await showConfirm('该标记包含翻译或校对内容，删除将不可恢复，确认删除吗？');
+
+      if (!confirmed) {
+        return;
+      }
+    }
+  }
+
   const file = props.files[currentPageIndex.value];
 
   // 如果是服务端已存在的 source，尝试通知后端删除
@@ -1602,6 +1667,7 @@ async function handleRemoveSource(sourceId: string): Promise<void> {
     }
   }
 
+  // 从本地移除
   sources.value = sources.value.filter(item => item.id !== sourceId);
 
   if (file) {
@@ -2164,9 +2230,166 @@ function handleShortcutHelpKeydown(event: KeyboardEvent): void {
   closeShortcutHelp();
 }
 
+// keyup 监听：用于更新按键跟踪集合
+function handleGlobalKeyup(event: KeyboardEvent): void {
+  _pressedKeys.delete(event.key.toLowerCase());
+}
+
 // 处理全局快捷键
 function handleGlobalShortcuts(event: KeyboardEvent): void {
+  // 记录按键状态
+  _pressedKeys.add(event.key.toLowerCase());
+
   if (event.repeat) {
+    return;
+  }
+
+  // 全局：在校对模式下支持将翻译文本复制到校对框的快捷键
+  // - `Ctrl+T`: 将当前聚焦 source 的 translationText 复制到 proofText（不会确认校对）
+  // - `Ctrl+Alt+T`: 将当前页所有 source 的 translationText 复制到对应的 proofText（不会确认校对）
+  if (event.ctrlKey && !event.metaKey && event.key.toLowerCase() === 't') {
+    // Ctrl+A+T -> 复制当前页所有（检测 A 是否也被按下）
+    if (_pressedKeys.has('a')) {
+      if (!canEdit.value || !isProofMode.value) return;
+
+      event.preventDefault();
+
+      // 批量复制：遍历当前页 sources
+      let count = 0;
+
+      for (const s of sources.value) {
+        const translation = (s.translationText || '').trim();
+
+        if (!translation) continue;
+
+        s.proofText = translation;
+
+        const translationId = s.selectedTranslationId || s.myTranslationId;
+
+        if (translationId && translation !== (s.serverProofText ?? '')) {
+          pendingProofreadUpdates.set(translationId, translation);
+        }
+
+        count += 1;
+      }
+
+      // 如果 editor 当前打开且对应 source 在页面中，更新 editor 副本
+      if (editorSource.value) {
+        const matching = sources.value.find(s => s.id === editorSource.value?.id);
+        if (matching) {
+          editorSource.value.proofText = matching.proofText;
+          // 如果当前编辑的 proof 文本也需要同步显示
+          editorProofText.value = matching.proofText ?? '';
+        }
+      }
+
+      // 安排合并提交
+      if (pendingFlushTimeout !== null) {
+        window.clearTimeout(pendingFlushTimeout);
+      }
+
+      pendingFlushTimeout = window.setTimeout(() => {
+        void flushPendingUpdates();
+        pendingFlushTimeout = null;
+      }, FLUSH_DELAY);
+
+      showToast(`已复制 ${count} 条翻译到校对框（未确认校对）`);
+
+      return;
+    }
+
+    // Ctrl+T 单个 source（确保不是 Ctrl+A+T）
+    if (!_pressedKeys.has('a') && !event.shiftKey && !event.metaKey) {
+      if (!canEdit.value || !isProofMode.value) return;
+
+      // 需要有聚焦的 source
+      const src = editorSource.value ?? selectedSource.value ?? null;
+
+      if (!src) return;
+
+      event.preventDefault();
+
+      const translation = (src.translationText || '').trim();
+
+      if (!translation) {
+        showToast('当前 source 没有翻译文本可复制', 'error');
+        return;
+      }
+
+      // 更新 editor 与本地 source 的 proof 文本
+      src.proofText = translation;
+      if (editorSource.value && editorSource.value.id === src.id) {
+        editorSource.value.proofText = translation;
+        editorProofText.value = translation;
+      }
+
+      const translationId = src.selectedTranslationId || src.myTranslationId;
+
+      if (translationId && translation !== (src.serverProofText ?? '')) {
+        pendingProofreadUpdates.set(translationId, translation);
+
+        if (pendingFlushTimeout !== null) {
+          window.clearTimeout(pendingFlushTimeout);
+        }
+
+        pendingFlushTimeout = window.setTimeout(() => {
+          void flushPendingUpdates();
+          pendingFlushTimeout = null;
+        }, FLUSH_DELAY);
+      }
+
+      showToast('已将翻译文本复制到校对框（未确认校对）');
+
+      return;
+    }
+  }
+
+  // Detect Ctrl + A + Enter: confirm proof for all sources on current page
+  if (event.key === 'Enter' && event.ctrlKey && _pressedKeys.has('a')) {
+    if (!canEdit.value || !isProofMode.value) return;
+
+    event.preventDefault();
+
+    // 验证是否存在没有翻译文本的 source
+    const hasMissing = sources.value.some(s => {
+      const translation = (s.serverTranslationText || s.translationText || '').trim();
+      return translation.length === 0;
+    });
+
+    if (hasMissing) {
+      showToast('有无翻译的源，整体确认校对失败', 'error');
+      return;
+    }
+
+    // 批量确认：对每个 source 调用 updateTranslation({ selected: true })
+    const tasks: Promise<void>[] = [];
+
+    for (const s of sources.value) {
+      const target = resolveProofTarget(s);
+
+      if (!target) {
+        showToast('有无翻译的源，整体确认校对失败', 'error');
+        return;
+      }
+
+      tasks.push(
+        (async () => {
+          try {
+            const res = await updateTranslation({ translationId: target.id, selected: true });
+            const rec = toTranslationRecord(res, target.isMine);
+            applyRecordToSource(s, rec);
+          } catch (err) {
+            console.error('确认校对失败', err);
+          }
+        })()
+      );
+    }
+
+    void Promise.all(tasks).then(() => {
+      persistPageSources(currentPageIndex.value);
+      showToast('已确认当前页所有标记为校对状态');
+    });
+
     return;
   }
 
@@ -2362,12 +2585,18 @@ async function toggleProofStatus(): Promise<void> {
   const isActiveProof =
     source.status === 'proofed' && source.selectedTranslationId === targetRecord.id;
 
-  const proofCandidate = editorProofText.value.trim() || editorTranslationText.value.trim();
+  // 只将用户明确填写的校对内容作为 proofreadContent 发送
+  const explicitProof = editorProofText.value.trim();
+
+  // translationText 仅用于验证：如果没有任何翻译稿（既无服务端也无编辑器内文本），则拒绝确认校对
+  const serverTranslation = targetRecord.content || '';
+  const editorTranslation = editorTranslationText.value.trim();
+  const hasTranslation = serverTranslation.trim().length > 0 || editorTranslation.length > 0;
 
   const proofDirty = source.proofText !== source.serverProofText;
 
-  if (!isActiveProof && proofCandidate.length === 0) {
-    showToast('请先填写校对内容', 'error');
+  if (!isActiveProof && !hasTranslation) {
+    showToast('当前标记没有翻译稿可供校对', 'error');
 
     return;
   }
@@ -2388,11 +2617,17 @@ async function toggleProofStatus(): Promise<void> {
 
       showToast('已取消校对状态');
     } else {
-      const result = await updateTranslation({
+      const payload: { translationId: string; selected: true; proofreadContent?: string } = {
         translationId: targetRecord.id,
         selected: true,
-        proofreadContent: proofCandidate,
-      });
+      };
+
+      // 仅当用户在校对框填写了内容时才发送 proofreadContent；不应把 translationText 当作校对内容发送
+      if (explicitProof.length > 0) {
+        payload.proofreadContent = explicitProof;
+      }
+
+      const result = await updateTranslation(payload);
 
       const record = toTranslationRecord(result, targetRecord.isMine);
 
@@ -2521,6 +2756,7 @@ onMounted(() => {
   window.addEventListener('pointercancel', stopResizingEditor);
 
   window.addEventListener('keydown', handleGlobalShortcuts, true);
+  window.addEventListener('keyup', handleGlobalKeyup, true);
 
   window.addEventListener('resize', handleWindowResize);
 
@@ -2570,6 +2806,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointercancel', stopResizingEditor);
 
   window.removeEventListener('keydown', handleGlobalShortcuts, true);
+  window.removeEventListener('keyup', handleGlobalKeyup, true);
 
   window.removeEventListener('resize', handleWindowResize);
 
@@ -3007,6 +3244,24 @@ onBeforeUnmount(() => {
         </li>
       </ul>
     </div>
+    <div v-if="confirmVisible" class="confirm-overlay" @click.self="confirmCancel">
+      <div class="confirm-box" role="dialog" aria-modal="true">
+        <div class="confirm-message">{{ confirmMessage }}</div>
+        <div class="confirm-actions">
+          <button
+            type="button"
+            class="confirm-button confirm-button--cancel"
+            @click="confirmCancel"
+          >
+            取消
+          </button>
+          <button type="button" class="confirm-button confirm-button--ok" @click="confirmOk">
+            删除
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- 全局 toast 在 App.vue 中挂载 -->
   </section>
 </template>
@@ -3238,7 +3493,7 @@ onBeforeUnmount(() => {
   width: 100%;
   height: auto;
   display: block;
-  border-radius: 16px;
+  /* show original image without rounded corners */
   box-shadow: 0 16px 32px rgba(113, 156, 212, 0.22);
   user-select: none;
 }
@@ -3759,6 +4014,56 @@ onBeforeUnmount(() => {
   gap: 18px;
   outline: none;
   z-index: 50;
+}
+
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 30, 50, 0.32);
+  z-index: 60;
+}
+
+.confirm-box {
+  min-width: 320px;
+  max-width: 92vw;
+  background: #fff;
+  border-radius: 12px;
+  padding: 18px;
+  box-shadow: 0 20px 40px rgba(30, 60, 100, 0.18);
+  border: 1px solid rgba(150, 170, 200, 0.12);
+}
+
+.confirm-message {
+  color: #223445;
+  font-size: 14px;
+  margin-bottom: 14px;
+}
+
+.confirm-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.confirm-button {
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.confirm-button--cancel {
+  background: rgba(240, 246, 255, 0.95);
+  color: #2f4b6f;
+}
+
+.confirm-button--ok {
+  background: linear-gradient(120deg, rgba(250, 120, 120, 0.92), rgba(240, 100, 100, 0.92));
+  color: #fff;
 }
 
 .shortcut-help__header {
