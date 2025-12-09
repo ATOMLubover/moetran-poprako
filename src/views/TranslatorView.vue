@@ -422,7 +422,13 @@ const pan = ref({ x: 0, y: 0 });
 
 const activeSourceId = ref<string | null>(null);
 
+// 控制 editor 是否应该显示（独立于 activeSourceId）
+const showEditor = ref(false);
+
 const isLoading = ref(false);
+
+// 编辑器持有的独立副本，用于在切换页时保持显示内容
+const editorSource = ref<TranslationSource | null>(null);
 
 const editorTranslationText = ref('');
 
@@ -448,6 +454,17 @@ const isDraggingEditor = ref(false);
 const editorPointerStart = ref({ x: 0, y: 0 });
 
 const editorPositionStart = ref({ ...DEFAULT_EDITOR_POSITION });
+
+// 是否正在调整编辑器大小
+const isResizingEditor = ref(false);
+
+// 调整大小时的起始信息
+const editorResizeStart = ref({
+  x: 0,
+  y: 0,
+  width: editorSize.value.width,
+  height: editorSize.value.height,
+});
 
 const imageWrapperRef = ref<HTMLDivElement | null>(null);
 
@@ -616,7 +633,10 @@ function applyRecordToSource(source: TranslationSource, record: TranslationRecor
     source.status = 'empty';
   }
 
-  if (selectedSource.value && selectedSource.value.id === source.id) {
+  if (editorSource.value && editorSource.value.id === source.id) {
+    // 同步编辑器副本的文本（当底层 source 更新时刷新 editor 副本）
+    editorSource.value.translationText = source.translationText;
+    editorSource.value.proofText = source.proofText;
     editorTranslationText.value = source.translationText;
     editorProofText.value = source.proofText;
   }
@@ -751,12 +771,26 @@ const selectedSource = computed(() => {
   return target;
 });
 
+// 当 activeSourceId 变化时，更新 editorSource 副本（如果对应的 source 在当前页）
+watch(activeSourceId, id => {
+  if (!id) return;
+
+  const found = sources.value.find(s => s.id === id) ?? null;
+
+  if (found) {
+    editorSource.value = cloneSource(found);
+    // 同步 editor 文本
+    editorTranslationText.value = editorSource.value.translationText;
+    editorProofText.value = editorSource.value.proofText;
+  }
+});
+
 const proofOverlayStyle = computed(() => {
-  if (!isProofMode.value || !selectedSource.value) {
+  if (!isProofMode.value || !editorSource.value) {
     return {} as Record<string, string>;
   }
 
-  const { x, y } = selectedSource.value.position;
+  const { x, y } = editorSource.value.position;
 
   return {
     left: `${x * 100}%`,
@@ -786,11 +820,11 @@ const sourceLabelMap = computed(() => {
 });
 
 const selectedSourceLabelInfo = computed(() => {
-  if (!selectedSource.value) {
+  if (!editorSource.value) {
     return null;
   }
 
-  const info = sourceLabelMap.value.get(selectedSource.value.id);
+  const info = sourceLabelMap.value.get(editorSource.value.id);
   if (!info) return null;
 
   return { number: info.number, suffix: info.suffix };
@@ -863,7 +897,7 @@ watch(
   }
 );
 
-watch(selectedSource, (source, previousSource) => {
+watch(editorSource, (source, previousSource) => {
   if (!source) {
     editorTranslationText.value = '';
 
@@ -905,7 +939,7 @@ watch(selectedSource, (source, previousSource) => {
 });
 
 watch(activeMode, mode => {
-  if (!selectedSource.value) {
+  if (!editorSource.value) {
     return;
   }
 
@@ -955,16 +989,16 @@ watch(isPanelCollapsed, () => {
 });
 
 watch(isAutoRelocateEnabled, value => {
-  if (!value || !selectedSource.value) {
+  if (!value || !editorSource.value) {
     return;
   }
 
   nextTick(() => {
-    if (!selectedSource.value) {
+    if (!editorSource.value) {
       return;
     }
 
-    centerSourceOnBoard(selectedSource.value);
+    centerSourceOnBoard(editorSource.value);
   });
 });
 
@@ -1099,15 +1133,27 @@ async function initPage(pageIndex: number): Promise<void> {
 
     sources.value = cloneSourceList(hydratedSources);
 
-    activeSourceId.value = null;
+    // 如果 showEditor 为 true 且当前页有 sources，则自动选中第一个
+    if (showEditor.value && hydratedSources.length > 0) {
+      activeSourceId.value = hydratedSources[0].id;
+    } else {
+      activeSourceId.value = null;
+    }
+
+    // 如果当前没有打开 editor，清空编辑器副本，避免切页时保留旧页面的数据
+    if (!showEditor.value) {
+      editorSource.value = null;
+      editorTranslationText.value = '';
+      editorProofText.value = '';
+    }
   } catch (error) {
     console.error('加载项目页面失败', error);
     showToast('加载页面失败', 'error');
   } finally {
     if (requestToken === latestPageLoadToken) {
-      editorTranslationText.value = selectedSource.value?.translationText ?? '';
+      editorTranslationText.value = editorSource.value?.translationText ?? '';
 
-      editorProofText.value = selectedSource.value?.proofText ?? '';
+      editorProofText.value = editorSource.value?.proofText ?? '';
 
       zoom.value = 1;
 
@@ -1325,24 +1371,25 @@ function handleTranslationInput(event: Event): void {
   const textarea = event.target as HTMLTextAreaElement;
   const value = textarea.value;
 
-  if (!selectedSource.value) {
+  if (!editorSource.value) {
     return;
   }
 
-  selectedSource.value.translationText = value;
+  // 更新编辑器副本文本
+  editorSource.value.translationText = value;
 
   // 注意：状态不应该因为文本内容的变化而改变
   // 状态（selected/proofed）与文本内容是完全独立的
 
   // 如果还没有 myTranslationId，需要先创建翻译记录
-  if (!selectedSource.value.myTranslationId) {
+  if (!editorSource.value.myTranslationId) {
     if (!canEdit.value || !props.targetId) {
       return;
     }
 
-    // 异步创建翻译记录
+    // 异步创建翻译记录（使用 editorSource 的 id）
     void (async () => {
-      const currentSource = selectedSource.value;
+      const currentSource = editorSource.value;
       if (!currentSource) return;
 
       try {
@@ -1363,9 +1410,9 @@ function handleTranslationInput(event: Event): void {
     })();
   } else {
     // 已有翻译记录，标记为待更新
-    const translationId = selectedSource.value.myTranslationId;
+    const translationId = editorSource.value.myTranslationId;
 
-    if (value !== selectedSource.value.serverTranslationText) {
+    if (translationId && value !== editorSource.value.serverTranslationText) {
       pendingContentUpdates.set(translationId, value);
 
       // 节流提交：清除之前的timeout，设置新的
@@ -1387,16 +1434,16 @@ function handleProofInput(event: Event): void {
   const textarea = event.target as HTMLTextAreaElement;
   const value = textarea.value;
 
-  if (!selectedSource.value) {
+  if (!editorSource.value) {
     return;
   }
 
-  selectedSource.value.proofText = value;
+  editorSource.value.proofText = value;
 
   // 标记校对文本为待更新
   const translationId =
-    selectedSource.value.selectedTranslationId || selectedSource.value.myTranslationId;
-  if (translationId && value !== selectedSource.value.serverProofText) {
+    editorSource.value.selectedTranslationId || editorSource.value.myTranslationId;
+  if (translationId && value !== editorSource.value.serverProofText) {
     pendingProofreadUpdates.set(translationId, value);
 
     // 节流提交：清除之前的timeout，设置新的
@@ -1889,6 +1936,7 @@ function handleKeyboardZoom(direction: 1 | -1): void {
 // 选中标记（只读模式下禁止进入编辑）
 function handleSelectSource(sourceId: string): void {
   if (!canEdit.value) return;
+  showEditor.value = true;
   if (activeSourceId.value === sourceId) {
     if (!isAutoRelocateEnabled.value) {
       return;
@@ -1899,6 +1947,9 @@ function handleSelectSource(sourceId: string): void {
     if (!target) {
       return;
     }
+
+    // 更新 editor 的副本为当前选中的源
+    editorSource.value = cloneSource(target);
 
     nextTick(() => {
       centerSourceOnBoard(target);
@@ -1961,6 +2012,63 @@ function stopDraggingEditor(): void {
   }
 
   isDraggingEditor.value = false;
+}
+
+// 开始调整编辑器大小
+function handleEditorResizePointerDown(event: PointerEvent): void {
+  if (!canEdit.value) return;
+  event.preventDefault();
+
+  isResizingEditor.value = true;
+
+  editorResizeStart.value = {
+    x: event.clientX,
+    y: event.clientY,
+    width: editorSize.value.width,
+    height: editorSize.value.height,
+  };
+}
+
+// 调整编辑器大小（响应全局 pointermove）
+function updateEditorSize(event: PointerEvent): void {
+  if (!isResizingEditor.value) return;
+
+  const dx = event.clientX - editorResizeStart.value.x;
+  const dy = event.clientY - editorResizeStart.value.y;
+
+  // 最小尺寸限制，尽量与 UI 风格一致
+  const MIN_WIDTH = 260;
+  const MIN_HEIGHT = 160;
+
+  const requestedWidth = Math.round((editorResizeStart.value.width as number) + dx);
+  const requestedHeight = Math.round((editorResizeStart.value.height as number) + dy);
+
+  const maxWidth = Math.max(200, window.innerWidth - editorPosition.value.x - 12);
+  const maxHeight = Math.max(120, window.innerHeight - editorPosition.value.y - 12);
+
+  editorSize.value.width = Math.min(Math.max(MIN_WIDTH, requestedWidth), maxWidth);
+  editorSize.value.height = Math.min(Math.max(MIN_HEIGHT, requestedHeight), maxHeight);
+}
+
+// 结束调整大小
+function stopResizingEditor(): void {
+  if (!isResizingEditor.value) return;
+
+  isResizingEditor.value = false;
+
+  // 确保浮窗仍在视口内
+  clampEditorWithinViewport();
+}
+
+// 双击把手：恢复默认大小（仅大小，不移动位置）
+function resetEditorSize(): void {
+  editorSize.value = { ...DEFAULT_EDITOR_SIZE };
+
+  // 确保仍在视口内
+  clampEditorWithinViewport();
+
+  // 结束可能的调整状态
+  isResizingEditor.value = false;
 }
 
 // 移动编辑器到默认位置
@@ -2070,6 +2178,7 @@ function handleGlobalShortcuts(event: KeyboardEvent): void {
     event.preventDefault();
 
     if (!activeSourceId.value) {
+      showEditor.value = true;
       activeSourceId.value = event.shiftKey
         ? sources.value[sources.value.length - 1].id
         : sources.value[0].id;
@@ -2080,6 +2189,7 @@ function handleGlobalShortcuts(event: KeyboardEvent): void {
     const currentIndex = sources.value.findIndex(item => item.id === activeSourceId.value);
 
     if (currentIndex < 0) {
+      showEditor.value = true;
       activeSourceId.value = event.shiftKey
         ? sources.value[sources.value.length - 1].id
         : sources.value[0].id;
@@ -2091,6 +2201,7 @@ function handleGlobalShortcuts(event: KeyboardEvent): void {
 
     const nextIndex = (currentIndex + direction + sources.value.length) % sources.value.length;
 
+    showEditor.value = true;
     activeSourceId.value = sources.value[nextIndex].id;
 
     return;
@@ -2183,9 +2294,13 @@ function handleGlobalShortcuts(event: KeyboardEvent): void {
     if (event.key === '`') {
       event.preventDefault();
 
-      if (activeSourceId.value) {
+      if (showEditor.value) {
+        // 如果 editor 已显示，则关闭
+        showEditor.value = false;
         activeSourceId.value = null;
       } else if (sources.value.length > 0) {
+        // 如果 editor 未显示且有 source，则打开并选中第一个
+        showEditor.value = true;
         activeSourceId.value = sources.value[0].id;
       }
 
@@ -2212,6 +2327,9 @@ async function toggleSourceCategory(): Promise<void> {
     });
 
     selectedSource.value.category = newCategory;
+    if (editorSource.value && editorSource.value.id === selectedSource.value.id) {
+      editorSource.value.category = newCategory;
+    }
     showToast(`已切换为${newCategory === 'inside' ? '框内' : '框外'}标记`);
   } catch (error) {
     console.error('切换标记类别失败', error);
@@ -2310,6 +2428,7 @@ function handleProofShortcut(event: KeyboardEvent): void {
 
 // 关闭悬浮窗
 function handleCloseEditor(): void {
+  showEditor.value = false;
   activeSourceId.value = null;
 }
 
@@ -2386,13 +2505,20 @@ onMounted(() => {
 
   window.addEventListener('pointermove', updateEditorPosition);
 
+  // 监听编辑器调整大小
+  window.addEventListener('pointermove', updateEditorSize);
+
   window.addEventListener('pointerup', stopDraggingSource);
 
   window.addEventListener('pointerup', stopDraggingEditor);
 
+  window.addEventListener('pointerup', stopResizingEditor);
+
   window.addEventListener('pointercancel', stopDraggingSource);
 
   window.addEventListener('pointercancel', stopDraggingEditor);
+
+  window.addEventListener('pointercancel', stopResizingEditor);
 
   window.addEventListener('keydown', handleGlobalShortcuts, true);
 
@@ -2430,14 +2556,18 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointermove', updateDraggingSourcePosition);
 
   window.removeEventListener('pointermove', updateEditorPosition);
+  // 移除编辑器调整大小监听
+  window.removeEventListener('pointermove', updateEditorSize);
 
   window.removeEventListener('pointerup', stopDraggingSource);
 
   window.removeEventListener('pointerup', stopDraggingEditor);
+  window.removeEventListener('pointerup', stopResizingEditor);
 
   window.removeEventListener('pointercancel', stopDraggingSource);
 
   window.removeEventListener('pointercancel', stopDraggingEditor);
+  window.removeEventListener('pointercancel', stopResizingEditor);
 
   window.removeEventListener('keydown', handleGlobalShortcuts, true);
 
@@ -2675,12 +2805,12 @@ onBeforeUnmount(() => {
               </button>
             </template>
             <div
-              v-if="isProofMode && selectedSource"
+              v-if="isProofMode && editorSource"
               class="marker-overlay"
               :style="proofOverlayStyle"
             >
               <div class="marker-overlay__content">
-                {{ getMarkerOverlayText(selectedSource) }}
+                {{ getMarkerOverlayText(editorSource) }}
               </div>
             </div>
           </div>
@@ -2727,7 +2857,13 @@ onBeforeUnmount(() => {
       </div>
     </div>
     <div
-      v-if="selectedSource && canEdit && (!isProofMode || props.isProofreader || !props.hasPoprako)"
+      v-if="
+        showEditor &&
+        sources.length > 0 &&
+        editorSource &&
+        canEdit &&
+        (!isProofMode || props.isProofreader || !props.hasPoprako)
+      "
       class="editor"
       :style="{
         left: `${editorPosition.x}px`,
@@ -2822,13 +2958,22 @@ onBeforeUnmount(() => {
             {{
               isSubmittingProof
                 ? '提交中...'
-                : selectedSource.status === 'proofed'
+                : editorSource.status === 'proofed'
                   ? '取消校对状态'
                   : '提交校对'
             }}
           </button>
         </div>
       </footer>
+      <!-- 可拖拽的调整大小把手 -->
+      <div
+        class="editor__resize-handle"
+        @pointerdown.stop="handleEditorResizePointerDown"
+        @dblclick.stop="resetEditorSize"
+        role="separator"
+        aria-orientation="horizontal"
+        title="调整大小，双击恢复默认大小"
+      ></div>
     </div>
     <div
       v-if="isShortcutHelpVisible"
@@ -3526,6 +3671,27 @@ onBeforeUnmount(() => {
 
 .editor__footer {
   padding: 12px 14px 14px;
+}
+
+.editor__resize-handle {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  right: 10px;
+  bottom: 10px;
+  cursor: se-resize;
+  border-radius: 4px;
+  /* 视觉提示：使用半透明的斜线 */
+  background:
+    linear-gradient(135deg, rgba(80, 120, 160, 0.14) 20%, transparent 20%),
+    linear-gradient(135deg, rgba(80, 120, 160, 0.12) 40%, transparent 40%);
+  background-size:
+    6px 6px,
+    10px 10px;
+  background-position:
+    right bottom,
+    right bottom;
+  z-index: 40;
 }
 
 .editor__footer-actions {
