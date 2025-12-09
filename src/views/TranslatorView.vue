@@ -272,7 +272,12 @@ async function addSourceAtPointer(
     const newSource: TranslationSource = {
       id: created.id,
       category,
-      status: proofText ? 'proofed' : translationText ? 'translated' : 'empty',
+      // Status is determined solely by the `selected` flag on any record
+      status: records.some(r => r.selected === true)
+        ? 'proofed'
+        : translationText
+          ? 'translated'
+          : 'empty',
       translationText,
       proofText,
       position: {
@@ -377,7 +382,26 @@ const SHORTCUT_HINTS = computed(() => {
   return editHints;
 });
 
-const SPECIAL_SYMBOLS = ['★', '✰', '❤', '♥', '♡', '♂', '♁', '❈', '•', '♩', '♪', '♫'];
+const SPECIAL_SYMBOLS = [
+  '★',
+  '✰',
+  '❤',
+  '♥',
+  '♡',
+  '♂',
+  '♁',
+  '❈',
+  '•',
+  '♩',
+  '♪',
+  '♫',
+  '◯',
+  '✕',
+  '「',
+  '」',
+  '『',
+  '』',
+];
 
 const currentPageIndex = ref(props.pageIndex);
 
@@ -583,9 +607,10 @@ function applyRecordToSource(source: TranslationSource, record: TranslationRecor
   source.serverTranslationText = record.content;
   source.serverProofText = record.proofreadContent;
 
-  if (record.proofreadContent) {
+  // Status is determined solely by whether any record is selected
+  if (source.records.some(r => r.selected === true)) {
     source.status = 'proofed';
-  } else if (record.content) {
+  } else if (source.translationText) {
     source.status = 'translated';
   } else {
     source.status = 'empty';
@@ -595,6 +620,45 @@ function applyRecordToSource(source: TranslationSource, record: TranslationRecor
     editorTranslationText.value = source.translationText;
     editorProofText.value = source.proofText;
   }
+}
+
+// 判断一个 source 是否已被校对
+// 判定**唯一**依据：任意 records 元素的 `selected` 字段为 true
+// records 已包含 myTranslation 与 translations 中的所有条目
+function isSourceProofed(source: TranslationSource): boolean {
+  return source.records.some(item => item.selected === true);
+}
+
+// 生成徽章的提示文字（当前仅返回简单文案，后续可扩展为校对者/时间）
+function getProofBadgeTitle(source: TranslationSource): string {
+  const sel = source.records.find(item => item.selected === true);
+
+  if (sel) {
+    return `Proofread (id: ${sel.id})`;
+  }
+
+  return 'Proofread';
+}
+
+// 获取 marker overlay 中要显示的文本：
+// - 如果 source 被选中（任意 record.selected === true），显示该被选中记录的 proofreadContent（若为空则显示占位符）
+// - 否则始终显示译者文本（translationText），即使存在 proofText 也不显示
+function getMarkerOverlayText(source: TranslationSource | null): string {
+  if (!source) return '〈empty〉';
+
+  if (isSourceProofed(source)) {
+    const sel = source.records.find(r => r.selected === true) as TranslationRecord | undefined;
+
+    if (sel) {
+      return sel.proofreadContent && sel.proofreadContent.trim() !== ''
+        ? sel.proofreadContent
+        : '〈empty〉';
+    }
+
+    return '〈empty〉';
+  }
+
+  return source.translationText || '〈empty〉';
 }
 
 function persistPageSources(pageIndex: number): void {
@@ -963,8 +1027,9 @@ async function initPage(pageIndex: number): Promise<void> {
         const translationText = primary?.content ?? '';
         const proofText = primary?.proofreadContent ?? '';
 
+        // Status must be decided solely by the `selected` flag across records
         let status: SourceStatus = 'empty';
-        if (proofText) {
+        if (records.some(r => r.selected === true)) {
           status = 'proofed';
         } else if (translationText) {
           status = 'translated';
@@ -2599,6 +2664,14 @@ onBeforeUnmount(() => {
                   />
                 </svg>
                 <span class="marker__label">{{ sourceLabelMap.get(item.id)?.number ?? '' }}</span>
+                <span
+                  v-if="isSourceProofed(item)"
+                  class="marker__proof-badge"
+                  :title="getProofBadgeTitle(item)"
+                  aria-hidden="true"
+                >
+                  ✓
+                </span>
               </button>
             </template>
             <div
@@ -2607,7 +2680,7 @@ onBeforeUnmount(() => {
               :style="proofOverlayStyle"
             >
               <div class="marker-overlay__content">
-                {{ selectedSource.translationText || '〈empty〉' }}
+                {{ getMarkerOverlayText(selectedSource) }}
               </div>
             </div>
           </div>
@@ -3082,6 +3155,23 @@ onBeforeUnmount(() => {
   left: 50%;
   transform: translate(-50%, -50%);
   z-index: 1;
+}
+
+.marker__proof-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: linear-gradient(120deg, rgba(124, 205, 182, 0.95), rgba(146, 214, 222, 0.95));
+  color: #14323d;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  box-shadow: 0 6px 12px rgba(120, 160, 150, 0.12);
+  z-index: 2;
 }
 
 /* inside: 粉色背景 + 深红边框 */
