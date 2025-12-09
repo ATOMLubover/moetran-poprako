@@ -7,6 +7,8 @@ export const useCacheStore = defineStore('cache', () => {
   const state = reactive({
     imageCache: new Map<string, string>(),
     imageFetches: new Map<string, Promise<string>>(),
+    // 项目文件缓存状态：projectId -> boolean (是否已缓存到磁盘)
+    projectFileCacheState: new Map<string, boolean>(),
   });
 
   // Image cache functions
@@ -69,10 +71,21 @@ export const useCacheStore = defineStore('cache', () => {
   //   enforceProjectDetailCacheLimit();
   // }
 
+  // Project file cache state functions
+  function setProjectFileCacheState(projectId: string, hasCached: boolean): void {
+    state.projectFileCacheState.set(projectId, hasCached);
+  }
+
+  function getProjectFileCacheState(projectId: string): boolean | undefined {
+    return state.projectFileCacheState.get(projectId);
+  }
+
   return {
     ...state,
     promoteImageCacheEntry,
     enforceImageCacheLimit,
     storeImageCacheEntry,
+    setProjectFileCacheState,
+    getProjectFileCacheState,
   };
 });

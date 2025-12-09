@@ -6,8 +6,10 @@ import type { FilterOption } from '../api/model/filterOption';
 import { useToastStore } from '../stores/toast';
 import { useUserStore } from '../stores/user';
 import { useRouterStore } from '../stores/router';
+import { useCacheStore } from '../stores/cache';
 import { getUserInfo } from '../ipc/user';
 import { getUserTeams } from '../ipc/team';
+import { getAllCachedProjects } from '../ipc/image_cache';
 import type { ResUser } from '../api/model/user';
 import type { ResTeam } from '../api/model/team';
 import type { ResMember } from '../api/model/member';
@@ -96,6 +98,34 @@ const loadingProjects = ref<boolean>(false);
 // 依赖的 store
 const toastStore = useToastStore();
 const routerStore = useRouterStore();
+const cacheStore = useCacheStore();
+
+// 扫描并初始化项目文件缓存状态
+async function scanProjectFileCaches(): Promise<void> {
+  try {
+    console.log('[PanelView] Scanning project file caches...');
+
+    const allCached = await getAllCachedProjects();
+
+    console.log('[PanelView] Found cached projects', { count: allCached.length, allCached });
+
+    for (const meta of allCached) {
+      // status === 'completed' 表示该项目已成功缓存
+      const hasCached = meta.status === 'completed';
+
+      cacheStore.setProjectFileCacheState(meta.projectId, hasCached);
+
+      console.log('[PanelView] Set cache state for project', {
+        projectId: meta.projectId,
+        hasCached,
+      });
+    }
+
+    console.log('[PanelView] Project file cache scan complete');
+  } catch (err) {
+    console.error('[PanelView] Failed to scan project file caches', err);
+  }
+}
 
 // 载入用户信息
 async function loadUser(): Promise<void> {
@@ -272,6 +302,8 @@ onMounted(() => {
   loadUser();
   loadTeams();
   loadAnnouncements();
+  // 扫描项目文件缓存状态
+  scanProjectFileCaches();
 });
 
 // 当团队改变时，如果切换到“我”（null），强制切换到项目列表

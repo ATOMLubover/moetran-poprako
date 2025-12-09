@@ -38,6 +38,43 @@ interface SourcePosition {
   height: number;
 }
 
+// 强制绕过一切内存/本地缓存，直接向后端请求代理图片并替换当前页图片（用于手动刷新）
+async function forceReloadImage(): Promise<void> {
+  const file = props.files[currentPageIndex.value];
+
+  if (!file) {
+    showToast('当前页无图片可刷新', 'error');
+    return;
+  }
+
+  const key = makeImageCacheKey(props.projectId, file.id);
+
+  try {
+    // 直接请求后端代理，不走本地缓存
+    const reply = await proxyImage(file.url);
+
+    const url = createObjectUrlFromBase64(reply.b64, reply.content_type);
+
+    // 将新 URL 写入内存缓存（会撤销旧的 objectURL）
+    cacheStore.storeImageCacheEntry(key, url);
+
+    // 更新当前页面引用并替换 img.src
+    currentImageObjectUrl.value = url;
+    if (projectPage.value) projectPage.value.imageUrl = url;
+
+    // 尝试找到当前 img 元素并替换 src
+    const img = imageWrapperRef.value?.querySelector('img.board__image') as HTMLImageElement | null;
+    if (img) {
+      img.src = url;
+    }
+
+    showToast('已刷新图片');
+  } catch (err) {
+    console.error('强制刷新图片失败', err);
+    showToast('刷新图片失败', 'error');
+  }
+}
+
 type SourceStatus = 'empty' | 'translated' | 'proofed';
 
 type SourceCategory = 'outside' | 'inside';
@@ -117,39 +154,127 @@ function createObjectUrlFromBase64(b64: string, contentType: string): string {
   return URL.createObjectURL(blob);
 }
 
+// 测试 object URL 是否仍然有效（未被 revoke 且能被加载）
+function testImageUrlAlive(url: string, timeout = 3000): Promise<boolean> {
+  return new Promise(resolve => {
+    const img = new Image();
+    let done = false;
+
+    const timer = window.setTimeout(() => {
+      if (!done) {
+        done = true;
+        console.debug('[testImageUrlAlive] Timeout for URL:', url);
+        resolve(false);
+      }
+    }, timeout);
+
+    img.onload = () => {
+      if (!done) {
+        done = true;
+        clearTimeout(timer);
+        console.debug('[testImageUrlAlive] URL is alive:', url);
+        resolve(true);
+      }
+    };
+
+    img.onerror = () => {
+      if (!done) {
+        done = true;
+        clearTimeout(timer);
+        console.debug('[testImageUrlAlive] URL failed to load:', url);
+        resolve(false);
+      }
+    };
+
+    img.src = url;
+  });
+}
+
 async function fetchImageForFile(projectId: string, file: FileInfo): Promise<string> {
   const key = makeImageCacheKey(projectId, file.id);
+
+  console.log('[fetchImageForFile] Start fetching image', { projectId, fileId: file.id, key });
 
   const cached = cacheStore.promoteImageCacheEntry(key);
 
   if (cached) {
-    return cached;
+    console.log('[fetchImageForFile] Found cached object URL', { key, url: cached });
+
+    // 健康检测：确认该 object URL 仍然可用
+    const alive = await testImageUrlAlive(cached);
+
+    if (alive) {
+      console.log('[fetchImageForFile] Cached URL is alive, reusing', { key });
+      return cached;
+    }
+
+    console.warn('[fetchImageForFile] Cached URL is dead (revoked or invalid), will fallback', {
+      key,
+      url: cached,
+    });
+
+    // 从内存缓存中移除已失效的 URL
+    cacheStore.imageCache.delete(key);
   }
 
   let pending = cacheStore.imageFetches.get(key);
 
   if (!pending) {
     pending = (async () => {
+      console.log('[fetchImageForFile] No pending fetch, creating new fetch promise', { key });
+
+      // 检查是否已有磁盘缓存
+      const hasDiskCache = cacheStore.getProjectFileCacheState(projectId);
+      console.log('[fetchImageForFile] Disk cache state for project', {
+        projectId,
+        hasDiskCache,
+      });
+
       // 优先尝试从本地缓存加载
-      try {
-        const fileIndex = props.files.findIndex(f => f.id === file.id);
-        if (fileIndex !== -1) {
-          const cachedData = await loadCachedFile(projectId, fileIndex);
-          if (cachedData) {
-            const url = createObjectUrlFromBase64(cachedData.b64, cachedData.content_type);
+      if (hasDiskCache !== false) {
+        try {
+          const fileIndex = props.files.findIndex(f => f.id === file.id);
+          console.log('[fetchImageForFile] Attempting to load from disk cache', {
+            projectId,
+            fileIndex,
+          });
 
-            cacheStore.storeImageCacheEntry(key, url);
+          if (fileIndex !== -1) {
+            const cachedData = await loadCachedFile(projectId, fileIndex);
 
-            return url;
+            if (cachedData) {
+              console.log('[fetchImageForFile] Loaded from disk cache successfully', {
+                projectId,
+                fileIndex,
+                contentType: cachedData.content_type,
+              });
+
+              const url = createObjectUrlFromBase64(cachedData.b64, cachedData.content_type);
+
+              cacheStore.storeImageCacheEntry(key, url);
+
+              return url;
+            } else {
+              console.log('[fetchImageForFile] Disk cache returned null, fallback to proxy', {
+                projectId,
+                fileIndex,
+              });
+            }
           }
+        } catch (err) {
+          // 本地缓存读取失败，回退到网络加载
+          console.warn('[fetchImageForFile] Disk cache read failed, fallback to proxy', err);
         }
-      } catch (err) {
-        // 本地缓存读取失败，回退到网络加载
-        console.debug('本地缓存读取失败，使用网络加载', err);
       }
 
       // 回退到网络代理
+      console.log('[fetchImageForFile] Fetching via proxyImage', { fileUrl: file.url });
+
       const reply = await proxyImage(file.url);
+
+      console.log('[fetchImageForFile] proxyImage succeeded', {
+        contentType: reply.content_type,
+      });
 
       const url = createObjectUrlFromBase64(reply.b64, reply.content_type);
 
@@ -159,12 +284,16 @@ async function fetchImageForFile(projectId: string, file: FileInfo): Promise<str
     })();
 
     cacheStore.imageFetches.set(key, pending);
+  } else {
+    console.log('[fetchImageForFile] Found pending fetch, awaiting', { key });
   }
 
   try {
     const url = await pending;
 
     cacheStore.promoteImageCacheEntry(key);
+
+    console.log('[fetchImageForFile] Final URL obtained', { key, url });
 
     return url;
   } finally {
@@ -717,9 +846,28 @@ function getMarkerOverlayText(source: TranslationSource | null): string {
     const sel = source.records.find(r => r.selected === true) as TranslationRecord | undefined;
 
     if (sel) {
-      return sel.proofreadContent && sel.proofreadContent.trim() !== ''
-        ? sel.proofreadContent
-        : '〈empty〉';
+      // 如果被选中的记录有 proofreadContent 则优先显示
+      if (sel.proofreadContent && sel.proofreadContent.trim() !== '') {
+        return sel.proofreadContent;
+      }
+
+      // 否则回退到第一个非空的 translation content（包括 myTranslation 与 translations）
+      const firstNonEmpty = source.records.find(r => r.content && r.content.trim() !== '');
+
+      if (firstNonEmpty) {
+        console.debug(
+          '[getMarkerOverlayText] proofed source missing proofreadContent, falling back to translation content',
+          {
+            sourceId: source.id,
+            fallbackId: firstNonEmpty.id,
+          }
+        );
+
+        return firstNonEmpty.content;
+      }
+
+      // 最终回退到 source.translationText（历史遗留字段）或占位符
+      return source.translationText || '〈empty〉';
     }
 
     return '〈empty〉';
@@ -1889,6 +2037,45 @@ function handleBoardContentLoaded(): void {
   updateWorkspaceHeight();
 }
 
+// 当 <img> 加载失败（例如本地 blob URL 被移除导致 net::ERR_FILE_NOT_FOUND）时的回退处理
+async function handleImageLoadError(event: Event): Promise<void> {
+  const img = event.target as HTMLImageElement | null;
+
+  if (!img) return;
+
+  const src = img.src ?? '';
+
+  // 仅对本地 blob URL 做回退（其他情况保持现有行为）
+  if (!src.startsWith('blob:')) return;
+
+  const file = props.files[currentPageIndex.value];
+
+  if (!file) return;
+
+  const key = makeImageCacheKey(props.projectId, file.id);
+
+  try {
+    // 请求后端代理图片并生成新的 object URL
+    const reply = await proxyImage(file.url);
+
+    const url = createObjectUrlFromBase64(reply.b64, reply.content_type);
+
+    // 将新 URL 写入缓存（会撤销旧的缓存 URL 并按限制清理）
+    cacheStore.storeImageCacheEntry(key, url);
+
+    // 更新当前页面引用并触发 img 重新加载
+    currentImageObjectUrl.value = url;
+
+    if (projectPage.value) projectPage.value.imageUrl = url;
+
+    // 直接替换 img.src 会触发浏览器加载新资源
+    img.src = url;
+  } catch (err) {
+    console.error('Fallback proxy image failed', err);
+    showToast('回退加载图片失败', 'error');
+  }
+}
+
 // 根据当前源进行画面居中
 function centerSourceOnBoard(source: TranslationSource): void {
   const boardElement = boardRef.value;
@@ -2829,6 +3016,32 @@ onBeforeUnmount(() => {
         <h1 class="translator__title">{{ projectPage?.title ?? '加载中' }}</h1>
       </div>
       <div class="translator__actions">
+        <button
+          type="button"
+          class="translator__refresh-button"
+          title="刷新图片（绕过缓存）"
+          @click="forceReloadImage"
+        >
+          <svg class="translator__refresh-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M21 12a9 9 0 1 0-2.65 6.01L21 18v4l-4.01-1.65A9 9 0 0 0 21 12z"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M21 3v6h-6"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <span class="sr-only">刷新图片（绕过缓存）</span>
+        </button>
         <div class="translator__zoom-indicator">{{ Math.round(zoom * 100) }}%</div>
         <form class="translator__page-jump" @submit.prevent="handleJumpToPage">
           <input
@@ -2973,7 +3186,7 @@ onBeforeUnmount(() => {
       <div class="translator__workspace" :style="workspaceStyle" ref="workspaceRef">
         <div
           class="board"
-          :class="[boardGridClass, { 'board--proof': isProofMode }]"
+          :class="boardGridClass"
           ref="boardRef"
           @wheel="handleCanvasWheel"
           @pointerdown="handleCanvasPointerDown"
@@ -2982,6 +3195,10 @@ onBeforeUnmount(() => {
           @pointercancel="handleCanvasPointerCancel"
           @contextmenu.prevent
         >
+          <!-- 校对模式左上角简洁计数徽章：m/n (已校对数量 / 总标记数量) -->
+          <div v-if="isProofMode" class="board__proof-indicator" aria-hidden="true">
+            {{ sources.filter(item => item.status === 'proofed').length }}/{{ sources.length }}
+          </div>
           <div v-if="isLoading" class="board__loading">
             <LoadingCircle />
           </div>
@@ -2993,6 +3210,7 @@ onBeforeUnmount(() => {
               class="board__image"
               draggable="false"
               @load="handleBoardContentLoaded"
+              @error="handleImageLoadError"
             />
             <template v-if="showMarkers && canEdit && !isLoading">
               <button
@@ -3322,6 +3540,35 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 
+.translator__refresh-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin-right: 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(152, 186, 229, 0.45);
+  background: rgba(241, 248, 255, 0.95);
+  cursor: pointer;
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+.translator__refresh-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 20px rgba(118, 184, 255, 0.14);
+  border-color: rgba(112, 182, 255, 0.6);
+}
+
+.translator__refresh-icon {
+  width: 16px;
+  height: 16px;
+  stroke: #2f5a8f;
+  fill: none;
+}
+
 .translator__page-jump {
   display: flex;
   align-items: center;
@@ -3478,8 +3725,23 @@ onBeforeUnmount(() => {
   z-index: 10;
 }
 
-.board--proof {
-  border: 1px solid rgba(255, 182, 193, 0.85);
+/* 校对模式左上角计数徽章样式 */
+.board__proof-indicator {
+  position: absolute;
+  left: 15px;
+  top: 12px;
+  z-index: 25;
+  background: rgba(157, 9, 66, 0.08);
+  color: #b04bd7;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(11, 99, 255, 0.12);
+  box-shadow: 0 6px 18px rgba(12, 66, 160, 0.06);
+  pointer-events: none;
 }
 
 .board__frame {
