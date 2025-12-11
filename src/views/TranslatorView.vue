@@ -3022,23 +3022,22 @@ onBeforeUnmount(() => {
           title="刷新图片（绕过缓存）"
           @click="forceReloadImage"
         >
-          <svg class="translator__refresh-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              d="M21 12a9 9 0 1 0-2.65 6.01L21 18v4l-4.01-1.65A9 9 0 0 0 21 12z"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.6"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-            <path
-              d="M21 3v6h-6"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.6"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
+          <svg
+            class="translator__refresh-icon"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"></path>
+            <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"></path>
           </svg>
           <span class="sr-only">刷新图片（绕过缓存）</span>
         </button>

@@ -483,6 +483,11 @@ const chartOptions = computed(() => ({
   },
 }));
 
+// whether project content is still loading (used to disable actions)
+const contentLoading = computed(() => {
+  return loadingMarkers.value || project.value === null;
+});
+
 // 数字状态映射到 ProjectStatus
 function mapStatusNumberToProjectStatus(n: number | null): ProjectStatus {
   if (n === 2) return 'completed';
@@ -966,8 +971,14 @@ onBeforeUnmount(() => {
           type="button"
           class="pd-btn pd-btn--primary"
           @click="handleToggleModifier"
-          :disabled="props.isPublished"
-          :title="props.isPublished ? '已发布的项目无法修改' : '修改项目信息'"
+          :disabled="props.isPublished || contentLoading"
+          :title="
+            props.isPublished
+              ? '已发布的项目无法修改'
+              : contentLoading
+                ? '项目正在加载中...'
+                : '修改项目信息'
+          "
         >
           修改项目信息
         </button>
@@ -975,8 +986,8 @@ onBeforeUnmount(() => {
           v-else-if="isMePrincipal && props.hasPoprako !== false && !props.teamId"
           type="button"
           class="pd-btn pd-btn--primary"
-          disabled
-          title="缺少团队信息，无法修改项目"
+          :disabled="true || contentLoading"
+          :title="contentLoading ? '项目正在加载中...' : '缺少团队信息，无法修改项目'"
         >
           修改项目信息
         </button>
@@ -986,10 +997,18 @@ onBeforeUnmount(() => {
           type="button"
           class="pd-btn pd-btn--secondary"
           @click="openTranslator(true)"
+          :disabled="contentLoading"
+          :title="contentLoading ? '项目正在加载中，稍后再试' : '进入翻校模式'"
         >
           翻校
         </button>
-        <button type="button" class="pd-btn pd-btn--secondary" @click="openTranslator(false)">
+        <button
+          type="button"
+          class="pd-btn pd-btn--secondary"
+          @click="openTranslator(false)"
+          :disabled="contentLoading"
+          :title="contentLoading ? '项目正在加载中，稍后再试' : '进入阅读模式'"
+        >
           阅读
         </button>
         <button
@@ -997,7 +1016,14 @@ onBeforeUnmount(() => {
           type="button"
           class="pd-btn pd-btn--secondary"
           @click="handleDownloadCache"
-          :disabled="isDownloading || primaryFiles.length === 0"
+          :disabled="contentLoading || isDownloading || primaryFiles.length === 0"
+          :title="
+            contentLoading
+              ? '项目正在加载中，稍后再试'
+              : isDownloading
+                ? '正在下载图片缓存'
+                : '缓存图片到本地'
+          "
         >
           {{ isDownloading ? '下载中...' : '缓存图片' }}
         </button>
@@ -1015,6 +1041,8 @@ onBeforeUnmount(() => {
           type="button"
           class="pd-btn pd-btn--secondary"
           @click="showUploader = true"
+          :disabled="contentLoading"
+          :title="contentLoading ? '项目正在加载中，稍后再试' : '上传图片'"
         >
           上传图片
         </button>

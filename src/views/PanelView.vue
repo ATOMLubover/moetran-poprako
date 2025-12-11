@@ -293,6 +293,11 @@ function handleProjsetCreated(): void {
   projsetCreatorOpen.value = false;
 }
 
+// 工具箱：打开嵌字用字体池（占位）
+function handleOpenFontPool(): void {
+  console.log('[PanelView] Open font pool (placeholder)');
+}
+
 // 初始化加载（仅在拥有 moetran token 时进行）
 onMounted(() => {
   // if (!tokenStore.moetranToken) {
@@ -577,9 +582,9 @@ function handleModifierBack(): void {
             <span class="team-item__avatar">…</span>
             <span class="team-item__name">载入汉化组...</span>
           </li>
-          <li class="team-item team-item--cache" @click="showCachedModal = true">
-            <span class="team-item__avatar cache-avatar">✔</span>
-            <span class="team-item__name">缓存项目</span>
+          <li class="team-item team-item--refresh" @click="loadTeams">
+            <span class="team-item__avatar">⟳</span>
+            <span class="team-item__name">刷新汉化组</span>
           </li>
         </ul>
         <div class="teams-sidebar-footer">
@@ -630,6 +635,23 @@ function handleModifierBack(): void {
             @clear-all="handleClearFilters"
             ref="filterBoardRef"
           />
+
+          <!-- 工具箱：与 teams-list 类似的组织方式，紧贴在筛选板下方 -->
+          <div class="toolbox">
+            <div class="toolbox-header">工具箱</div>
+
+            <ul class="toolbox-list teams-list">
+              <li class="team-item team-item--cache" @click="showCachedModal = true">
+                <span class="team-item__avatar cache-avatar">✔</span>
+                <span class="team-item__name">缓存项目</span>
+              </li>
+
+              <li class="team-item" @click="handleOpenFontPool">
+                <span class="team-item__avatar">字</span>
+                <span class="team-item__name">嵌字用字体池</span>
+              </li>
+            </ul>
+          </div>
         </div>
       </aside>
 
@@ -1090,6 +1112,18 @@ function handleModifierBack(): void {
   box-shadow: 0 10px 34px rgba(140, 180, 230, 0.22); /* match .projects-main */
 }
 
+/* When multiple child cards are stacked inside the wrapper, remove the
+   gap by flattening adjacent border radii so they visually join. */
+.filter-panel-wrapper > * + * {
+  margin-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+.filter-panel-wrapper > *:first-child {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
 /* remove the filter-board's default top margin and slightly adjust
    its top padding so its inner content aligns with announcements */
 .filter-panel-wrapper > .filter-board {
@@ -1197,5 +1231,43 @@ function handleModifierBack(): void {
   overflow: hidden;
   border-radius: 16px;
   box-shadow: 0 20px 60px rgba(30, 60, 100, 0.4);
+}
+
+/* 工具箱样式：与侧栏列表风格一致 */
+.toolbox {
+  /* styled as a card child inside filter-panel-wrapper; outer wrapper
+     child-selector will handle borders/radii when stacked */
+  margin: 0;
+  overflow: hidden;
+}
+.toolbox-header {
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #203650;
+}
+.toolbox-list {
+  /* mirror teams-list organization but keep compact height */
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.toolbox .team-item {
+  padding: 6px 8px;
+  border-radius: 10px;
+}
+
+/* Remove the explicit top border/padding for cache item when it's shown
+   inside the toolbox so it visually joins the filter card above. */
+.toolbox .team-item--cache {
+  border-top: none;
+  padding-top: 6px;
+  margin-bottom: 0;
 }
 </style>
