@@ -21,6 +21,7 @@ const emit = defineEmits<{
   (e: 'remove-option', option: FilterOption): void;
   (e: 'clear-all'): void;
   (e: 'openProjsetCreator'): void;
+  (e: 'show-overview'): void;
 }>();
 
 const toastStore = useToastStore();
@@ -309,6 +310,9 @@ function clearAllOptions(): void {
   <div class="filter-board" :class="{ 'fb--disabled': !filterEnabled || props.disabled }">
     <div class="fb-header">
       <h3 class="fb-title">PopRaKo 筛选控制板</h3>
+      <button class="fb-overview-btn" :disabled="!teamAvailable" @click="emit('show-overview')">
+        纵览表格
+      </button>
     </div>
 
     <!-- 第一行：项目名（模糊搜索） -->
@@ -489,6 +493,27 @@ function clearAllOptions(): void {
   font-size: 16px;
   font-weight: 600;
   color: #25425f;
+}
+.fb-overview-btn {
+  border: 1px solid rgba(124, 205, 182, 0.4);
+  background: linear-gradient(135deg, rgba(124, 205, 182, 0.12), rgba(146, 214, 222, 0.22));
+  color: #115247;
+  padding: 6px 14px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    transform 0.16s ease,
+    box-shadow 0.16s ease;
+}
+.fb-overview-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.fb-overview-btn:not(:disabled):hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px rgba(124, 205, 182, 0.3);
 }
 .fb-row {
   display: flex;

@@ -98,6 +98,7 @@ pub fn run() {
             crate::project::create_projset,
             crate::project::create_proj,
             crate::project::get_team_poprako_projsets,
+            crate::project::list_team_shown_projects,
             crate::project::assign_member_to_proj,
             crate::project::search_user_projects_enriched,
             crate::project::search_team_projects_enriched,

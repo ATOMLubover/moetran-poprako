@@ -58,6 +58,23 @@ interface RawProjectRole {
   [key: string]: unknown;
 }
 
+interface RawShownProject {
+  proj_id: string;
+  proj_name: string;
+  description?: string | null;
+  projset_id?: string | null;
+  projset_serial?: number | null;
+  projset_index?: number | null;
+  translating_status?: number | null;
+  proofreading_status?: number | null;
+  typesetting_status?: number | null;
+  reviewing_status?: number | null;
+  is_published: boolean;
+  members?: RawPoprakoMember[] | null;
+  translated_source_count?: number | null;
+  proofread_source_count?: number | null;
+}
+
 function mapRawTeam(t?: RawTeam | null): ResTeam {
   if (!t) return { id: '', avatar: '', hasAvatar: false, name: '' };
   return {
@@ -109,6 +126,45 @@ function mapRawProject(r: RawResProject): ResProjectEnriched {
     // passthrough Moetran `role` for native projects; frontend will only check null/non-null
     role: r.role ?? null,
   } as ResProjectEnriched;
+}
+
+export interface TeamShownProject {
+  id: string;
+  name: string;
+  description?: string | null;
+  projsetId?: string | null;
+  projsetSerial?: number | null;
+  projsetIndex?: number | null;
+  translatingStatus: number | null;
+  proofreadingStatus: number | null;
+  typesettingStatus: number | null;
+  reviewingStatus: number | null;
+  isPublished: boolean;
+  members: ResMember[];
+  translatedSourceCount?: number;
+  proofreadSourceCount?: number;
+}
+
+function mapRawShownProject(raw: RawShownProject): TeamShownProject {
+  return {
+    id: raw.proj_id,
+    name: raw.proj_name,
+    description: raw.description ?? null,
+    projsetId: raw.projset_id ?? null,
+    projsetSerial: raw.projset_serial ?? null,
+    projsetIndex: raw.projset_index ?? null,
+    translatingStatus: typeof raw.translating_status === 'number' ? raw.translating_status : null,
+    proofreadingStatus:
+      typeof raw.proofreading_status === 'number' ? raw.proofreading_status : null,
+    typesettingStatus: typeof raw.typesetting_status === 'number' ? raw.typesetting_status : null,
+    reviewingStatus: typeof raw.reviewing_status === 'number' ? raw.reviewing_status : null,
+    isPublished: raw.is_published,
+    members: (raw.members ?? []).map(m => mapRawMember(m)),
+    translatedSourceCount:
+      typeof raw.translated_source_count === 'number' ? raw.translated_source_count : undefined,
+    proofreadSourceCount:
+      typeof raw.proofread_source_count === 'number' ? raw.proofread_source_count : undefined,
+  };
 }
 
 // Raw PopRaKo member shape as returned from backend (snake_case).
@@ -248,6 +304,27 @@ export async function getTeamProjectsEnriched(params: {
     return (raw || []).map(r => mapRawProject(r));
   } catch (error) {
     console.error('Error in getTeamProjectsEnriched:', { params, error });
+    throw error;
+  }
+}
+
+export async function listTeamShownProjects(params: {
+  teamId: string;
+  page?: number;
+  limit?: number;
+}): Promise<TeamShownProject[]> {
+  try {
+    const raw = await invoke<RawShownProject[]>('list_team_shown_projects', {
+      payload: {
+        team_id: params.teamId,
+        page: params.page,
+        limit: params.limit,
+      },
+    });
+
+    return (raw || []).map(item => mapRawShownProject(item));
+  } catch (error) {
+    console.error('Error in listTeamShownProjects:', { params, error });
     throw error;
   }
 }

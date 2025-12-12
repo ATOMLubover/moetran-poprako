@@ -785,8 +785,8 @@ onBeforeUnmount(() => {
 .project-list {
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 16px 30px 10px;
+  gap: 12px;
+  padding: 8px 12px 6px; /* 更紧凑的内边距 */
   border-radius: 24px;
   background: rgba(255, 255, 255, 0.92);
   color: #28405c;
@@ -996,8 +996,8 @@ onBeforeUnmount(() => {
 .project-list__item {
   display: grid;
   grid-template-columns: 1fr auto; /* 左侧内容自适应，右侧动作固定 */
-  gap: 12px; /* 减少左右内容间距 */
-  padding: 10px 12px; /* 缩小内边距以降低高度 */
+  gap: 10px; /* 减少左右内容间距 */
+  padding: 8px 10px; /* 缩小内边距以降低高度 */
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.98);
   border: 1px solid rgba(210, 220, 235, 0.65);

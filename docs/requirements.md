@@ -1,40 +1,122 @@
 # 需求文档
 
-## 总体概述
+## 展示用项目列表
 
-moetran-native 是一个对尨译（MoeTran 托管网站）的本地客户端。尨译是一个 SaaS 翻译、校对一体化，且带项目列表的 Web 漫画翻译网站。
+你需要创建一个叫做 src/views/ShownProjectListView.vue 的文件，存放这个项目列表的 vue 文件。
 
-现在，为了解决它如下的问题，决定设计一个 native 的客户端：
+它与 src/components/ProjectList.vue 的核心区别在于：
 
-- 作为一个 SaaS 服务，无法将漫画下载到本地，以在网络状况不好的情况下进行翻译和校对。
-- 项目管理不够方便，无法方便地根据各种筛选条件（翻译、校对、嵌字、监修、发布状态等）展现美观的项目列表，并加以管理。
-- 仅集成了校对和翻译，没有集成嵌字、监修相关状态的追踪。
+- 不支持搜索。
+- 显示信息更加详细。
 
-## 前置信息
+ShownProject 仅支持 PopRaKo 登记的项目，因此无须考虑对 Moetran 项目的兼容性。
 
-所有用户（user）都在尨译中都有一个账户，有自己的昵称和头像。
+当然，不是说完全不获取尨译对应的数据，因为 Moetran 承载了翻校和图片 CDN 的数据。
 
-每个用户可以加入若干汉化组（team），每个汉化组有自己的 ID（string 类型）。
+## 核心展示 DTO 的接口
 
-每个汉化组有若干项目集（workset），每个项目集有自己的 ID（string 类型）。
+以下字段仅作演示，与最终源码中的可以不同：
 
-每个项目集有若干项目（project），每个项目有自己的 ID（string 类型）。
+```ts
+export type WorkPhase = 'translate' | 'proof' | 'typeset' | 'review' | 'publish';
+export type PhaseStatus = 'unset' | 'pending' | 'wip' | 'completed';
 
-每个项目有若干漫画页（page），每个页上有若干翻译源（source）。
+export interface PhaseChip {
+  phase: WorkPhase;
+  status: PhaseStatus;
+  member_names: string[];
+}
 
-每个项目进入翻译页面时，虽然是进入的特定页，但是已经是通过接口获取到所有漫画页的列表了。
+export interface ShownProjectInfo {
+    id: string;
+    title: string;
+    phases: PhaseChip[];
 
-进入特定页后，可以通过接口获取该页的所有翻译源。
+    translated_source_count: number;
+    proofread_source_count: number;
+}
+```
 
-翻译源分为空、翻译完成状态和校对完成状态，具有相对当前页漫画图片文件的相对坐标。且翻译源分为框内和框外。
+它的核心效果是，既展示项目名称、项目的职位状态，也展示各职位的成员名称。另外还会显示来自尨译获取到的翻校状态。
 
-## 核心页面（获取实际信息的接口函数可以暂时 mock，格式参见 .style.md 文件）
+## 布局与样式相关
 
-- [ ] 登录页面（邮箱、密码、captcha 验证码 base64 形式）
-- [ ] 项目详情页（可以预览漫画第一页，和包括项目名、作者名、编号、页数、翻译完成源数、校对完成源数、空源数、分工情况（有哪几个翻译，以及校对、嵌字、监修）、框内源数、框外源数）
-- [ ] 项目列表（默认显示最新若干个项目，通过屏幕尺寸动态计算）
-- [x] 项目翻译页面（左侧为图片显示区，可以缩放当前页漫画图片、添加/删除翻译源的标记（标记只是一个框框），右边为 sidebar，显示当前页上有的源的列表，如果无翻译则 text 显示为空，有翻译则显示翻译文本，每个翻译源 item 以颜色区分空、翻译完成、校对完成；点击某个翻译源的标记或者列表 item 后，会以一个悬浮窗的形式显示输入区，输入翻译后会自动同步到列表 item 中，悬浮窗可以拖动到任意位置）
+表格的整体布局是若干行、两列的 grid。
 
-## 额外实现
+其中每个 entry div 的布局为：左 div 第一行标题，第二行 phase chips，然后是翻译源数量和校对源数量的 chip。右 div 是详情按钮。
 
-- 神人翻译合集
+关于如何显示 chips 和如何调用 ProjectDetailView，参考 src/views/PanelView.vue 的实现。
+
+## 入口
+
+在 PanelView 的 PopRaKo 筛选控制板（src/components/ProjectFilterBoard.vue）第一行标题 “PopRaKo 筛选控制板” 同一行的右对齐位置添加一个按钮 “纵览表格”。点击后，整个  <aside class="right-column"> 和 <main class="projects-main"> 区域都隐藏，留下的区域用来放置 ShownProjectList。
+
+仅支持汉化组状态下使用（teamId 不为 undefined）。
+
+## 出口
+
+在 ShownProjectList 的右上角添加 “返回” 按钮，点击后返回原本正常的 PanelView（默认的项目列表 + PopRaKo 筛选控制板状态）。
+
+## 后端 IPC 相关
+
+这部分可以参考 ProjectList 的获取方式，但是要使用一个新的 PopRaKo 服务器接口，如下：
+
+### 8. 列出团队项目
+
+按团队分页列出项目，结果默认按 `f_created_at` 倒序返回，最近创建的项目在前。
+
+| 方法 | 路径               | 认证 | 查询参数                                   |
+| ---- | ------------------ | ---- | ------------------------------------------ |
+| GET  | `/api/v1/projs`    | 需要 | `team_id=<string>`, `page=<int>`, `limit=<int>` |
+
+查询参数：
+
+- `team_id`（必填）：所属团队 ID
+- `page`（可选）：页码，从 1 开始，默认 1
+- `limit`（可选）：每页条数，默认 10
+
+成功响应：
+
+```json
+{
+    "code": 200,
+    "data": [
+        {
+            "proj_id": "proj_id_1",
+            "proj_name": "【3-5】章节1对话",
+            "description": null,
+            "projset_id": "projset_123",
+            "projset_serial": 3,
+            "projset_index": 5,
+            "translating_status": 0,
+            "proofreading_status": 0,
+            "typesetting_status": 0,
+            "reviewing_status": 0,
+            "is_published": false,
+            "members": [
+                {
+                    "member_id": "member_1",
+                    "user_id": "user_123",
+                    "username": "alice",
+                    "is_admin": false,
+                    "is_translator": true,
+                    "is_proofreader": false,
+                    "is_typesetter": false,
+                    "is_redrawer": false,
+                    "is_principal": true
+                }
+            ]
+        }
+    ]
+}
+```
+
+错误响应：
+
+| 场景         | code |
+| ------------ | ---- |
+| 未认证       | 401  |
+| team_id 缺失 | 400  |
+| 内部错误     | 500  |
+
+你可能需要在 Rust 后端封装一个新的 tauri::command。别忘了注册到 lib.rs 中。

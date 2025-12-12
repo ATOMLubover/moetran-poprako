@@ -26,6 +26,7 @@ import ProjectModifierView from '../views/ProjectModifierView.vue';
 import ProjectDetailView from '../views/ProjectDetailView.vue';
 import ProjectSetCreatorView from '../views/ProjectSetCreatorView.vue';
 import CachedProjectsModal from '../components/CachedProjectsModal.vue';
+import ShownProjectListView from '../views/ShownProjectListView.vue';
 
 // 用户信息 (local ref kept for template compatibility)
 const user = ref<ResUser | null>(null);
@@ -41,6 +42,9 @@ const activeTeamId = ref<string | null>(null);
 
 // 视图模式：项目列表或派活列表或成员列表
 const viewMode = ref<'projects' | 'assignments' | 'members'>('projects');
+
+// PopRaKo 纵览视图显隐状态
+const showProjectOverview = ref(false);
 
 // 主体“当前展示”的项目列表目前由 ProjectList 自行通过 IPC 拉取。
 // 这里预留 rawProjects / filteredProjects 以便后续若改回父组件统筹过滤时使用。
@@ -189,6 +193,19 @@ function handleViewChange(view: 'projects' | 'assignments' | 'members'): void {
   viewMode.value = view;
 }
 
+function handleShowOverview(): void {
+  if (!activeTeamId.value) {
+    toastStore.show('请选择汉化组后再查看纵览表格');
+    return;
+  }
+
+  showProjectOverview.value = true;
+}
+
+function handleCloseOverview(): void {
+  showProjectOverview.value = false;
+}
+
 // 重新登录：导航到登录视图
 function handleRelogin(): void {
   routerStore.navigateToLogin();
@@ -317,6 +334,8 @@ onMounted(() => {
 watch(
   () => activeTeamId.value,
   newTeamId => {
+    showProjectOverview.value = false;
+
     if (newTeamId === null && (viewMode.value === 'assignments' || viewMode.value === 'members')) {
       viewMode.value = 'projects';
     }
@@ -744,90 +763,100 @@ function handleModifierBack(): void {
         </div>
       </aside>
 
-      <!-- 中间：项目列表/派活主区域 -->
-      <main class="projects-main">
-        <div class="projects-content" ref="projectsContainerRef">
-          <div v-if="loadingProjects" class="placeholder">载入项目...</div>
-          <div class="projects-scroll" v-else>
-            <ProjectList
+      <template v-if="!showProjectOverview">
+        <!-- 中间：项目列表/派活主区域 -->
+        <main class="projects-main">
+          <div class="projects-content" ref="projectsContainerRef">
+            <div v-if="loadingProjects" class="placeholder">载入项目...</div>
+            <div class="projects-scroll" v-else>
+              <ProjectList
+                v-if="viewMode === 'projects'"
+                :team-id="activeTeamId"
+                :filters="currentSearchFilters"
+                :current-view="viewMode"
+                @open-detail="handleOpenDetail"
+                @create="handleOpenCreator"
+                @view-change="handleViewChange"
+                @create-projset="handleOpenProjsetCreator"
+              />
+              <AssignmentList
+                v-else-if="viewMode === 'assignments'"
+                :team-id="activeTeamId"
+                :current-view="viewMode"
+                :filters="currentAssignmentSearchFilters"
+                @view-change="handleViewChange"
+              />
+              <MemberList
+                v-else-if="viewMode === 'members'"
+                :team-id="activeTeamId"
+                :current-view="viewMode"
+                :filters="currentMemberSearchFilters"
+                @view-change="handleViewChange"
+              />
+            </div>
+          </div>
+        </main>
+
+        <!-- 右侧：PopRaKo 筛选控制板（占用全部宽度的 23%） -->
+        <aside class="right-column">
+          <div class="filter-panel-wrapper">
+            <!-- 项目筛选板（仅在项目列表视图显示） -->
+            <ProjectFilterBoard
               v-if="viewMode === 'projects'"
-              :team-id="activeTeamId"
-              :filters="currentSearchFilters"
-              :current-view="viewMode"
-              @open-detail="handleOpenDetail"
-              @create="handleOpenCreator"
-              @view-change="handleViewChange"
-              @create-projset="handleOpenProjsetCreator"
+              :team-id="activeTeamId ?? undefined"
+              :is-searching="isSearching"
+              @add-option="handleAddFilterOption"
+              @remove-option="handleRemoveFilterOption"
+              @clear-all="handleClearFilters"
+              @show-overview="handleShowOverview"
+              ref="filterBoardRef"
             />
-            <AssignmentList
+
+            <!-- 派活筛选板（仅在派活列表视图显示） -->
+            <AssignmentFilterBoard
               v-else-if="viewMode === 'assignments'"
-              :team-id="activeTeamId"
-              :current-view="viewMode"
-              :filters="currentAssignmentSearchFilters"
-              @view-change="handleViewChange"
+              :is-searching="isSearching"
+              @add-option="handleAddAssignmentFilterOption"
+              @remove-option="handleRemoveAssignmentFilterOption"
+              @clear-all="handleClearAssignmentFilters"
             />
-            <MemberList
+
+            <!-- 成员筛选板（仅在成员列表视图显示） -->
+            <MemberFilterBoard
               v-else-if="viewMode === 'members'"
-              :team-id="activeTeamId"
-              :current-view="viewMode"
-              :filters="currentMemberSearchFilters"
-              @view-change="handleViewChange"
+              :team-id="activeTeamId ?? undefined"
+              :is-searching="isSearching"
+              @add-option="handleAddMemberFilterOption"
+              @remove-option="handleRemoveMemberFilterOption"
+              @clear-all="handleClearMemberFilters"
             />
+
+            <!-- 工具箱：与 teams-list 类似的组织方式，紧贴在筛选板下方 -->
+            <div class="toolbox">
+              <div class="toolbox-header">工具箱</div>
+
+              <ul class="toolbox-list teams-list">
+                <li class="team-item team-item--cache" @click="showCachedModal = true">
+                  <span class="team-item__avatar cache-avatar">✔</span>
+                  <span class="team-item__name">缓存项目</span>
+                </li>
+
+                <li class="team-item" @click="handleOpenFontPool">
+                  <span class="team-item__avatar">字</span>
+                  <span class="team-item__name">嵌字用字体池</span>
+                </li>
+              </ul>
+            </div>
           </div>
-        </div>
-      </main>
-
-      <!-- 右侧：PopRaKo 筛选控制板（占用全部宽度的 23%） -->
-      <aside class="right-column">
-        <div class="filter-panel-wrapper">
-          <!-- 项目筛选板（仅在项目列表视图显示） -->
-          <ProjectFilterBoard
-            v-if="viewMode === 'projects'"
-            :team-id="activeTeamId ?? undefined"
-            :is-searching="isSearching"
-            @add-option="handleAddFilterOption"
-            @remove-option="handleRemoveFilterOption"
-            @clear-all="handleClearFilters"
-            ref="filterBoardRef"
-          />
-
-          <!-- 派活筛选板（仅在派活列表视图显示） -->
-          <AssignmentFilterBoard
-            v-else-if="viewMode === 'assignments'"
-            :is-searching="isSearching"
-            @add-option="handleAddAssignmentFilterOption"
-            @remove-option="handleRemoveAssignmentFilterOption"
-            @clear-all="handleClearAssignmentFilters"
-          />
-
-          <!-- 成员筛选板（仅在成员列表视图显示） -->
-          <MemberFilterBoard
-            v-else-if="viewMode === 'members'"
-            :team-id="activeTeamId ?? undefined"
-            :is-searching="isSearching"
-            @add-option="handleAddMemberFilterOption"
-            @remove-option="handleRemoveMemberFilterOption"
-            @clear-all="handleClearMemberFilters"
-          />
-
-          <!-- 工具箱：与 teams-list 类似的组织方式，紧贴在筛选板下方 -->
-          <div class="toolbox">
-            <div class="toolbox-header">工具箱</div>
-
-            <ul class="toolbox-list teams-list">
-              <li class="team-item team-item--cache" @click="showCachedModal = true">
-                <span class="team-item__avatar cache-avatar">✔</span>
-                <span class="team-item__name">缓存项目</span>
-              </li>
-
-              <li class="team-item" @click="handleOpenFontPool">
-                <span class="team-item__avatar">字</span>
-                <span class="team-item__name">嵌字用字体池</span>
-              </li>
-            </ul>
-          </div>
-        </div>
-      </aside>
+        </aside>
+      </template>
+      <section v-else class="overview-wrapper">
+        <ShownProjectListView
+          :team-id="activeTeamId ?? ''"
+          @exit="handleCloseOverview"
+          @open-detail="handleOpenDetail"
+        />
+      </section>
 
       <!-- 全屏项目详情/创建/修改视图 -->
       <div v-if="detailOpen" class="detail-fullscreen">
@@ -1124,10 +1153,14 @@ function handleModifierBack(): void {
   background: #ffffff;
   border: 1px solid rgba(150, 180, 210, 0.3);
   border-radius: 18px;
-  padding: 20px 22px 6px; /* 减少底部 padding，从 26px 改为 6px */
+  padding: 8px 12px 6px; /* 更紧凑的内边距 */
   box-sizing: border-box;
   box-shadow: 0 10px 34px rgba(140, 180, 230, 0.22);
   min-width: 0; /* 防止被右侧栏挤压时产生水平抖动 */
+}
+.overview-wrapper {
+  flex: 1;
+  display: flex;
 }
 /* 右侧第三列：占据全部宽度的 23% */
 .right-column {
@@ -1341,6 +1374,7 @@ function handleModifierBack(): void {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  padding: 4px; /* reduce internal padding to make list denser */
 }
 .projects-scroll {
   flex: 1;

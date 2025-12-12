@@ -106,6 +106,71 @@ pub struct PoprakoProjSetListData {
     pub projsets: Vec<PoprakoProjSetInfo>,
 }
 
+// PopRaKo 团队项目列表 DTO（对应 GET /projs 返回的单项）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PoprakoTeamProjListItem {
+    pub proj_id: String,
+    pub proj_name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub projset_id: Option<String>,
+    #[serde(default)]
+    pub projset_serial: Option<u32>,
+    #[serde(default)]
+    pub projset_index: Option<u32>,
+    #[serde(default)]
+    pub translating_status: Option<i32>,
+    #[serde(default)]
+    pub proofreading_status: Option<i32>,
+    #[serde(default)]
+    pub typesetting_status: Option<i32>,
+    #[serde(default)]
+    pub reviewing_status: Option<i32>,
+    pub is_published: bool,
+    #[serde(default)]
+    pub members: Option<Vec<PoprakoMember>>,
+}
+
+// PopRaKo 团队项目列表请求 DTO
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ListTeamShownProjectsReq {
+    pub team_id: String,
+    #[serde(default)]
+    pub page: Option<u32>,
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+// 前端纵览表格用到的项目条目
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ShownProjectListItem {
+    pub proj_id: String,
+    pub proj_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub projset_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub projset_serial: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub projset_index: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub translating_status: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proofreading_status: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub typesetting_status: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reviewing_status: Option<i32>,
+    pub is_published: bool,
+    pub members: Vec<PoprakoMember>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub translated_source_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proofread_source_count: Option<u64>,
+}
+
 // PopRaKo 创建项目请求 DTO（与 ProjCreatePayload 对齐）
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PoprakoProjCreateReq {
@@ -351,6 +416,114 @@ pub async fn get_team_poprako_projsets(
     defer.success();
 
     Ok(data.projsets)
+}
+
+#[tauri::command]
+pub async fn list_team_shown_projects(
+    payload: ListTeamShownProjectsReq,
+) -> Result<Vec<ShownProjectListItem>, String> {
+    let page = payload.page.unwrap_or(1).max(1);
+    let limit = payload.limit.unwrap_or(10).clamp(1, 50);
+
+    tracing::info!(
+        team_id = %payload.team_id,
+        page,
+        limit,
+        "poprako.team_projs.overview.start"
+    );
+
+    let mut defer = WarnDefer::new("poprako.team_projs.overview");
+
+    let mut query = std::collections::HashMap::new();
+    query.insert("team_id", payload.team_id.clone());
+    query.insert("page", page.to_string());
+    query.insert("limit", limit.to_string());
+
+    let reply = poprako_get::<PoprakoEnvelope<Vec<PoprakoTeamProjListItem>>>("projs", Some(&query))
+        .await
+        .map_err(|err| format!("获取 PopRaKo 团队项目失败: {}", err))?;
+
+    if reply.code != 200 {
+        let msg = reply
+            .message
+            .unwrap_or_else(|| "PopRaKo 获取团队项目失败".to_string());
+
+        tracing::info!(
+            team_id = %payload.team_id,
+            code = reply.code,
+            message = %msg,
+            "poprako.team_projs.overview.failed"
+        );
+
+        return Err(msg);
+    }
+
+    let raw_items = reply.data.unwrap_or_default();
+
+    let moetran_map = {
+        let mut map = std::collections::HashMap::new();
+        let mut moetran_query = std::collections::HashMap::new();
+        moetran_query.insert("page", "1".to_string());
+        moetran_query.insert("limit", "200".to_string());
+        moetran_query.insert("status", "0".to_string());
+
+        let path = format!("teams/{}/projects", payload.team_id);
+
+        match moetran_get::<Vec<ResProject>>(&path, Some(&moetran_query)).await {
+            Ok(list) => {
+                for proj in list {
+                    map.insert(
+                        proj.id.clone(),
+                        (proj.translated_source_count, proj.checked_source_count),
+                    );
+                }
+
+                map
+            }
+            Err(err) => {
+                tracing::warn!(
+                    team_id = %payload.team_id,
+                    error = %err,
+                    "moetran.team.projects.fetch.failed"
+                );
+
+                map
+            }
+        }
+    };
+
+    let mut result = Vec::with_capacity(raw_items.len());
+
+    for item in raw_items {
+        let counts = moetran_map.get(&item.proj_id);
+
+        result.push(ShownProjectListItem {
+            proj_id: item.proj_id,
+            proj_name: item.proj_name,
+            description: item.description,
+            projset_id: item.projset_id,
+            projset_serial: item.projset_serial,
+            projset_index: item.projset_index,
+            translating_status: item.translating_status,
+            proofreading_status: item.proofreading_status,
+            typesetting_status: item.typesetting_status,
+            reviewing_status: item.reviewing_status,
+            is_published: item.is_published,
+            members: item.members.unwrap_or_default(),
+            translated_source_count: counts.map(|c| c.0),
+            proofread_source_count: counts.map(|c| c.1),
+        });
+    }
+
+    tracing::info!(
+        team_id = %payload.team_id,
+        count = result.len(),
+        "poprako.team_projs.overview.ok"
+    );
+
+    defer.success();
+
+    Ok(result)
 }
 
 // 在已有项目集中创建项目（调用 PopRaKo /proj/create）
