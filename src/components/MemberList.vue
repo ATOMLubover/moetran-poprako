@@ -2,7 +2,14 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import type { ResMember } from '../api/model/member';
 import { useToastStore } from '../stores/toast';
-import { getActiveMembers } from '../ipc/member';
+import { getActiveMembers, searchMembersByName } from '../ipc/member';
+
+// 成员筛选条件接口
+interface MemberSearchFilters {
+  position?: string;
+  fuzzyName?: string;
+  limit?: number;
+}
 
 const emit = defineEmits<{
   (e: 'view-change', view: 'projects' | 'assignments' | 'members'): void;
@@ -11,9 +18,14 @@ const emit = defineEmits<{
 const props = defineProps<{
   teamId?: string | null;
   currentView?: 'projects' | 'assignments' | 'members';
+  // 来自 PanelView 的筛选条件
+  filters?: MemberSearchFilters | undefined;
+  // toggle 用于强制重新应用筛选
+  shouldApplyFilters?: boolean;
 }>();
 
 const toastStore = useToastStore();
+
 // 视图模式：取自父级 currentView
 const viewMode = computed(() => props.currentView ?? 'members');
 
@@ -24,90 +36,163 @@ function switchView(view: 'projects' | 'assignments' | 'members'): void {
   emit('view-change', view);
 }
 
-// 当前页成员数据（按页从服务器拉取）
-const currentPageMembers = ref<ResMember[]>([]);
+// 内部成员列表数据
+const allMembers = ref<ResMember[]>([]);
 const isLoading = ref(false);
-
-// 每页显示项目数（后端 limit）
-const pageSize = 12;
 
 // 分页状态
 const currentPage = ref(1);
+const serverPage = ref(1);
+const lastFetchCount = ref(0);
 
-// 乐观地判断是否可能有下一页：当后端返回的数量等于 limit 时，认为可能还有下一页
-const maybeHasNext = ref<boolean>(false);
+const defaultPageSize = 12;
+const pageSize = computed(() => {
+  const limit = props.filters?.limit;
+  if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) {
+    return limit;
+  }
 
-// 是否有上一页
+  return defaultPageSize;
+});
+
+// 是否还有更多数据
+const hasMoreFromServer = computed(() => lastFetchCount.value === pageSize.value);
+
+// 是否有上一页/下一页
 const hasPrevPage = computed(() => currentPage.value > 1);
+const hasNextPage = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value;
+  const nextStart = start + pageSize.value;
+  return nextStart < allMembers.value.length || hasMoreFromServer.value;
+});
 
-// 请求特定页的数据并返回结果（不修改 currentPage）
-async function fetchMembersPage(page: number): Promise<ResMember[]> {
-  if (!props.teamId) return [];
+// 当前页显示的成员
+const displayMembers = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value;
+  const end = start + pageSize.value;
+  return allMembers.value.slice(start, end);
+});
+
+// 总页数
+const totalPages = computed(() => {
+  return Math.max(1, Math.ceil(allMembers.value.length / pageSize.value));
+});
+
+// 上一页
+function goPrevPage(): void {
+  if (hasPrevPage.value) {
+    currentPage.value--;
+  }
+}
+
+// 下一页
+async function goNextPage(): Promise<void> {
+  const nextStart = currentPage.value * pageSize.value;
+  const remainingLocal = allMembers.value.length - nextStart;
+
+  // 如果本地剩余数据少于 pageSize 且服务端还有更多，则请求更多
+  if (remainingLocal < pageSize.value && hasMoreFromServer.value) {
+    await fetchMoreFromServer();
+  }
+
+  // 检查是否还有数据可以显示
+  if (nextStart >= allMembers.value.length) return;
+
+  currentPage.value++;
+}
+
+// 从服务端拉取更多数据
+async function fetchMoreFromServer(): Promise<void> {
+  if (isLoading.value || !props.teamId) return;
 
   isLoading.value = true;
+
   try {
-    const data = await getActiveMembers(props.teamId, page, pageSize);
-    return data;
+    serverPage.value++;
+
+    let list: ResMember[];
+
+    // 判断是否有筛选条件
+    const hasFilters = !!(props.filters?.position || props.filters?.fuzzyName);
+
+    if (hasFilters) {
+      // 有筛选条件：使用 searchMembersByName
+      list = await searchMembersByName({
+        teamId: props.teamId,
+        position: props.filters?.position as
+          | 'translator'
+          | 'proofreader'
+          | 'typesetter'
+          | 'redrawer'
+          | 'principal'
+          | undefined,
+        fuzzyName: props.filters?.fuzzyName,
+        page: serverPage.value,
+        limit: pageSize.value,
+      });
+    } else {
+      // 无筛选条件：使用 getActiveMembers
+      list = await getActiveMembers(props.teamId, serverPage.value, pageSize.value);
+    }
+
+    lastFetchCount.value = list.length;
+
+    allMembers.value.push(...list);
   } catch (err) {
-    console.error('[MemberList] 获取成员列表失败:', err);
-    toastStore.show(`获取成员列表失败：${String(err)}`);
-    return [];
+    console.error('[MemberList] 获取成员失败:', err);
+    toastStore.show(`获取成员失败：${String(err)}`);
   } finally {
     isLoading.value = false;
   }
 }
 
-// 将某页数据设置为当前页显示
-function applyPageData(page: number, data: ResMember[]): void {
-  currentPage.value = page;
-  currentPageMembers.value = data;
-  // 如果返回数量等于 limit，则可能还有下一页
-  maybeHasNext.value = data.length === pageSize;
-}
-
-// 上一页：尝试请求上一页并应用
-async function goPrevPage(): Promise<void> {
-  if (!hasPrevPage.value || isLoading.value) return;
-
-  const target = currentPage.value - 1;
-  const data = await fetchMembersPage(target);
-  // 即便上一页返回 0（异常情况），也切回上一页并显示为空
-  applyPageData(target, data);
-}
-
-// 下一页：如果后端明确没有更多（maybeHasNext=false）则直接提示；否则尝试请求下一页
-async function goNextPage(): Promise<void> {
-  if (isLoading.value) return;
-
-  if (!maybeHasNext.value && currentPage.value !== 0) {
-    // 已知没有下一页
-    toastStore.show('没有下一页');
+// 初始加载数据
+async function fetchAndDisplay(): Promise<void> {
+  if (!props.teamId) {
     return;
   }
 
-  const target = currentPage.value + 1;
-  const data = await fetchMembersPage(target);
+  isLoading.value = true;
 
-  if (!data.length) {
-    // 后端返回 0，说明实际上没有下一页
-    maybeHasNext.value = false;
-    toastStore.show('没有下一页了');
-    return;
+  try {
+    serverPage.value = 1;
+
+    let list: ResMember[];
+
+    // 判断是否有筛选条件
+    const hasFilters = !!(props.filters?.position || props.filters?.fuzzyName);
+
+    if (hasFilters) {
+      // 有筛选条件：使用 searchMembersByName
+      list = await searchMembersByName({
+        teamId: props.teamId,
+        position: props.filters?.position as
+          | 'translator'
+          | 'proofreader'
+          | 'typesetter'
+          | 'redrawer'
+          | 'principal'
+          | undefined,
+        fuzzyName: props.filters?.fuzzyName,
+        page: 1,
+        limit: pageSize.value,
+      });
+    } else {
+      // 无筛选条件：使用 getActiveMembers
+      list = await getActiveMembers(props.teamId, 1, pageSize.value);
+    }
+
+    lastFetchCount.value = list.length;
+
+    allMembers.value = list;
+  } catch (err) {
+    console.error('[MemberList] 获取成员失败:', err);
+    toastStore.show(`获取成员失败：${String(err)}`);
+    allMembers.value = [];
+  } finally {
+    isLoading.value = false;
   }
-
-  // 有数据，切到下一页
-  applyPageData(target, data);
 }
-
-// 初始化：加载第一页并设置状态
-onMounted(() => {
-  void (async () => {
-    if (!props.teamId) return;
-
-    const data = await fetchMembersPage(1);
-    applyPageData(1, data);
-  })();
-});
 
 // 格式化时间
 function formatTime(timestamp: number | null): string {
@@ -122,21 +207,52 @@ function formatTime(timestamp: number | null): string {
 }
 
 // 初始化加载
-// 当 teamId 变化时重置并加载第一页
+onMounted(() => {
+  requestAnimationFrame(() => {
+    void fetchAndDisplay();
+  });
+});
+
+// 当 teamId 变化时重新加载
 watch(
   () => props.teamId,
-  () => {
-    void (async () => {
+  (newVal, oldVal) => {
+    if (newVal !== oldVal) {
+      allMembers.value = [];
       currentPage.value = 1;
-      if (!props.teamId) {
-        currentPageMembers.value = [];
-        maybeHasNext.value = false;
-        return;
-      }
+      serverPage.value = 1;
+      requestAnimationFrame(() => {
+        void fetchAndDisplay();
+      });
+    }
+  }
+);
 
-      const data = await fetchMembersPage(1);
-      applyPageData(1, data);
-    })();
+// 当 filters 变化时，重新拉取
+watch(
+  () => props.filters,
+  () => {
+    allMembers.value = [];
+    currentPage.value = 1;
+    serverPage.value = 1;
+
+    requestAnimationFrame(() => {
+      void fetchAndDisplay();
+    });
+  },
+  { deep: true }
+);
+
+// 当 shouldApplyFilters 切换时，触发刷新
+watch(
+  () => props.shouldApplyFilters,
+  () => {
+    allMembers.value = [];
+    currentPage.value = 1;
+    serverPage.value = 1;
+    requestAnimationFrame(() => {
+      void fetchAndDisplay();
+    });
   }
 );
 </script>
@@ -195,12 +311,12 @@ watch(
               <polyline points="15 18 9 12 15 6"></polyline>
             </svg>
           </button>
-          <span class="page-indicator">{{ currentPage }}</span>
+          <span class="page-indicator">{{ currentPage }} / {{ totalPages }}</span>
           <button
             type="button"
             class="pagination-btn"
             @click="goNextPage"
-            :disabled="isLoading || !maybeHasNext"
+            :disabled="!hasNextPage || isLoading"
             title="下一页"
           >
             <svg
@@ -221,10 +337,10 @@ watch(
     </header>
 
     <div class="member-list__content">
-      <div v-if="isLoading" class="member-list__loading">加载中...</div>
-      <div v-else-if="!currentPageMembers.length" class="member-list__empty">暂无成员</div>
+      <div v-if="isLoading && allMembers.length === 0" class="member-list__loading">加载中...</div>
+      <div v-else-if="!displayMembers.length" class="member-list__empty">暂无成员</div>
       <div v-else class="member-list__grid">
-        <div v-for="member in currentPageMembers" :key="member.memberId" class="member-card">
+        <div v-for="member in displayMembers" :key="member.memberId" class="member-card">
           <div class="member-card__header">
             <div class="member-card__name">{{ member.username }}</div>
             <div v-if="member.isAdmin" class="member-card__admin-badge">管理员</div>

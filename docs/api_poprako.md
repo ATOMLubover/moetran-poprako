@@ -209,16 +209,37 @@ curl -G https://api.example.com/api/v1/members/info \
         {
             "member_id": "member_1",
             "user_id": "user_123",
-            "username": "alice"
+            "username": "alice",
+            "is_admin": true,
+            "is_translator": true,
+            "is_proofreader": false,
+            "is_typesetter": false,
+            "is_redrawer": false,
+            "is_principal": false,
+            "last_active": "2025-12-08T10:30:00Z"
         },
         {
             "member_id": "member_2",
             "user_id": "user_456",
-            "username": "alice_2"
+            "username": "alice_2",
+            "is_admin": false,
+            "is_translator": true,
+            "is_proofreader": false,
+            "is_typesetter": false,
+            "is_redrawer": false,
+            "is_principal": false,
+            "last_active": "2025-12-05T14:20:00Z"
         }
     ]
 }
 ```
+
+字段说明：
+
+- `last_active`：该成员在当前团队项目中最后一次被分配的时间。若从未被分配过项目，则为 `null`。
+- 返回结果按 `last_active` 降序排列，未分配过项目的成员排在最后。
+
+- 注意：POST `/api/v1/members/search` 与 GET `/api/v1/members` 现在返回包含所有角色标志位及 `last_active` 字段的成员对象，结构与 GET `/api/v1/members/active` 相同。
 
 错误响应：
 

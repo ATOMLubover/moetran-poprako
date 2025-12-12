@@ -20,6 +20,7 @@ import LoadingCircle from '../components/LoadingCircle.vue';
 // 使用共享的基本项目信息类型仅在本地过滤场景；当前不直接使用
 import ProjectFilterBoard from '../components/ProjectFilterBoard.vue';
 import AssignmentFilterBoard from '../components/AssignmentFilterBoard.vue';
+import MemberFilterBoard from '../components/MemberFilterBoard.vue';
 import ProjectCreatorView from '../views/ProjectCreatorView.vue';
 import ProjectModifierView from '../views/ProjectModifierView.vue';
 import ProjectDetailView from '../views/ProjectDetailView.vue';
@@ -565,6 +566,76 @@ watch(
 
 // 筛选即时生效：不再需要手动应用流程（确认按钮已移除）
 
+// 成员筛选条件接口
+interface MemberSearchFilters {
+  position?: string;
+  fuzzyName?: string;
+  limit?: number;
+}
+
+// 来自 MemberFilterBoard 的选项结构
+const currentMemberFilterOptions = ref<FilterOption[]>([]);
+
+// 处理添加筛选项（来自 MemberFilterBoard）
+function handleAddMemberFilterOption(option: FilterOption) {
+  const exists = currentMemberFilterOptions.value.find(
+    opt => opt.key === option.key && opt.value === option.value
+  );
+
+  if (!exists) {
+    currentMemberFilterOptions.value.push(option);
+  }
+}
+
+// 处理移除筛选项（来自 MemberFilterBoard）
+function handleRemoveMemberFilterOption(option: FilterOption) {
+  const index = currentMemberFilterOptions.value.findIndex(
+    opt => opt.key === option.key && opt.value === option.value
+  );
+
+  if (index !== -1) {
+    currentMemberFilterOptions.value.splice(index, 1);
+  }
+}
+
+// 处理清空所有筛选项（来自 MemberFilterBoard）
+function handleClearMemberFilters() {
+  currentMemberFilterOptions.value = [];
+}
+
+// 将 FilterOption[] 映射为后端可识别的 MemberSearchFilters
+const currentMemberSearchFilters = computed<MemberSearchFilters | undefined>(() => {
+  if (!currentMemberFilterOptions.value.length) return undefined;
+
+  const filters: MemberSearchFilters = {};
+
+  for (const opt of currentMemberFilterOptions.value) {
+    const { key, value: val } = opt;
+
+    // 职位筛选
+    if (key === 'position' && typeof val === 'string') {
+      filters.position = val;
+      continue;
+    }
+
+    // 名字模糊搜索
+    if (key === 'fuzzy-name' && typeof val === 'string') {
+      filters.fuzzyName = val;
+      continue;
+    }
+
+    if (key === 'limit') {
+      const parsed = Number(val);
+      if (!Number.isNaN(parsed) && parsed > 0) {
+        filters.limit = parsed;
+      }
+      continue;
+    }
+  }
+
+  return filters;
+});
+
 // 最终传递给 ProjectList 的项目已由其内部管理；此处预留接口以备未来需要
 // const displayProjects = computed(() =>
 //   filteredProjects.value.length ? filteredProjects.value : rawProjects.value
@@ -699,6 +770,7 @@ function handleModifierBack(): void {
               v-else-if="viewMode === 'members'"
               :team-id="activeTeamId"
               :current-view="viewMode"
+              :filters="currentMemberSearchFilters"
               @view-change="handleViewChange"
             />
           </div>
@@ -726,6 +798,16 @@ function handleModifierBack(): void {
             @add-option="handleAddAssignmentFilterOption"
             @remove-option="handleRemoveAssignmentFilterOption"
             @clear-all="handleClearAssignmentFilters"
+          />
+
+          <!-- 成员筛选板（仅在成员列表视图显示） -->
+          <MemberFilterBoard
+            v-else-if="viewMode === 'members'"
+            :team-id="activeTeamId ?? undefined"
+            :is-searching="isSearching"
+            @add-option="handleAddMemberFilterOption"
+            @remove-option="handleRemoveMemberFilterOption"
+            @clear-all="handleClearMemberFilters"
           />
 
           <!-- 工具箱：与 teams-list 类似的组织方式，紧贴在筛选板下方 -->

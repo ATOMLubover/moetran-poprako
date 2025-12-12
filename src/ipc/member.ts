@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { ResMemberBrief, ResMemberInfo } from '../api/model/member';
+import type { ResMemberInfo, ResMember } from '../api/model/member';
 
 export type MemberPosition = 'translator' | 'proofreader' | 'typesetter' | 'principal' | 'redrawer';
 
@@ -13,7 +13,7 @@ export interface GetMembersParams {
 
 // Note: backend serializes using camelCase; invoke return type uses DTOs from api/model
 
-export async function searchMembersByName(params: GetMembersParams): Promise<ResMemberBrief[]> {
+export async function searchMembersByName(params: GetMembersParams): Promise<ResMember[]> {
   try {
     // Tauri command `get_members` expects a single argument named `payload` (the ReqMembers struct).
     // Pass the params wrapped under `payload` so argument names match the Rust command signature.
@@ -29,18 +29,37 @@ export async function searchMembersByName(params: GetMembersParams): Promise<Res
       limit: params.limit,
     };
 
-    // Raw response from PopRaKo: items with snake_case keys
-    interface RawResMemberBrief {
+    // Raw response from PopRaKo: 根据 api_poprako.md，/members/search 现在返回完整的成员信息
+    interface RawMemberItem {
       member_id: string;
+      user_id: string;
       username: string;
+      is_admin?: boolean;
+      is_translator?: boolean;
+      is_proofreader?: boolean;
+      is_typesetter?: boolean;
+      is_redrawer?: boolean;
+      is_principal?: boolean;
+      last_active?: number | null;
     }
 
     interface RawMembersReply {
-      items: RawResMemberBrief[];
+      items: RawMemberItem[];
     }
 
     const raw = await invoke<RawMembersReply>('get_members', { payload });
-    return (raw.items || []).map(i => ({ memberId: i.member_id, username: i.username }));
+    return (raw.items || []).map(m => ({
+      userId: m.user_id,
+      memberId: m.member_id,
+      username: m.username,
+      isAdmin: m.is_admin === true,
+      isTranslator: m.is_translator === true,
+      isProofreader: m.is_proofreader === true,
+      isTypesetter: m.is_typesetter === true,
+      isRedrawer: m.is_redrawer === true,
+      isPrincipal: m.is_principal === true,
+      lastActive: typeof m.last_active === 'number' ? m.last_active : null,
+    }));
   } catch (error) {
     console.error('Error in searchMembersByName:', { params, error });
     throw error;

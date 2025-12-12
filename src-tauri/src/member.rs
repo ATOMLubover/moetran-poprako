@@ -16,9 +16,31 @@ pub struct PoprakoEnvelope<T> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct PoprakoMemberBrief {
+pub struct PoprakoMemberSearchRaw {
     pub member_id: String,
+    pub user_id: String,
     pub username: String,
+    pub is_admin: Option<bool>,
+    pub is_translator: Option<bool>,
+    pub is_proofreader: Option<bool>,
+    pub is_typesetter: Option<bool>,
+    pub is_redrawer: Option<bool>,
+    pub is_principal: Option<bool>,
+    pub last_active: Option<OffsetDateTime>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PoprakoMemberSearchItem {
+    pub member_id: String,
+    pub user_id: String,
+    pub username: String,
+    pub is_admin: Option<bool>,
+    pub is_translator: Option<bool>,
+    pub is_proofreader: Option<bool>,
+    pub is_typesetter: Option<bool>,
+    pub is_redrawer: Option<bool>,
+    pub is_principal: Option<bool>,
+    pub last_active: Option<i64>,
 }
 
 // 当前登录用户在指定 team 中的成员信息（用于判断是否为管理员等）
@@ -49,7 +71,7 @@ pub struct ReqMembers {
 // IPC 返回结构：包一层，避免直接使用 Vec 作为 IpcResponse
 #[derive(Debug, Serialize)]
 pub struct MembersReply {
-    pub items: Vec<PoprakoMemberBrief>,
+    pub items: Vec<PoprakoMemberSearchItem>,
 }
 
 #[tauri::command]
@@ -65,7 +87,7 @@ pub async fn get_members(payload: ReqMembers) -> Result<MembersReply, String> {
 
     let mut defer = WarnDefer::new("poprako.members.request");
 
-    let reply: PoprakoEnvelope<Vec<PoprakoMemberBrief>> =
+    let reply: PoprakoEnvelope<Vec<PoprakoMemberSearchRaw>> =
         poprako_post_opt("members/search", Some(&payload))
             .await
             .map_err(|err| format!("Failed to fetch members: {}", err))?;
@@ -76,9 +98,25 @@ pub async fn get_members(payload: ReqMembers) -> Result<MembersReply, String> {
 
     let items = reply.data.unwrap_or_default();
 
+    let converted: Vec<PoprakoMemberSearchItem> = items
+        .into_iter()
+        .map(|m| PoprakoMemberSearchItem {
+            member_id: m.member_id,
+            user_id: m.user_id,
+            username: m.username,
+            is_admin: m.is_admin,
+            is_translator: m.is_translator,
+            is_proofreader: m.is_proofreader,
+            is_typesetter: m.is_typesetter,
+            is_redrawer: m.is_redrawer,
+            is_principal: m.is_principal,
+            last_active: m.last_active.map(|dt| dt.unix_timestamp()),
+        })
+        .collect();
+
     defer.success();
 
-    Ok(MembersReply { items })
+    Ok(MembersReply { items: converted })
 }
 
 // 获取当前登录用户在指定 team 中的成员信息（含 is_admin 标记）

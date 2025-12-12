@@ -16,7 +16,7 @@ import { useToastStore } from '../stores/toast';
 import { useUserStore } from '../stores/user';
 import { useRouterStore } from '../stores/router';
 import { useCacheStore } from '../stores/cache';
-import { getProjectTargets, getProjectFiles, proxyImage } from '../ipc/project';
+import { getProjectTargets, getProjectFiles, proxyImage, updateProjStatus } from '../ipc/project';
 import LoadingCircle from '../components/LoadingCircle.vue';
 import FileUploader from '../components/FileUploader.vue';
 import {
@@ -48,15 +48,34 @@ interface ProjectDetail {
   totalTranslatedMarkers: number;
   totalProofreadMarkers: number;
   translationStatus: ProjectStatus;
+  translationStatusValue: number;
   proofreadingStatus: ProjectStatus;
+  proofreadingStatusValue: number;
   letteringStatus: ProjectStatus;
+  letteringStatusValue: number;
   reviewingStatus: ProjectStatus;
+  reviewingStatusValue: number;
   translators: string[];
   proofreaders: string[];
   letterers: string[];
   reviewers: string[];
   pageMarkers: PageMarkerData[];
 }
+
+type StatusType = 'translating' | 'proofreading' | 'typesetting' | 'reviewing';
+
+const statusNameMap: Record<number, string> = {
+  0: '未开始',
+  1: '进行中',
+  2: '已完成',
+};
+
+const statusOperationLabelMap: Record<StatusType, string> = {
+  translating: '翻译',
+  proofreading: '校对',
+  typesetting: '嵌字',
+  reviewing: '监修',
+};
 
 // 私有类型：Moetran 原生项目中可能带回的 role 结构，前端仅用作存在性检查
 interface _ProjectRole {
@@ -111,10 +130,6 @@ const emit = defineEmits<{
 const toastStore = useToastStore();
 const routerStore = useRouterStore();
 const cacheStore = useCacheStore();
-
-const showJoinLeave = computed(() => {
-  return !(isMePrincipal.value && props.hasPoprako !== false);
-});
 
 // 项目详情数据
 const project = ref<ProjectDetail | null>(null);
@@ -270,24 +285,27 @@ function goNextPreview() {
 // (已由 'principal' 角色控制关键编辑权限)
 
 const userStore = useUserStore();
+const currentUserId = computed(() => userStore.user?.id ?? '');
+
+function extractMemberIdentity(member: ResMember): string {
+  const legacy = (member as unknown as { user_id?: string }).user_id;
+  return member.userId ?? legacy ?? member.memberId;
+}
+
+const currentMember = computed<ResMember | null>(() => {
+  const uid = currentUserId.value;
+  if (!uid || !props.members || props.members.length === 0) return null;
+  return (props.members as ResMember[]).find(m => extractMemberIdentity(m) === uid) ?? null;
+});
+
 const isMeInProject = computed(() => {
-  const uid = userStore.user?.id;
+  const uid = currentUserId.value;
   if (!uid) return false;
-  // For native Moetran projects (no PopRaKo backing), Moetran may include a
-  // top-level `role` field indicating the current user's role in the project.
-  // If `hasPoprako === false`, treat a non-null `props.role` as membership (实际结构未具体描述)
   if (props.hasPoprako === false) {
-    // props.role may be undefined if backend didn't provide it; treat undefined as not-in-project
     return (props.role ?? null) !== null;
   }
 
-  // Prefer explicit PopRaKo `members` (each member exposes `userId`),
-  // fall back to legacy role arrays which may contain user ids.
-  if (props.members && Array.isArray(props.members) && props.members.length > 0) {
-    return (props.members as ResMember[]).some(
-      m => (m.userId ?? (m as unknown as { user_id?: string }).user_id ?? m.memberId) === uid
-    );
-  }
+  if (currentMember.value) return true;
 
   const members = [
     ...(props.translators || []),
@@ -307,58 +325,57 @@ const isMePrincipal = computed(() => {
 });
 
 // whether current user is translator or proofreader
-const isMeTranslatorOrProofreader = computed(() => {
-  const uid = userStore.user?.id;
+const isMeTranslator = computed(() => {
+  const uid = currentUserId.value;
   if (!uid) return false;
+  if (props.members && props.members.length > 0) {
+    return currentMember.value?.isTranslator === true;
+  }
+  return (props.translators ?? []).includes(uid);
+});
 
-  // For native Moetran projects, if backend provided a `role` field,
-  // treat any non-null value as membership (allowing 翻校 entry).
+const isMeProofreader = computed(() => {
+  const uid = currentUserId.value;
+  if (!uid) return false;
+  if (props.hasPoprako === false) return false;
+  if (props.members && props.members.length > 0) {
+    return currentMember.value?.isProofreader === true;
+  }
+  return (props.proofreaders ?? []).includes(uid);
+});
+
+const isMeTypesetter = computed(() => {
+  const uid = currentUserId.value;
+  if (!uid) return false;
+  if (props.members && props.members.length > 0) {
+    return currentMember.value?.isTypesetter === true;
+  }
+  return (props.letterers ?? []).includes(uid);
+});
+
+const isMeReviewerRole = computed(() => {
+  const uid = currentUserId.value;
+  if (!uid) return false;
+  if (props.members && props.members.length > 0) {
+    return currentMember.value?.isPrincipal === true;
+  }
+  const reviewers = props.reviewers ?? [];
+  if (reviewers.includes(uid)) return true;
+  const principals = props.principals ?? [];
+  return principals.includes(uid);
+});
+
+const isMeTranslatorOrProofreader = computed(() => {
+  const uid = currentUserId.value;
+  if (!uid) return false;
   if (props.hasPoprako === false) {
     return (props.role ?? null) !== null;
   }
-  console.log('Checking isMeTranslatorOrProofreader for uid', uid, {
-    members: props.members,
-    translators: props.translators,
-    proofreaders: props.proofreaders,
-  });
-
-  // If PopRaKo `members` provided with role flags, prefer that
-  if (props.members && Array.isArray(props.members) && props.members.length > 0) {
-    const m = (props.members as ResMember[]).find(
-      mm => (mm.userId ?? (mm as unknown as { user_id?: string }).user_id ?? mm.memberId) === uid
-    );
-    return !!m && (m.isTranslator === true || m.isProofreader === true);
-  }
-
-  // Fallback to legacy role arrays
-  const translators = props.translators ?? [];
-  const proofreaders = props.proofreaders ?? [];
-  return translators.includes(uid) || proofreaders.includes(uid);
+  return isMeTranslator.value || isMeProofreader.value;
 });
 
 // whether current user is specifically a proofreader
-const isMeProofreader = computed(() => {
-  const uid = userStore.user?.id;
-  if (!uid) return false;
-
-  // For native Moetran projects, if backend provided a `role` field,
-  // we cannot distinguish translator vs proofreader, so assume not proofreader for safety
-  if (props.hasPoprako === false) {
-    return false;
-  }
-
-  // If PopRaKo `members` provided with role flags, prefer that
-  if (props.members && Array.isArray(props.members) && props.members.length > 0) {
-    const m = (props.members as ResMember[]).find(
-      mm => (mm.userId ?? (mm as unknown as { user_id?: string }).user_id ?? mm.memberId) === uid
-    );
-    return !!m && m.isProofreader === true;
-  }
-
-  // Fallback to legacy role arrays
-  const proofreaders = props.proofreaders ?? [];
-  return proofreaders.includes(uid);
-});
+// (保留命名供其他逻辑使用)
 
 // --- 进度相关计算 ---
 // (per-page and totals are displayed as raw numbers; percent progress computations removed)
@@ -370,48 +387,230 @@ const statusColorMap: Record<ProjectStatus, string> = {
   completed: '#3A9E5E',
 };
 
+function normalizeStatusValue(value: number | null | undefined): number {
+  if (value === 1 || value === 2) return value;
+  return 0;
+}
+
+function getStatusName(value: number): string {
+  const normalized = value === 1 || value === 2 ? value : 0;
+  return statusNameMap[normalized];
+}
+
+function defaultStatusUpdating(): Record<StatusType, boolean> {
+  return {
+    translating: false,
+    proofreading: false,
+    typesetting: false,
+    reviewing: false,
+  };
+}
+
+interface StatusConfirmState {
+  visible: boolean;
+  label: string;
+  statusType: StatusType | null;
+  nextStatus: number | null;
+}
+
+function createEmptyStatusConfirmState(): StatusConfirmState {
+  return {
+    visible: false,
+    label: '',
+    statusType: null,
+    nextStatus: null,
+  };
+}
+
+const statusUpdating = ref<Record<StatusType, boolean>>(defaultStatusUpdating());
+const statusConfirm = ref<StatusConfirmState>(createEmptyStatusConfirmState());
+
+const statusConfirmTargetName = computed(() => {
+  const next = statusConfirm.value.nextStatus;
+  if (typeof next !== 'number') return '';
+  return getStatusName(next);
+});
+
+function resetStatusUpdating(): void {
+  statusUpdating.value = defaultStatusUpdating();
+}
+
+function resetStatusConfirm(): void {
+  statusConfirm.value = createEmptyStatusConfirmState();
+}
+
+function hasStatusPermission(type: StatusType): boolean {
+  if (props.hasPoprako !== true) return false;
+  switch (type) {
+    case 'translating':
+      return isMeTranslator.value;
+    case 'proofreading':
+      return isMeProofreader.value;
+    case 'typesetting':
+      return isMeTypesetter.value;
+    case 'reviewing':
+      return isMeReviewerRole.value;
+    default:
+      return false;
+  }
+}
+
+function getNextStatusValue(current: number): number | null {
+  if (current >= 2) return null;
+  return current + 1;
+}
+
+function applyStatusValue(type: StatusType, value: number): void {
+  if (!project.value) return;
+  const mapped = mapStatusNumberToProjectStatus(value);
+  switch (type) {
+    case 'translating':
+      project.value.translationStatusValue = value;
+      project.value.translationStatus = mapped;
+      break;
+    case 'proofreading':
+      project.value.proofreadingStatusValue = value;
+      project.value.proofreadingStatus = mapped;
+      break;
+    case 'typesetting':
+      project.value.letteringStatusValue = value;
+      project.value.letteringStatus = mapped;
+      break;
+    case 'reviewing':
+      project.value.reviewingStatusValue = value;
+      project.value.reviewingStatus = mapped;
+      break;
+    default:
+      break;
+  }
+}
+
 // 汇总四类工作状态
 // 私有类型：状态块
 interface _StatusBlock {
   label: string;
   members: string[];
   status: ProjectStatus;
+  statusValue: number;
+  statusType: StatusType;
+  stateText: string;
+  canAdvance: boolean;
+  isDisabled: boolean;
+  isBusy: boolean;
 }
 
 const statusBlocks = computed(() => {
   if (!project.value) return [] as _StatusBlock[];
-  // If PopRaKo `members` prop is provided, prefer extracting roles from the members' flags.
+  const blocks: _StatusBlock[] = [];
+
+  const pushBlock = (label: string, members: string[], statusType: StatusType): void => {
+    if (!project.value) return;
+    const valueMap: Record<StatusType, { status: ProjectStatus; value: number }> = {
+      translating: {
+        status: project.value.translationStatus,
+        value: project.value.translationStatusValue,
+      },
+      proofreading: {
+        status: project.value.proofreadingStatus,
+        value: project.value.proofreadingStatusValue,
+      },
+      typesetting: {
+        status: project.value.letteringStatus,
+        value: project.value.letteringStatusValue,
+      },
+      reviewing: {
+        status: project.value.reviewingStatus,
+        value: project.value.reviewingStatusValue,
+      },
+    };
+    const current = valueMap[statusType];
+    const disabled = current.value >= 2;
+    const busy = statusUpdating.value[statusType] === true;
+    blocks.push({
+      label,
+      members,
+      status: current.status,
+      statusType,
+      statusValue: current.value,
+      stateText: getStatusName(current.value),
+      canAdvance: hasStatusPermission(statusType) && !disabled && !contentLoading.value && !busy,
+      isDisabled: disabled,
+      isBusy: busy,
+    });
+  };
+
   if (props.members && Array.isArray(props.members) && props.members.length > 0) {
     const members = props.members as ResMember[];
+    const pickName = (m: ResMember) => m.username || extractMemberIdentity(m);
 
-    const pickName = (m: ResMember) => m.username || m.userId || m.memberId;
-
-    const translators = members.filter(m => m.isTranslator).map(pickName);
-    const proofreaders = members.filter(m => m.isProofreader).map(pickName);
-    const letterers = members.filter(m => m.isTypesetter).map(pickName);
-    // Map principals to the "监修"/reviewers slot (PopRaKo exposes isPrincipal)
-    const reviewers = members.filter(m => m.isPrincipal).map(pickName);
-
-    return [
-      { label: '翻译', members: translators, status: project.value.translationStatus },
-      { label: '校对', members: proofreaders, status: project.value.proofreadingStatus },
-      { label: '嵌字', members: letterers, status: project.value.letteringStatus },
-      { label: '监修', members: reviewers, status: project.value.reviewingStatus },
-    ];
+    pushBlock('翻译', members.filter(m => m.isTranslator).map(pickName), 'translating');
+    pushBlock('校对', members.filter(m => m.isProofreader).map(pickName), 'proofreading');
+    pushBlock('嵌字', members.filter(m => m.isTypesetter).map(pickName), 'typesetting');
+    pushBlock('监修', members.filter(m => m.isPrincipal).map(pickName), 'reviewing');
+    return blocks;
   }
 
-  // Fallback: use legacy arrays on project.value (strings)
-  return [
-    { label: '翻译', members: project.value.translators, status: project.value.translationStatus },
-    {
-      label: '校对',
-      members: project.value.proofreaders,
-      status: project.value.proofreadingStatus,
-    },
-    { label: '嵌字', members: project.value.letterers, status: project.value.letteringStatus },
-    { label: '监修', members: project.value.reviewers, status: project.value.reviewingStatus },
-  ];
+  pushBlock('翻译', project.value.translators, 'translating');
+  pushBlock('校对', project.value.proofreaders, 'proofreading');
+  pushBlock('嵌字', project.value.letterers, 'typesetting');
+  pushBlock('监修', project.value.reviewers, 'reviewing');
+  return blocks;
 });
+
+const confirmDialogBusy = computed(() => {
+  const type = statusConfirm.value.statusType;
+  if (!type) return false;
+  return statusUpdating.value[type] === true;
+});
+
+function handleStatusCardClick(block: _StatusBlock): void {
+  if (!block || !block.canAdvance || block.isDisabled || block.isBusy) return;
+  const next = getNextStatusValue(block.statusValue);
+  if (next === null) return;
+  statusConfirm.value = {
+    visible: true,
+    label: block.label,
+    statusType: block.statusType,
+    nextStatus: next,
+  };
+}
+
+function closeStatusConfirm(): void {
+  resetStatusConfirm();
+}
+
+async function confirmStatusAdvance(): Promise<void> {
+  const state = statusConfirm.value;
+  if (!state.visible || state.statusType === null || state.nextStatus === null) {
+    resetStatusConfirm();
+    return;
+  }
+  const statusType = state.statusType;
+  if (statusUpdating.value[statusType]) return;
+
+  statusUpdating.value[statusType] = true;
+  try {
+    await updateProjStatus({
+      projId: props.projectId,
+      statusType,
+      newStatus: state.nextStatus,
+    });
+    applyStatusValue(statusType, state.nextStatus);
+    const roleLabel = statusOperationLabelMap[statusType];
+    toastStore.show(`${roleLabel}状态已更新为${getStatusName(state.nextStatus)}`);
+  } catch (error) {
+    console.error('[ProjectDetail] updateProjStatus failed', {
+      projectId: props.projectId,
+      statusType,
+      nextStatus: state.nextStatus,
+      error,
+    });
+    toastStore.show('更新项目状态失败', 'error');
+  } finally {
+    statusUpdating.value[statusType] = false;
+    resetStatusConfirm();
+  }
+}
 
 // Chart.js 注册组件
 ChartJS.register(
@@ -594,6 +793,11 @@ async function loadCoverImage(): Promise<void> {
 // 加载项目详情与标记分布
 async function loadProject(): Promise<void> {
   try {
+    const translationValue = normalizeStatusValue(props.translatingStatus);
+    const proofreadingValue = normalizeStatusValue(props.proofreadingStatus);
+    const letteringValue = normalizeStatusValue(props.typesettingStatus);
+    const reviewingValue = normalizeStatusValue(props.reviewingStatus);
+
     const base: ProjectDetail = {
       id: props.projectId,
       title: props.title,
@@ -603,10 +807,14 @@ async function loadProject(): Promise<void> {
       totalMarkers: props.totalMarkers ?? 0,
       totalTranslatedMarkers: props.totalTranslated ?? 0,
       totalProofreadMarkers: props.totalChecked ?? 0,
-      translationStatus: mapStatusNumberToProjectStatus(props.translatingStatus),
-      proofreadingStatus: mapStatusNumberToProjectStatus(props.proofreadingStatus),
-      letteringStatus: mapStatusNumberToProjectStatus(props.typesettingStatus),
-      reviewingStatus: mapStatusNumberToProjectStatus(props.reviewingStatus),
+      translationStatus: mapStatusNumberToProjectStatus(translationValue),
+      translationStatusValue: translationValue,
+      proofreadingStatus: mapStatusNumberToProjectStatus(proofreadingValue),
+      proofreadingStatusValue: proofreadingValue,
+      letteringStatus: mapStatusNumberToProjectStatus(letteringValue),
+      letteringStatusValue: letteringValue,
+      reviewingStatus: mapStatusNumberToProjectStatus(reviewingValue),
+      reviewingStatusValue: reviewingValue,
       translators: props.translators ?? [],
       proofreaders: props.proofreaders ?? [],
       letterers: props.letterers ?? [],
@@ -755,20 +963,6 @@ function handleToggleModifier(): void {
   emit('open-modifier');
 }
 
-// 加入或退出项目（后续需要真实接口）
-function handleJoinOrLeave(): void {
-  // 加入或退出项目
-  if (!project.value) return;
-
-  if (isMeInProject.value) {
-    toastStore.show('已退出项目');
-    // TODO: 真实退出动作
-  } else {
-    toastStore.show('已加入项目');
-    // TODO: 真实加入动作
-  }
-}
-
 // 进入翻译工作台（带翻校模式或阅读模式）
 function openTranslator(enabled: boolean): void {
   // 验证必要数据是否已加载
@@ -836,6 +1030,8 @@ watch(
     loadingMarkers.value = false;
     loadingMarkersFailed.value = false;
     hasCachedFiles.value = false;
+    resetStatusUpdating();
+    resetStatusConfirm();
     // 重新加载新的 project 数据
     loadProject();
     checkCache();
@@ -1075,7 +1271,7 @@ onBeforeUnmount(() => {
           />
           <div v-else class="pd-cover-placeholder">暂无封面</div>
         </div>
-        <div class="pd-cover-actions">
+        <!-- <div class="pd-cover-actions">
           <button
             v-if="showJoinLeave"
             type="button"
@@ -1088,7 +1284,7 @@ onBeforeUnmount(() => {
           >
             {{ isMeInProject ? '退出项目' : '加入项目' }}
           </button>
-        </div>
+        </div> -->
       </div>
 
       <!-- 右列：所有内容 -->
@@ -1101,18 +1297,37 @@ onBeforeUnmount(() => {
               v-for="blk in statusBlocks"
               :key="blk.label"
               class="pd-status-card"
+              :class="{
+                'pd-status-card--clickable': blk.canAdvance,
+                'pd-status-card--disabled': blk.isDisabled && !blk.canAdvance,
+                'pd-status-card--busy': blk.isBusy,
+              }"
               :style="{
                 borderColor: statusColorMap[blk.status],
                 backgroundColor: statusColorMap[blk.status] + '10',
               }"
+              :title="
+                blk.isDisabled ? '已完成' : blk.canAdvance ? '点击后推进状态' : '暂无权限或暂不可用'
+              "
+              @click="handleStatusCardClick(blk)"
             >
               <div class="pd-status-card__label">{{ blk.label }}</div>
+              <div
+                class="pd-status-card__state-pill"
+                :style="{
+                  color: statusColorMap[blk.status],
+                  backgroundColor: statusColorMap[blk.status] + '12',
+                }"
+              >
+                {{ blk.stateText }}
+              </div>
               <div class="pd-status-card__members">
                 <template v-if="blk.members && blk.members.length > 0">
                   {{ blk.members.join('、') }}
                 </template>
                 <template v-else>未分配</template>
               </div>
+              <div v-if="blk.isBusy" class="pd-status-card__busy">推进中...</div>
             </div>
           </div>
         </div>
@@ -1204,6 +1419,32 @@ onBeforeUnmount(() => {
               </button>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+    <div v-if="statusConfirm.visible" class="pd-dialog-mask" @click.self="closeStatusConfirm">
+      <div class="pd-dialog">
+        <div class="pd-dialog__title">推进状态</div>
+        <div class="pd-dialog__body">
+          是否要将{{ statusConfirm.label }}状态推进为“{{ statusConfirmTargetName }}”？
+        </div>
+        <div class="pd-dialog__actions">
+          <button
+            type="button"
+            class="pd-btn pd-btn--secondary"
+            @click="closeStatusConfirm"
+            :disabled="confirmDialogBusy"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            class="pd-btn pd-btn--primary"
+            @click="confirmStatusAdvance"
+            :disabled="confirmDialogBusy"
+          >
+            {{ confirmDialogBusy ? '执行中...' : '确认推进' }}
+          </button>
         </div>
       </div>
     </div>
@@ -1642,6 +1883,25 @@ onBeforeUnmount(() => {
   padding: 8px 10px;
   text-align: center;
   box-shadow: 0 4px 12px rgba(140, 180, 230, 0.12);
+  cursor: default;
+  position: relative;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
+}
+.pd-status-card--clickable {
+  cursor: pointer;
+}
+.pd-status-card--clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 18px rgba(140, 180, 230, 0.24);
+}
+.pd-status-card--disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+.pd-status-card--busy {
+  pointer-events: none;
 }
 .pd-status-card__label {
   font-size: 12px;
@@ -1649,10 +1909,28 @@ onBeforeUnmount(() => {
   color: #2a4a63;
   margin-bottom: 4px;
 }
+.pd-status-card__state-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 56px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #2f5a8f;
+  background: rgba(47, 90, 143, 0.12);
+  margin-bottom: 6px;
+}
 .pd-status-card__members {
   font-size: 11px;
   color: #4a5f7a;
   line-height: 1.4;
+}
+.pd-status-card__busy {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #2f5a8f;
 }
 .pd-metrics-grid {
   display: grid;
@@ -1784,6 +2062,41 @@ onBeforeUnmount(() => {
   justify-content: center;
   color: #7a8fa5;
   font-size: 13px;
+}
+
+.pd-dialog-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 35, 64, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+}
+.pd-dialog {
+  width: 320px;
+  background: #fff;
+  border: 1px solid rgba(150, 180, 210, 0.4);
+  border-radius: 14px;
+  box-shadow: 0 16px 32px rgba(30, 60, 100, 0.2);
+  padding: 18px 20px;
+}
+.pd-dialog__title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #23415b;
+  margin-bottom: 10px;
+}
+.pd-dialog__body {
+  font-size: 14px;
+  color: #445b72;
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
+.pd-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 @media (max-width: 1100px) {
