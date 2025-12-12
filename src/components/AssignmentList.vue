@@ -23,6 +23,10 @@ const emit = defineEmits<{
 const props = defineProps<{
   teamId?: string | null;
   currentView?: 'projects' | 'assignments' | 'members';
+  // optional filters from PanelView (assignment search filters)
+  filters?: { timeStart?: number } | undefined;
+  // toggle used to force re-apply filters (kept for parity with ProjectList)
+  shouldApplyFilters?: boolean;
 }>();
 
 const toastStore = useToastStore();
@@ -36,23 +40,19 @@ function switchView(view: 'projects' | 'assignments' | 'members'): void {
   emit('view-change', view);
 }
 
-// 当前选择的时间范围
-const selectedTimeRange = ref<TimeRange>('1day');
 // 所有 assignments 数据
+// (time range is provided by parent via `filters` prop)
 const allAssignments = ref<ResAssignment[]>([]);
 const isLoading = ref(false);
 
-// 根据选择的时间范围计算 timeStart（暂时保留，用于后续真实API调用）
+// 根据父组件传入的筛选条件计算 timeStart
 const currentTimeStart = computed(() => {
-  const now = Math.floor(Date.now() / 1000);
-  switch (selectedTimeRange.value) {
-    case '1day':
-      return now - 86400;
-    case '1week':
-      return now - 604800;
-    case '1month':
-      return now - 2592000;
+  if (props.filters?.timeStart) {
+    return props.filters.timeStart;
   }
+  // 默认返回近一天
+  const now = Math.floor(Date.now() / 1000);
+  return now - 86400;
 });
 
 // 时间区域定义（分段显示）
@@ -76,7 +76,7 @@ const categorizedAssignments = computed(() => {
   const week1 = now - 604800;
   const month1 = now - 2592000;
 
-  // 根据选择的时间范围决定显示哪些时间段
+  // 根据筛选条件决定显示哪些时间段
   const result: { label: string; range: TimeRange; assigns: ResAssignment[] }[] = [];
 
   // 近一天的 assigns（按时间升序）
@@ -100,18 +100,28 @@ const categorizedAssignments = computed(() => {
     .sort((x, y) => x.updatedAt - y.updatedAt)
     .reverse();
 
+  // 根据筛选的时间范围决定显示哪些时间段
+  // 通过 timeStart 判断选择的范围
+  const filterTimeStart = props.filters?.timeStart ?? now - 86400;
+  let selectedRange: TimeRange = '1day';
+  if (filterTimeStart <= month1) {
+    selectedRange = '1month';
+  } else if (filterTimeStart <= week1) {
+    selectedRange = '1week';
+  }
+
   // 根据选择的时间范围依次添加
   if (dayAssigns.length > 0) {
     result.push({ label: '近一天', range: '1day', assigns: dayAssigns });
   }
 
-  if (selectedTimeRange.value === '1week' || selectedTimeRange.value === '1month') {
+  if (selectedRange === '1week' || selectedRange === '1month') {
     if (weekAssigns.length > 0) {
       result.push({ label: '近一周', range: '1week', assigns: weekAssigns });
     }
   }
 
-  if (selectedTimeRange.value === '1month') {
+  if (selectedRange === '1month') {
     if (monthAssigns.length > 0) {
       result.push({ label: '近一个月', range: '1month', assigns: monthAssigns });
     }
@@ -198,13 +208,6 @@ async function fetchAssignments(): Promise<void> {
   }
 }
 
-// 切换时间范围
-function selectTimeRange(range: TimeRange): void {
-  selectedTimeRange.value = range;
-  currentPage.value = 1;
-  void fetchAssignments();
-}
-
 // 格式化角色标签（模板内直接构造，无需函数）
 
 // 格式化时间
@@ -214,15 +217,69 @@ function formatTime(timestamp: number): string {
 
 // 初始化加载
 onMounted(() => {
+  console.log('[AssignmentList] Component mounted, initial filters:', props.filters);
   void fetchAssignments();
 });
+
+// Debug: watch props 直接
+watch(
+  () => props,
+  newProps => {
+    console.log('[AssignmentList] props changed:', {
+      teamId: newProps.teamId,
+      filters: newProps.filters,
+      currentView: newProps.currentView,
+    });
+  },
+  { deep: true, immediate: true }
+);
 
 // 当 teamId 变化时重新加载
 watch(
   () => props.teamId,
-  () => {
+  (newVal, oldVal) => {
+    console.log('[AssignmentList] teamId changed:', oldVal, '->', newVal);
     currentPage.value = 1;
-    void fetchAssignments();
+    requestAnimationFrame(() => {
+      void fetchAssignments();
+    });
+  }
+);
+
+// 当 filters 变化时，重新拉取
+watch(
+  () => props.filters,
+  newVal => {
+    if (newVal !== undefined) {
+      console.log(
+        '[AssignmentList] props.filters watcher triggered, new filters:',
+        JSON.parse(JSON.stringify(newVal))
+      );
+    } else {
+      console.log('[AssignmentList] props.filters watcher triggered: undefined (no filters)');
+    }
+
+    console.log('[AssignmentList] currentTimeStart.value:', currentTimeStart.value);
+
+    currentPage.value = 1;
+
+    requestAnimationFrame(() => {
+      console.log('[AssignmentList] About to fetch with timeStart:', currentTimeStart.value);
+      void fetchAssignments();
+    });
+  },
+  { deep: true }
+);
+
+// 当 shouldApplyFilters 切换时，触发刷新（确认/清空筛选）
+watch(
+  () => props.shouldApplyFilters,
+  () => {
+    console.log('[AssignmentList] shouldApplyFilters changed, refreshing list');
+    currentPage.value = 1;
+    requestAnimationFrame(() => {
+      void fetchAssignments();
+    });
   }
 );
 </script>
@@ -259,37 +316,6 @@ watch(
         </button>
       </div>
       <div class="assignment-list__controls">
-        <!-- 时间范围选择 -->
-        <div class="time-range-btns">
-          <button
-            type="button"
-            class="time-range-btn"
-            :class="{ 'time-range-btn--active': selectedTimeRange === '1day' }"
-            @click="selectTimeRange('1day')"
-            :disabled="isLoading"
-          >
-            近一天
-          </button>
-          <button
-            type="button"
-            class="time-range-btn"
-            :class="{ 'time-range-btn--active': selectedTimeRange === '1week' }"
-            @click="selectTimeRange('1week')"
-            :disabled="isLoading"
-          >
-            近一周
-          </button>
-          <button
-            type="button"
-            class="time-range-btn"
-            :class="{ 'time-range-btn--active': selectedTimeRange === '1month' }"
-            @click="selectTimeRange('1month')"
-            :disabled="isLoading"
-          >
-            近一个月
-          </button>
-        </div>
-
         <!-- 分页控制 -->
         <div class="pagination-controls">
           <button

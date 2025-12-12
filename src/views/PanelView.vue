@@ -19,6 +19,7 @@ import MemberList from '../components/MemberList.vue';
 import LoadingCircle from '../components/LoadingCircle.vue';
 // 使用共享的基本项目信息类型仅在本地过滤场景；当前不直接使用
 import ProjectFilterBoard from '../components/ProjectFilterBoard.vue';
+import AssignmentFilterBoard from '../components/AssignmentFilterBoard.vue';
 import ProjectCreatorView from '../views/ProjectCreatorView.vue';
 import ProjectModifierView from '../views/ProjectModifierView.vue';
 import ProjectDetailView from '../views/ProjectDetailView.vue';
@@ -482,6 +483,86 @@ watch(
   { deep: true }
 );
 
+// ======================= 派活筛选逻辑 =======================
+// 派活筛选条件接口（仅支持时间筛选）
+interface AssignmentSearchFilters {
+  timeStart?: number;
+}
+
+// 来自 AssignmentFilterBoard 的选项结构
+const currentAssignmentFilterOptions = ref<FilterOption[]>([]);
+
+// 处理添加筛选项（来自 AssignmentFilterBoard）
+function handleAddAssignmentFilterOption(option: FilterOption) {
+  console.log('[PanelView] handleAddAssignmentFilterOption called with:', option);
+
+  const exists = currentAssignmentFilterOptions.value.find(
+    opt => opt.key === option.key && opt.value === option.value
+  );
+
+  if (!exists) {
+    currentAssignmentFilterOptions.value.push(option);
+    console.log(
+      '[PanelView] Added assignment filter option, current options:',
+      currentAssignmentFilterOptions.value
+    );
+  }
+}
+
+// 处理移除筛选项（来自 AssignmentFilterBoard）
+function handleRemoveAssignmentFilterOption(option: FilterOption) {
+  const index = currentAssignmentFilterOptions.value.findIndex(
+    opt => opt.key === option.key && opt.value === option.value
+  );
+
+  if (index !== -1) {
+    currentAssignmentFilterOptions.value.splice(index, 1);
+  }
+}
+
+// 处理清空所有筛选项（来自 AssignmentFilterBoard）
+function handleClearAssignmentFilters() {
+  currentAssignmentFilterOptions.value = [];
+}
+
+// 将 FilterOption[] 映射为后端可识别的 AssignmentSearchFilters
+const currentAssignmentSearchFilters = computed<AssignmentSearchFilters | undefined>(() => {
+  if (!currentAssignmentFilterOptions.value.length) return undefined;
+
+  const filters: AssignmentSearchFilters = {};
+
+  for (const opt of currentAssignmentFilterOptions.value) {
+    const { key, value: val } = opt;
+
+    // 时间筛选（time-start）
+    if (key === 'time-start') {
+      const timestamp = Number(val);
+      if (!isNaN(timestamp) && timestamp > 0) {
+        filters.timeStart = timestamp;
+      }
+      continue;
+    }
+  }
+
+  return filters;
+});
+
+// Debug: log when the computed assignment search filters change
+watch(
+  () => currentAssignmentSearchFilters.value,
+  filters => {
+    if (filters !== undefined) {
+      console.log(
+        '[PanelView] currentAssignmentSearchFilters changed:',
+        JSON.parse(JSON.stringify(filters))
+      );
+    } else {
+      console.log('[PanelView] currentAssignmentSearchFilters changed: undefined (no filters)');
+    }
+  },
+  { deep: true }
+);
+
 // 筛选即时生效：不再需要手动应用流程（确认按钮已移除）
 
 // 最终传递给 ProjectList 的项目已由其内部管理；此处预留接口以备未来需要
@@ -611,6 +692,7 @@ function handleModifierBack(): void {
               v-else-if="viewMode === 'assignments'"
               :team-id="activeTeamId"
               :current-view="viewMode"
+              :filters="currentAssignmentSearchFilters"
               @view-change="handleViewChange"
             />
             <MemberList
@@ -626,14 +708,24 @@ function handleModifierBack(): void {
       <!-- 右侧：PopRaKo 筛选控制板（占用全部宽度的 23%） -->
       <aside class="right-column">
         <div class="filter-panel-wrapper">
+          <!-- 项目筛选板（仅在项目列表视图显示） -->
           <ProjectFilterBoard
+            v-if="viewMode === 'projects'"
             :team-id="activeTeamId ?? undefined"
             :is-searching="isSearching"
-            :disabled="viewMode === 'assignments' || viewMode === 'members'"
             @add-option="handleAddFilterOption"
             @remove-option="handleRemoveFilterOption"
             @clear-all="handleClearFilters"
             ref="filterBoardRef"
+          />
+
+          <!-- 派活筛选板（仅在派活列表视图显示） -->
+          <AssignmentFilterBoard
+            v-else-if="viewMode === 'assignments'"
+            :is-searching="isSearching"
+            @add-option="handleAddAssignmentFilterOption"
+            @remove-option="handleRemoveAssignmentFilterOption"
+            @clear-all="handleClearAssignmentFilters"
           />
 
           <!-- 工具箱：与 teams-list 类似的组织方式，紧贴在筛选板下方 -->
@@ -923,6 +1015,13 @@ function handleModifierBack(): void {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 刷新按钮：不加粗、字体缩小并使用斜体 */
+.team-item.team-item--refresh .team-item__name {
+  font-weight: 400;
+  font-size: 12px;
+  font-style: italic;
 }
 
 .team-item--empty,
